@@ -6,7 +6,7 @@ import sys
 UDP_IP = "0.0.0.0"
 UDP_PORT = 5005
 OUTPUT_FILE = "recordings/test_recording.wav"
-SAMPLE_RATE = 32000
+SAMPLE_RATE = 24000
 CHANNELS = 1
 
 def main():

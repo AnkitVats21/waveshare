@@ -115,47 +115,22 @@ void MqttTask::processIncomingData(esp_mqtt_event_handle_t event) {
     std::stringstream ss(payload);
     std::string line;
     while (std::getline(ss, line)) {
-      // Remove any trailing \r from Windows-style line endings
-      if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-      }
+      if (!line.empty() && line.back() == '\r') line.pop_back();
       
       size_t pos = line.find('=');
       if (pos != std::string::npos) {
         std::string key = line.substr(0, pos);
-        std::string val_str = line.substr(pos + 1);
+        std::string val = line.substr(pos + 1);
 
-        if (key == "speaker_volume") {
-          try {
-            int vol = std::stoi(val_str);
-            if (vol >= 0 && vol <= 100) {
-              Board::getInstance().setPlayVolume(vol);
-              ESP_LOGI(m_config.name, "Speaker volume updated to %d", vol);
-            } else {
-              ESP_LOGW(m_config.name, "Invalid speaker volume: %d (must be 0-100)", vol);
-            }
-          } catch (...) {
-            ESP_LOGE(m_config.name, "Failed to parse speaker_volume value: %s", val_str.c_str());
-          }
-        } else if (key == "mic_volume") {
-          try {
-            float gain = std::stof(val_str);
-            if (gain >= 0 && gain <= 100) {
-              Board::getInstance().setRecordGain(gain);
-              ESP_LOGI(m_config.name, "Mic gain updated to %.1f", gain);
-            } else {
-              ESP_LOGW(m_config.name, "Invalid mic gain: %.1f (must be 0-100)", gain);
-            }
-          } catch (...) {
-            ESP_LOGE(m_config.name, "Failed to parse mic_volume value: %s", val_str.c_str());
-          }
+        if (key == "speaker_volume" || key == "mic_volume") {
+          handleAudioConfig(key, val);
+        } else if (key == "led_color") {
+          handleLedConfig(val);
         }
       }
     }
   } else if (topic == TOPIC_DYNAMIC_SUB) {
-    // Dynamic subscription logic
     std::string new_topic = payload;
-    // Basic trimming of whitespace/newlines
     new_topic.erase(0, new_topic.find_first_not_of(" \n\r\t"));
     new_topic.erase(new_topic.find_last_not_of(" \n\r\t") + 1);
 
@@ -167,6 +142,40 @@ void MqttTask::processIncomingData(esp_mqtt_event_handle_t event) {
         ESP_LOGE(m_config.name, "Failed to subscribe to: %s", new_topic.c_str());
       }
     }
+  }
+}
+
+void MqttTask::handleAudioConfig(const std::string &key, const std::string &val) {
+  try {
+    if (key == "speaker_volume") {
+      int vol = std::stoi(val);
+      if (vol >= 0 && vol <= 100) {
+        Board::getInstance().setPlayVolume(vol);
+        ESP_LOGI(m_config.name, "Speaker volume updated to %d", vol);
+      } else {
+        ESP_LOGW(m_config.name, "Invalid speaker volume: %d (must be 0-100)", vol);
+      }
+    } else if (key == "mic_volume") {
+      float gain = std::stof(val);
+      if (gain >= 0 && gain <= 100) {
+        Board::getInstance().setRecordGain(gain);
+        ESP_LOGI(m_config.name, "Mic gain updated to %.1f", gain);
+      } else {
+        ESP_LOGW(m_config.name, "Invalid mic gain: %.1f (must be 0-100)", gain);
+      }
+    }
+  } catch (...) {
+    ESP_LOGE(m_config.name, "Failed to parse audio config: %s=%s", key.c_str(), val.c_str());
+  }
+}
+
+void MqttTask::handleLedConfig(const std::string &val) {
+  int r, g, b;
+  if (sscanf(val.c_str(), "%d,%d,%d", &r, &g, &b) == 3) {
+    Board::getInstance().setAllLedsColor((uint8_t)r, (uint8_t)g, (uint8_t)b);
+    ESP_LOGI(m_config.name, "LED color updated to %d,%d,%d", r, g, b);
+  } else {
+    ESP_LOGW(m_config.name, "Invalid led_color format: %s (expected r,g,b)", val.c_str());
   }
 }
 

@@ -22,6 +22,12 @@ enum class AudioStreamFormat {
   G711_ULAW  // 8-bit u-law compression
 };
 
+struct RgbColor {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+
 /**
  * @brief Unified Configuration Data Object
  */
@@ -33,7 +39,7 @@ struct GlobalSystemSettings {
 
   // Stream Configuration
   AudioStreamFormat stream_format = AudioStreamFormat::PCM_S16LE;
-  uint32_t sample_rate = 32000;
+  uint32_t sample_rate = 24000;
 
   // Network Settings
   std::string server_ip = "192.168.1.18";
@@ -72,7 +78,8 @@ ESP_EVENT_DECLARE_BASE(WIFI_SYSTEM_EVENTS);
 enum class AppEvent : uint32_t {
   WAKE_WORD_DETECTED,
   STREAMING_STOP_REQUESTED,
-  STOP_STREAMING
+  STOP_STREAMING,
+  LED_COLOR_UPDATE
 };
 
 /**

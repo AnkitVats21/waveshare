@@ -63,4 +63,8 @@ private:
   static void staticOutgoingDataHandler(void *handler_arg,
                                         esp_event_base_t base, int32_t id,
                                         void *event_data);
+
+  // Config Handlers
+  void handleAudioConfig(const std::string &key, const std::string &val);
+  void handleLedConfig(const std::string &val);
 };
