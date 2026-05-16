@@ -1,7 +1,6 @@
 #include "AudioService.h"
 #include "app/audio/AudioPipelineManager.h"
 #include "common/AppLogger.h"
-#include "hal/AudioHalManager.h"
 #include "hal/Board.h"
 #include "services/EventBus.h"
 
@@ -26,11 +25,21 @@ bool AudioService::begin(GlobalSystemSettings &settings,
   if (!m_board || !m_event_bus)
     return false;
 
-  // 1. Initialize the Hardware HAL first
-  if (!AudioHalManager::getInstance().begin(*m_settings, *m_handles, m_board)) {
-    LOGE_HAL("Failed to initialize Audio HAL for AudioService.");
-    return false;
+  // 1. Initialize the Hardware handles from Board
+  if (!m_board->isInitialized()) {
+    if (!m_board->begin()) {
+      LOGE_HAL("Failed to initialize physical board for AudioService.");
+      return false;
+    }
   }
+
+  // Map low-level driver handles to our system context
+  m_handles->speaker_tx_handle = m_board->getTxHandle();
+  m_handles->mic_rx_handle = m_board->getRxHandle();
+  m_handles->play_dev = m_board->getPlayDev();
+  m_handles->record_dev = m_board->getRecordDev();
+
+  LOGI_HAL("Audio hardware handles mapped directly from Board.");
 
   // 2. Build the Audio Pipeline (Pipes and RTP tasks)
   if (!AudioPipelineManager::initialize(*m_settings, *m_handles, *m_context)) {
@@ -56,10 +65,13 @@ bool AudioService::begin(GlobalSystemSettings &settings,
 
 void AudioService::onSystemEvent(void *handler_arg, esp_event_base_t base,
                                  int32_t id, void *event_data) {
+  AudioService *self = static_cast<AudioService *>(handler_arg);
+  if (!self) return;
+
   if (base == APP_EVENTS) {
     if (id == (int32_t)AppEvent::WAKE_WORD_DETECTED) {
       LOGI_AUDIO("Wake Word event received. Ensuring Mic Gain is optimal...");
-      AudioHalManager::getInstance().setMicGain(20.0f); // More reasonable gain
+      self->m_board->setRecordGain(20.0f); // More reasonable gain
     } else if (id == (int32_t)AppEvent::STOP_STREAMING) {
       LOGI_AUDIO("Streaming stop event. Resetting audio states.");
       // Reset volume or gain if needed

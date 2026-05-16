@@ -30,10 +30,10 @@ private:
   // Internal Bootstrapping
   void bootstrapAudio();
   void teardownNetworkServices();
+  void initMqtt();
 
   GlobalSystemSettings *m_settings = nullptr;
   GlobalPipelineContext *m_context = nullptr;
   HardwareAudioHandles *m_handles = nullptr;
-
   static constexpr const char *TAG = "AppCtrl";
 };

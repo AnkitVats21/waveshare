@@ -8,6 +8,7 @@
 #include "hal/Board.h"
 #include "hal/WifiManager.h"
 #include "services/EventBus.h"
+#include "app/mqtt/MqttTask.h"
 
 AppController &AppController::getInstance() {
   static AppController instance;
@@ -48,6 +49,9 @@ void AppController::onNetworkReady(void *handler_arg, esp_event_base_t base,
 
   // 2. Bootstrap Audio System
   self->bootstrapAudio();
+
+  // 3. Initialize MQTT
+  self->initMqtt();
 }
 
 void AppController::onNetworkLost(void *handler_arg, esp_event_base_t base,
@@ -75,4 +79,13 @@ void AppController::teardownNetworkServices() {
   LogRouter::getInstance().setNetworkStreamingState(
       LogRouter::State::ROUTE_CONSOLE_ONLY);
   AsyncNetLogger::getInstance().stopWorker();
+}
+
+void AppController::initMqtt() {
+  LOGI_SYSTEM("Initializing MQTT Task...");
+  if (MqttTask::getInstance().init()) {
+    LOGI_SYSTEM("MQTT Task started successfully.");
+  } else {
+    LOGE_SYSTEM("Failed to start MQTT Task.");
+  }
 }
