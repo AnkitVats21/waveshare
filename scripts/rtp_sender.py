@@ -24,7 +24,7 @@ CHUNK_SIZE = CHUNK_SAMPLES * 2
 class ChannelManager:
     def __init__(self):
         self.channels = {
-            "bigfmradio":
+            "bfm":
                 "https://stream-280.zeno.fm/dbstwo3dvhhtv?zt=eyJhbGciOiJIUzI1NiJ9.eyJzdHJlYW0iOiJkYnN0d28zZHZoaHR2IiwiaG9zdCI6InN0cmVhbS0yODAuemVuby5mbSIsInJ0dGwiOjUsImp0aSI6ImJLZVgxYnNqVFN5OTZqZHpqVVhXeXciLCJpYXQiOjE3Nzg5MjYxMDUsImV4cCI6MTc3ODkyNjE2NX0.oE4T0JPH1mSd3l-y8VgRMJVa4tGBp5Px1Ri94ItG2Gc",
 
             "hungama":
@@ -34,7 +34,7 @@ class ChannelManager:
                 "https://stream-175.zeno.fm/9phrkb1e3v8uv?zt=eyJhbGciOiJIUzI1NiJ9.eyJzdHJlYW0iOiI5cGhya2IxZTN2OHV2IiwiaG9zdCI6InN0cmVhbS0xNzUuemVuby5mbSIsInJ0dGwiOjUsImp0aSI6IlI3cFMzb1FZUVVTXzA0WDByaHY2bFEiLCJpYXQiOjE3Nzg5MzQ3ODEsImV4cCI6MTc3ODkzNDg0MX0.MOPJn-UtY-OZPcXsZ3L2bTO02ohm9ORGP-22CpDdgAY",
         }
 
-        self.current_channel = "bigfmradio"
+        self.current_channel = "hungama"
         self.lock = threading.Lock()
 
     def add_channel(self, name, url):

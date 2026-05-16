@@ -63,6 +63,30 @@ bool AudioService::begin(GlobalSystemSettings &settings,
   return true;
 }
 
+bool AudioService::reinit(uint32_t sample_rate) {
+    if (!m_initialized) return false;
+    
+    LOGI_AUDIO("AudioService: Reinitializing for sample rate %lu Hz", sample_rate);
+    
+    // 1. Stop high-level tasks and pipeline
+    AudioPipelineManager::teardown(*m_context);
+    
+    // 2. Reinit hardware via Board
+    m_board->reinitAudio(sample_rate);
+    
+    // 3. Update settings
+    m_settings->sample_rate = sample_rate;
+    
+    // 4. Update handles (they might have changed after reinit)
+    m_handles->speaker_tx_handle = m_board->getTxHandle();
+    m_handles->mic_rx_handle = m_board->getRxHandle();
+    m_handles->play_dev = m_board->getPlayDev();
+    m_handles->record_dev = m_board->getRecordDev();
+    
+    // 5. Restart pipeline
+    return AudioPipelineManager::initialize(*m_settings, *m_handles, *m_context);
+}
+
 void AudioService::onSystemEvent(void *handler_arg, esp_event_base_t base,
                                  int32_t id, void *event_data) {
   AudioService *self = static_cast<AudioService *>(handler_arg);

@@ -1,9 +1,8 @@
 #pragma once
 
-// #include "freertos/FreeRTOS.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
 #include "freertos/task.h"
-// #include <string>
 
 class RtpTaskBase {
 public:
@@ -29,6 +28,7 @@ protected:
   TaskHandle_t m_task_handle;
   int m_socket;
   const char *m_tag;
+  volatile bool m_is_running;
 
   // Pure virtual method: Derived classes implement their specific logic here
   virtual void processLoop() = 0;

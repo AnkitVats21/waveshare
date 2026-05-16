@@ -1,10 +1,12 @@
 #include "MqttTask.h"
+#include "app/audio/AudioService.h"
 #include "common/AppLogger.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "hal/Board.h"
 #include "mqtt_certificates.hpp"
 #include "services/EventBus.h"
-#include "hal/Board.h"
+#include <cstdint>
 #include <sstream>
 
 MqttTask::MqttTask(const TaskBase::Config &config) : TaskBase(config) {}
@@ -45,8 +47,7 @@ void MqttTask::run() {
     return;
   }
 
-  esp_mqtt_client_register_event(m_mqtt_handle,
-                                 MQTT_EVENT_ANY,
+  esp_mqtt_client_register_event(m_mqtt_handle, MQTT_EVENT_ANY,
                                  mqttEventHandlerBridge, this);
   esp_mqtt_client_start(m_mqtt_handle);
 
@@ -87,7 +88,8 @@ void MqttTask::handleMqttEvent(int32_t event_id,
     break;
 
   case MQTT_EVENT_DATA:
-    ESP_LOGI(m_config.name, "MQTT_EVENT_DATA: Topic=%.*s", event->topic_len, event->topic);
+    ESP_LOGI(m_config.name, "MQTT_EVENT_DATA: Topic=%.*s", event->topic_len,
+             event->topic);
     processIncomingData(event);
     break;
 
@@ -115,14 +117,16 @@ void MqttTask::processIncomingData(esp_mqtt_event_handle_t event) {
     std::stringstream ss(payload);
     std::string line;
     while (std::getline(ss, line)) {
-      if (!line.empty() && line.back() == '\r') line.pop_back();
-      
+      if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+
       size_t pos = line.find('=');
       if (pos != std::string::npos) {
         std::string key = line.substr(0, pos);
         std::string val = line.substr(pos + 1);
 
-        if (key == "speaker_volume" || key == "mic_volume") {
+        if (key == "speaker_volume" || key == "mic_volume" ||
+            key == "sample_rate") {
           handleAudioConfig(key, val);
         } else if (key == "led_color") {
           handleLedConfig(val);
@@ -135,17 +139,21 @@ void MqttTask::processIncomingData(esp_mqtt_event_handle_t event) {
     new_topic.erase(new_topic.find_last_not_of(" \n\r\t") + 1);
 
     if (!new_topic.empty()) {
-      int msg_id = esp_mqtt_client_subscribe(m_mqtt_handle, new_topic.c_str(), 0);
+      int msg_id =
+          esp_mqtt_client_subscribe(m_mqtt_handle, new_topic.c_str(), 0);
       if (msg_id >= 0) {
-        ESP_LOGI(m_config.name, "Dynamically subscribed to: %s (msg_id=%d)", new_topic.c_str(), msg_id);
+        ESP_LOGI(m_config.name, "Dynamically subscribed to: %s (msg_id=%d)",
+                 new_topic.c_str(), msg_id);
       } else {
-        ESP_LOGE(m_config.name, "Failed to subscribe to: %s", new_topic.c_str());
+        ESP_LOGE(m_config.name, "Failed to subscribe to: %s",
+                 new_topic.c_str());
       }
     }
   }
 }
 
-void MqttTask::handleAudioConfig(const std::string &key, const std::string &val) {
+void MqttTask::handleAudioConfig(const std::string &key,
+                                 const std::string &val) {
   try {
     if (key == "speaker_volume") {
       int vol = std::stoi(val);
@@ -153,7 +161,8 @@ void MqttTask::handleAudioConfig(const std::string &key, const std::string &val)
         Board::getInstance().setPlayVolume(vol);
         ESP_LOGI(m_config.name, "Speaker volume updated to %d", vol);
       } else {
-        ESP_LOGW(m_config.name, "Invalid speaker volume: %d (must be 0-100)", vol);
+        ESP_LOGW(m_config.name, "Invalid speaker volume: %d (must be 0-100)",
+                 vol);
       }
     } else if (key == "mic_volume") {
       float gain = std::stof(val);
@@ -163,9 +172,14 @@ void MqttTask::handleAudioConfig(const std::string &key, const std::string &val)
       } else {
         ESP_LOGW(m_config.name, "Invalid mic gain: %.1f (must be 0-100)", gain);
       }
+    } else if (key == "sample_rate") {
+      uint32_t sample_rate = std::stoi(val);
+      AudioService::getInstance().reinit(sample_rate);
+      ESP_LOGI(m_config.name, "Sample rate updated to %d", sample_rate);
     }
   } catch (...) {
-    ESP_LOGE(m_config.name, "Failed to parse audio config: %s=%s", key.c_str(), val.c_str());
+    ESP_LOGE(m_config.name, "Failed to parse audio config: %s=%s", key.c_str(),
+             val.c_str());
   }
 }
 
@@ -175,7 +189,8 @@ void MqttTask::handleLedConfig(const std::string &val) {
     Board::getInstance().setAllLedsColor((uint8_t)r, (uint8_t)g, (uint8_t)b);
     ESP_LOGI(m_config.name, "LED color updated to %d,%d,%d", r, g, b);
   } else {
-    ESP_LOGW(m_config.name, "Invalid led_color format: %s (expected r,g,b)", val.c_str());
+    ESP_LOGW(m_config.name, "Invalid led_color format: %s (expected r,g,b)",
+             val.c_str());
   }
 }
 

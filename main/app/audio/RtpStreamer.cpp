@@ -4,7 +4,6 @@
 #include "esp_random.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
-// #include "services/EventBus.h"
 #include <climits>
 #include <cstring>
 
@@ -18,9 +17,6 @@ void RtpStreamer::eventHandlerBridge(void *handler_arg, esp_event_base_t base,
     return;
 
   AppEvent event_id = static_cast<AppEvent>(id);
-
-  // Transition state based on event
-  // 1 = ACTIVE/STREAMING, 0 = IDLE/SUSPENDED
   xTaskNotify(instance->m_task_handle,
               (event_id == AppEvent::WAKE_WORD_DETECTED) ? 1 : 0,
               eSetValueWithOverwrite);
@@ -30,7 +26,6 @@ void RtpStreamer::processLoop() {
   m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
   if (m_socket < 0) {
     LOGE_NET("Failed to create TX socket");
-    vTaskDelete(NULL);
     return;
   }
 
@@ -48,52 +43,47 @@ void RtpStreamer::processLoop() {
   rtp_hdr->payload_type = m_tx_config.payload_type;
   rtp_hdr->ssrc = lwip_htonl(esp_random());
 
-  uint32_t notification_value = 1; // FORCED ACTIVE: Always stream for testing
+  uint32_t notification_value = 1; // FORCED ACTIVE for testing
 
-  while (true) {
+  while (m_is_running) {
     if (notification_value == 0) {
-      LOGI_NET("Entering suspended IDLE state for RTP Streamer.");
-      xTaskNotifyWait(0x00, ULONG_MAX, &notification_value, portMAX_DELAY);
+      xTaskNotifyWait(0x00, ULONG_MAX, &notification_value, pdMS_TO_TICKS(100));
+      if (!m_is_running) break;
+      
+      if (notification_value == 0) continue;
 
-      // Flush ring buffer to ensure fresh data when resuming
+      // Resuming... flush buffer
       size_t clear_size = 0;
       while (true) {
-        uint8_t *stale = static_cast<uint8_t *>(
-            xRingbufferReceive(m_ring_buffer, &clear_size, 0));
-        if (!stale)
-          break;
+        uint8_t *stale = static_cast<uint8_t *>(xRingbufferReceive(m_ring_buffer, &clear_size, 0));
+        if (!stale) break;
         vRingbufferReturnItem(m_ring_buffer, stale);
       }
-      LOGI_NET("RTP Buffer flushed. Ready for fresh streaming.");
       continue;
     }
 
     size_t chunk_size = 0;
     uint8_t *audio_ptr = static_cast<uint8_t *>(xRingbufferReceiveUpTo(
-        m_ring_buffer, &chunk_size, pdMS_TO_TICKS(20), 1400));
-
-    // Task notification check removed for 'Always Active' testing
+        m_ring_buffer, &chunk_size, pdMS_TO_TICKS(50), 1400));
 
     if (audio_ptr != nullptr) {
       rtp_hdr->sequence_num = lwip_htons(seq_num++);
       rtp_hdr->timestamp = lwip_htonl(timestamp_tracker);
 
-      // Update timestamp based on sample count
       if (m_tx_config.format == AudioStreamFormat::G711_ULAW) {
-        timestamp_tracker += chunk_size; // 1 byte = 1 sample
+        timestamp_tracker += chunk_size;
       } else {
-        timestamp_tracker += (chunk_size / 2); // 2 bytes = 1 sample
+        timestamp_tracker += (chunk_size / 2);
       }
 
       std::memcpy(tx_frame_buffer + 12, audio_ptr, chunk_size);
       vRingbufferReturnItem(m_ring_buffer, audio_ptr);
 
-      ssize_t sent = sendto(m_socket, tx_frame_buffer, 12 + chunk_size, 0,
-                            reinterpret_cast<struct sockaddr *>(&dest_addr),
-                            sizeof(dest_addr));
-      if (sent < 0) {
-        LOGE_NET("UDP sendto failed! errno: %d", errno);
-      }
+      sendto(m_socket, tx_frame_buffer, 12 + chunk_size, 0,
+             reinterpret_cast<struct sockaddr *>(&dest_addr), sizeof(dest_addr));
     }
   }
+
+  LOGI_NET("RtpStreamer task exiting...");
+  closeSocket();
 }

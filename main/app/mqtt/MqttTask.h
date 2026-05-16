@@ -4,12 +4,12 @@
 #include "mqtt_client.h"
 #include <string>
 
-
-#define CONFIG_MQTT_BROKER_URI "mqtts://your-hivemq-broker.cloud:8883"                                                                                                                                               
-#define CONFIG_MQTT_USERNAME "your_username"                                                                                                                                                                                                        
-#define CONFIG_MQTT_PASSWORD "your_password"                                                                                                                                                                                                  
-#define CONFIG_MQTT_CLIENT_ID "your_client_id"                                                                                                                                                                                            
-#define CONFIG_MQTT_LWT_TOPIC "runtime/status"   
+#define CONFIG_MQTT_BROKER_URI                                                 \
+  "mqtts://your-hivemq-broker.cloud:8883"
+#define CONFIG_MQTT_USERNAME "your_username"
+#define CONFIG_MQTT_PASSWORD "your_password"
+#define CONFIG_MQTT_CLIENT_ID "your_client_id"
+#define CONFIG_MQTT_LWT_TOPIC "runtime/status"
 
 enum class AppEventId : int32_t {
   MQTT_CONNECTED,
@@ -23,8 +23,7 @@ private:
   esp_mqtt_client_handle_t m_mqtt_handle = nullptr;
 
   // Configuration constants
-  static constexpr const char *MQTTS_BROKER_URI =
-      CONFIG_MQTT_BROKER_URI;
+  static constexpr const char *MQTTS_BROKER_URI = CONFIG_MQTT_BROKER_URI;
   static constexpr const char *MQTT_USERNAME = CONFIG_MQTT_USERNAME;
   static constexpr const char *MQTT_PASSWORD = CONFIG_MQTT_PASSWORD;
   static constexpr const char *MQTT_CLIENT_ID = CONFIG_MQTT_CLIENT_ID;
