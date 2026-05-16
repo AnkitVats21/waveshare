@@ -23,4 +23,3 @@ idf_component_register(
                             "services"
                             "common"
 )
-#        PRIV_REQUIRES espressif__esp-dsp mqtt

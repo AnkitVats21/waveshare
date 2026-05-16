@@ -1,8 +1,11 @@
 #include "MqttTask.h"
+#include "common/AppLogger.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "mqtt_certificates.hpp"
 #include "services/EventBus.h"
+#include "hal/Board.h"
+#include <sstream>
 
 MqttTask::MqttTask(const TaskBase::Config &config) : TaskBase(config) {}
 
@@ -43,7 +46,7 @@ void MqttTask::run() {
   }
 
   esp_mqtt_client_register_event(m_mqtt_handle,
-                                 (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID,
+                                 MQTT_EVENT_ANY,
                                  mqttEventHandlerBridge, this);
   esp_mqtt_client_start(m_mqtt_handle);
 
@@ -73,12 +76,19 @@ void MqttTask::handleMqttEvent(int32_t event_id,
   case MQTT_EVENT_CONNECTED:
     ESP_LOGI(m_config.name, "Securely connected to broker via TLS!");
     esp_mqtt_client_subscribe(m_mqtt_handle, "device/esp32s3/commands", 0);
+    esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG, 0);
+    esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_DYNAMIC_SUB, 0);
     bus.publish(APP_EVENTS, AppEventId::MQTT_CONNECTED, true);
     break;
 
   case MQTT_EVENT_DISCONNECTED:
     ESP_LOGW(m_config.name, "MQTTS Session Disconnected.");
     bus.publish(APP_EVENTS, AppEventId::MQTT_DISCONNECTED, false);
+    break;
+
+  case MQTT_EVENT_DATA:
+    ESP_LOGI(m_config.name, "MQTT_EVENT_DATA: Topic=%.*s", event->topic_len, event->topic);
+    processIncomingData(event);
     break;
 
   case MQTT_EVENT_ERROR:
@@ -93,6 +103,70 @@ void MqttTask::handleMqttEvent(int32_t event_id,
 
   default:
     break;
+  }
+}
+
+void MqttTask::processIncomingData(esp_mqtt_event_handle_t event) {
+  std::string topic(event->topic, event->topic_len);
+  std::string payload(event->data, event->data_len);
+
+  if (topic == TOPIC_CONFIG) {
+    LOGI_SYSTEM("Processing config update...");
+    std::stringstream ss(payload);
+    std::string line;
+    while (std::getline(ss, line)) {
+      // Remove any trailing \r from Windows-style line endings
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      
+      size_t pos = line.find('=');
+      if (pos != std::string::npos) {
+        std::string key = line.substr(0, pos);
+        std::string val_str = line.substr(pos + 1);
+
+        if (key == "speaker_volume") {
+          try {
+            int vol = std::stoi(val_str);
+            if (vol >= 0 && vol <= 100) {
+              Board::getInstance().setPlayVolume(vol);
+              ESP_LOGI(m_config.name, "Speaker volume updated to %d", vol);
+            } else {
+              ESP_LOGW(m_config.name, "Invalid speaker volume: %d (must be 0-100)", vol);
+            }
+          } catch (...) {
+            ESP_LOGE(m_config.name, "Failed to parse speaker_volume value: %s", val_str.c_str());
+          }
+        } else if (key == "mic_volume") {
+          try {
+            float gain = std::stof(val_str);
+            if (gain >= 0 && gain <= 100) {
+              Board::getInstance().setRecordGain(gain);
+              ESP_LOGI(m_config.name, "Mic gain updated to %.1f", gain);
+            } else {
+              ESP_LOGW(m_config.name, "Invalid mic gain: %.1f (must be 0-100)", gain);
+            }
+          } catch (...) {
+            ESP_LOGE(m_config.name, "Failed to parse mic_volume value: %s", val_str.c_str());
+          }
+        }
+      }
+    }
+  } else if (topic == TOPIC_DYNAMIC_SUB) {
+    // Dynamic subscription logic
+    std::string new_topic = payload;
+    // Basic trimming of whitespace/newlines
+    new_topic.erase(0, new_topic.find_first_not_of(" \n\r\t"));
+    new_topic.erase(new_topic.find_last_not_of(" \n\r\t") + 1);
+
+    if (!new_topic.empty()) {
+      int msg_id = esp_mqtt_client_subscribe(m_mqtt_handle, new_topic.c_str(), 0);
+      if (msg_id >= 0) {
+        ESP_LOGI(m_config.name, "Dynamically subscribed to: %s (msg_id=%d)", new_topic.c_str(), msg_id);
+      } else {
+        ESP_LOGE(m_config.name, "Failed to subscribe to: %s", new_topic.c_str());
+      }
+    }
   }
 }
 

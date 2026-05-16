@@ -44,14 +44,10 @@ dependencies:
       type: service
     version: 2.0.2
   espressif/led_strip:
-    component_hash: 28c6509a727ef74925b372ed404772aeedf11cce10b78c3f69b3c66799095e2d
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=4.4'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: components/espressif__led_strip
+      type: local
     version: 2.5.5
   espressif/mqtt:
     component_hash: ffdad5659706b4dc14bc63f8eb73ef765efa015bf7e9adf71c813d52a2dc9342
@@ -74,6 +70,6 @@ direct_dependencies:
 - espressif/led_strip
 - espressif/mqtt
 - idf
-manifest_hash: 24947b56e8715d0fd8de1155b7cf34c8213e546c8057af9a8ca59ca296e54403
+manifest_hash: 677900be8ce8f744fd53fc01281a799e76a71247f001d1da90f4aab719e50468
 target: esp32s3
 version: 3.0.0

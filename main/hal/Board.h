@@ -64,7 +64,7 @@ private:
 
   uint32_t m_sample_rate = 16000;
   int m_record_volume = 70;
-  int m_play_volume = 100;
+  int m_play_volume = 80;
 
   i2c_master_bus_handle_t m_i2c_bus = nullptr;
   i2s_chan_handle_t m_tx_handle = nullptr;
