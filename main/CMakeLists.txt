@@ -2,7 +2,6 @@ idf_component_register(
         SRCS "main.cpp"
                             "hal/WifiManager.cpp"
                             "hal/Board.cpp"
-                            "app/LedService.cpp"
                             "app/AppController.cpp"
                             "app/audio/AudioService.cpp"
                             "app/audio/RtpTaskBase.cpp"

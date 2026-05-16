@@ -603,6 +603,15 @@ void Board::setLedPixel(uint32_t index, uint32_t r, uint32_t g, uint32_t b) {
   }
 }
 
+void Board::setAllLedsColor(uint32_t r, uint32_t g, uint32_t b) {
+  if (m_led_strip) {
+    for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+      led_strip_set_pixel(m_led_strip, i, r, g, b);
+    }
+    led_strip_refresh(m_led_strip);
+  }
+}
+
 void Board::refreshLeds() {
   if (m_led_strip) {
     led_strip_refresh(m_led_strip);

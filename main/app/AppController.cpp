@@ -1,5 +1,4 @@
 #include "AppController.h"
-#include "app/LedService.h"
 #include "app/audio/AudioPipelineManager.h"
 #include "app/audio/AudioService.h"
 #include "common/AppLogger.h"
@@ -28,10 +27,8 @@ void AppController::begin(GlobalSystemSettings &settings,
   EventBus::getInstance().subscribe(WIFI_SYSTEM_EVENTS, WifiEvent::DISCONNECTED,
                                     &AppController::onNetworkLost, this);
 
-  // Initialize LED Service
-  LedService::getInstance().begin(&Board::getInstance(),
-                                  &EventBus::getInstance());
-  LedService::getInstance().setMode(LED_MODE_IDLE);
+  // Initialize LED color directly via Board
+  Board::getInstance().setAllLedsColor(0, 80, 0);
 
   LOGI_SYSTEM("AppController initialized and listening for system events.");
 }

@@ -41,6 +41,7 @@ public:
 
   // Low-level LED Control (Driver Layer)
   void setLedPixel(uint32_t index, uint32_t r, uint32_t g, uint32_t b);
+  void setAllLedsColor(uint32_t r, uint32_t g, uint32_t b);
   void refreshLeds();
   void clearLeds();
 
