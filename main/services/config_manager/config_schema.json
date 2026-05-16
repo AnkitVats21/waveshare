@@ -1,0 +1,17 @@
+{
+    "wifi": {
+        "ssid": {"type": "string", "size": 64, "default": ""},
+        "password": {"type": "string", "size": 64, "default": ""},
+        "static_ip": {"type": "bool", "default": false},
+        "ip": {"type": "string", "size": 16, "default": "0.0.0.0"},
+        "mask": {"type": "string", "size": 16, "default": "255.255.255.0"},
+        "gateway": {"type": "string", "size": 16, "default": "0.0.0.0"},
+        "dns": {"type": "string", "size": 16, "default": "8.8.8.8"}
+    },
+    "mqtt": {
+        "broker_uri": {"type": "string", "size": 128, "default": "mqtt://broker.emqx.io"},
+        "client_id": {"type": "string", "size": 64, "default": "esp32_device"},
+        "username": {"type": "string", "size": 64, "default": ""},
+        "password": {"type": "string", "size": 64, "default": ""}
+    }
+}
