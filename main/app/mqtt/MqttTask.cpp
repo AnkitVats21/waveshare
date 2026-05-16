@@ -22,7 +22,16 @@ MqttTask &MqttTask::getInstance() {
   return instance;
 }
 
-bool MqttTask::init() { return start(); }
+bool MqttTask::init(const GlobalSystemSettings &settings) {
+  // Populate initial cache from boot settings
+  m_cache.speaker_volume = 80; // Default or read from board
+  m_cache.mic_volume = 70.0f;
+  m_cache.sample_rate = settings.sample_rate;
+  m_cache.mic_enabled = settings.mic_enabled;
+  m_cache.led_color = {0, 80, 0}; // Initial green
+
+  return start();
+}
 
 void MqttTask::run() {
   ESP_LOGI(m_config.name, "MqttsTask Secure Singleton Thread running...");
@@ -157,29 +166,32 @@ void MqttTask::handleAudioConfig(const std::string &key,
   try {
     if (key == "speaker_volume") {
       int vol = std::stoi(val);
-      if (vol >= 0 && vol <= 100) {
+      if (vol >= 0 && vol <= 100 && vol != m_cache.speaker_volume) {
+        m_cache.speaker_volume = vol;
         Board::getInstance().setPlayVolume(vol);
         ESP_LOGI(m_config.name, "Speaker volume updated to %d", vol);
-      } else {
-        ESP_LOGW(m_config.name, "Invalid speaker volume: %d (must be 0-100)",
-                 vol);
       }
     } else if (key == "mic_volume") {
       float gain = std::stof(val);
-      if (gain >= 0 && gain <= 100) {
+      if (gain >= 0 && gain <= 100 && gain != m_cache.mic_volume) {
+        m_cache.mic_volume = gain;
         Board::getInstance().setRecordGain(gain);
         ESP_LOGI(m_config.name, "Mic gain updated to %.1f", gain);
-      } else {
-        ESP_LOGW(m_config.name, "Invalid mic gain: %.1f (must be 0-100)", gain);
       }
     } else if (key == "sample_rate") {
       uint32_t sample_rate = std::stoi(val);
-      AudioService::getInstance().reinit(sample_rate);
-      ESP_LOGI(m_config.name, "Sample rate updated to %d", sample_rate);
+      if (sample_rate != m_cache.sample_rate) {
+        m_cache.sample_rate = sample_rate;
+        AudioService::getInstance().reinit(sample_rate);
+        ESP_LOGI(m_config.name, "Sample rate updated to %d", sample_rate);
+      }
     } else if (key == "mic_enabled") {
       bool enabled = (val == "1" || val == "true");
-      AudioService::getInstance().setMicEnabled(enabled);
-      ESP_LOGI(m_config.name, "Mic enabled set to %d", enabled);
+      if (enabled != m_cache.mic_enabled) {
+        m_cache.mic_enabled = enabled;
+        AudioService::getInstance().setMicEnabled(enabled);
+        ESP_LOGI(m_config.name, "Mic enabled set to %d", enabled);
+      }
     }
   } catch (...) {
     ESP_LOGE(m_config.name, "Failed to parse audio config: %s=%s", key.c_str(),
@@ -190,8 +202,11 @@ void MqttTask::handleAudioConfig(const std::string &key,
 void MqttTask::handleLedConfig(const std::string &val) {
   int r, g, b;
   if (sscanf(val.c_str(), "%d,%d,%d", &r, &g, &b) == 3) {
-    Board::getInstance().setAllLedsColor((uint8_t)r, (uint8_t)g, (uint8_t)b);
-    ESP_LOGI(m_config.name, "LED color updated to %d,%d,%d", r, g, b);
+    if (r != m_cache.led_color.r || g != m_cache.led_color.g || b != m_cache.led_color.b) {
+      m_cache.led_color = {(uint8_t)r, (uint8_t)g, (uint8_t)b};
+      Board::getInstance().setAllLedsColor((uint8_t)r, (uint8_t)g, (uint8_t)b);
+      ESP_LOGI(m_config.name, "LED color updated to %d,%d,%d", r, g, b);
+    }
   } else {
     ESP_LOGW(m_config.name, "Invalid led_color format: %s (expected r,g,b)",
              val.c_str());

@@ -80,7 +80,7 @@ void AppController::teardownNetworkServices() {
 
 void AppController::initMqtt() {
   LOGI_SYSTEM("Initializing MQTT Task...");
-  if (MqttTask::getInstance().init()) {
+  if (MqttTask::getInstance().init(*m_settings)) {
     LOGI_SYSTEM("MQTT Task started successfully.");
   } else {
     LOGE_SYSTEM("Failed to start MQTT Task.");
