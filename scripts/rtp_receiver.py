@@ -5,7 +5,7 @@ import sys
 # Configuration
 UDP_IP = "0.0.0.0"
 UDP_PORT = 5005
-OUTPUT_FILE = "test_recording.wav"
+OUTPUT_FILE = "recordings/test_recording.wav"
 SAMPLE_RATE = 16000
 CHANNELS = 1
 

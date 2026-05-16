@@ -16,6 +16,17 @@
 #include "sdmmc_cmd.h"
 #include <string.h>
 
+/*
+WAKE WORD to be implemented along with AEC and VAD in the future. For now, we
+will just capture raw audio data from the ADC and provide it to the application
+layer for processing. The getAecFrames() method will return interleaved frames
+containing both the microphone signal and the reference signal for AEC, allowing
+the application to implement its own AEC algorithm or pass the data to
+a third-party library for processing. This approach keeps the Board classfocused
+on hardware interfacing, while giving maximum flexibility to the application
+layer for audio processing and wake word detection.
+*/
+
 Board &Board::getInstance() {
   static Board instance;
   return instance;
