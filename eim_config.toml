@@ -1,0 +1,29 @@
+path = "/home/ankitm/.espressif"
+idf_path = "/home/ankitm/.espressif/v6.0.1/esp-idf"
+esp_idf_json_path = "/home/ankitm/.espressif/tools"
+tool_download_folder_name = "/home/ankitm/.espressif/dist"
+tool_install_folder_name = "/home/ankitm/.espressif/tools"
+target = ["all"]
+idf_versions = ["v6.0.1"]
+tools_json_file = "tools/tools.json"
+config_file_save_path = "eim_config.toml"
+non_interactive = true
+wizard_all_questions = false
+mirror = "https://github.com"
+idf_mirror = "https://github.com"
+pypi_mirror = "https://pypi.org/simple"
+recurse_submodules = true
+install_all_prerequisites = true
+idf_features = ["mcp"]
+skip_prerequisites_check = false
+cleanup = false
+python_env_folder_name = "python"
+activation_script_path_override = "/home/ankitm/.espressif/tools"
+python_version_override = "python313"
+create_bat_activation_script = false
+
+[idf_features_per_version]
+"v6.0.1" = ["mcp"]
+
+[idf_tools_per_version]
+"v6.0.1" = ["xtensa-esp-elf-gdb", "riscv32-esp-elf-gdb", "xtensa-esp-elf", "esp-clang", "esp-clang-libs", "riscv32-esp-elf", "esp32ulp-elf", "cmake", "openocd-esp32", "ninja", "esp-rom-elfs"]

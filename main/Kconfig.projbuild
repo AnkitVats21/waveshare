@@ -1,0 +1,262 @@
+menu "Waveshare Audio Development Board Config"
+
+menu "Board Pin Defaults"
+
+config WAVESHARE_BOARD_I2C_SCL_GPIO
+    int "Board I2C SCL GPIO"
+    range 0 48
+    default 10
+
+config WAVESHARE_BOARD_I2C_SDA_GPIO
+    int "Board I2C SDA GPIO"
+    range 0 48
+    default 11
+
+config WAVESHARE_BOARD_I2S_MCLK_GPIO
+    int "Board I2S MCLK GPIO"
+    range 0 48
+    default 12
+
+config WAVESHARE_BOARD_I2S_BCLK_GPIO
+    int "Board I2S BCLK GPIO"
+    range 0 48
+    default 13
+
+config WAVESHARE_BOARD_I2S_LRCK_GPIO
+    int "Board I2S LRCK GPIO"
+    range 0 48
+    default 14
+
+config WAVESHARE_BOARD_I2S_DOUT_GPIO
+    int "Board I2S DOUT GPIO"
+    range 0 48
+    default 16
+
+config WAVESHARE_BOARD_I2S_DIN_GPIO
+    int "Board I2S DIN GPIO"
+    range 0 48
+    default 15
+
+config WAVESHARE_BOARD_RGB_LED_GPIO
+    int "Board RGB LED GPIO"
+    range 0 48
+    default 38
+
+config WAVESHARE_BOARD_SDMMC_CLK_GPIO
+    int "Board SDMMC CLK GPIO"
+    range 0 48
+    default 40
+
+config WAVESHARE_BOARD_SDMMC_D0_GPIO
+    int "Board SDMMC D0 GPIO"
+    range 0 48
+    default 41
+
+config WAVESHARE_BOARD_SDMMC_CMD_GPIO
+    int "Board SDMMC CMD GPIO"
+    range 0 48
+    default 42
+
+config WAVESHARE_BOARD_SD_CD_EXIO
+    int "Board SD card detect EXIO index"
+    range 0 15
+    default 3
+
+config WAVESHARE_BOARD_PA_EN_EXIO
+    int "Board PA enable EXIO index"
+    range 0 15
+    default 8
+
+config WAVESHARE_BOARD_KEY1_EXIO
+    int "Board KEY1 EXIO index"
+    range 0 15
+    default 9
+
+config WAVESHARE_BOARD_KEY2_EXIO
+    int "Board KEY2 EXIO index"
+    range 0 15
+    default 10
+
+config WAVESHARE_BOARD_KEY3_EXIO
+    int "Board KEY3 EXIO index"
+    range 0 15
+    default 11
+
+endmenu
+
+menu "Hardware Services"
+
+config WAVESHARE_HW_I2C_ENABLE
+    bool "Enable board hardware services"
+    default y
+
+config WAVESHARE_HW_I2C_PORT
+    int "Hardware I2C port"
+    depends on WAVESHARE_HW_I2C_ENABLE
+    range 0 1
+    default 0
+
+config WAVESHARE_HW_I2C_FREQ_HZ
+    int "Hardware I2C clock (Hz)"
+    depends on WAVESHARE_HW_I2C_ENABLE
+    range 10000 1000000
+    default 100000
+
+config WAVESHARE_HW_I2C_TIMEOUT_MS
+    int "Hardware I2C timeout (ms)"
+    depends on WAVESHARE_HW_I2C_ENABLE
+    range 10 5000
+    default 500
+
+config WAVESHARE_HW_TCA9555_ENABLE
+    bool "Enable TCA9555 IO expander"
+    depends on WAVESHARE_HW_I2C_ENABLE
+    default y
+
+config WAVESHARE_HW_TCA9555_ADDRESS
+    hex "TCA9555 I2C address"
+    depends on WAVESHARE_HW_TCA9555_ENABLE
+    range 0x20 0x27
+    default 0x20
+
+config WAVESHARE_HW_AUDIO_PA_ACTIVE_HIGH
+    bool "PA enable signal is active high"
+    depends on WAVESHARE_HW_TCA9555_ENABLE
+    default y
+
+config WAVESHARE_HW_AUDIO_PA_DEFAULT_ON
+    bool "Enable PA during hardware init"
+    depends on WAVESHARE_HW_TCA9555_ENABLE
+    default n
+
+config WAVESHARE_HW_SD_CARD_DETECT_ACTIVE_LOW
+    bool "SD card detect signal is active low"
+    depends on WAVESHARE_HW_TCA9555_ENABLE
+    default y
+
+config WAVESHARE_HW_KEYS_ACTIVE_LOW
+    bool "Board keys are active low"
+    depends on WAVESHARE_HW_TCA9555_ENABLE
+    default y
+
+endmenu
+
+config WAVESHARE_WIFI_ENABLE
+    bool "Enable Wi-Fi station runtime"
+    default y
+
+config WAVESHARE_WIFI_SSID
+    string "Wi-Fi SSID"
+    depends on WAVESHARE_WIFI_ENABLE
+    default ""
+
+config WAVESHARE_WIFI_PASSWORD
+    string "Wi-Fi password"
+    depends on WAVESHARE_WIFI_ENABLE
+    default ""
+
+config WAVESHARE_WIFI_MAXIMUM_RETRY
+    int "Wi-Fi reconnect attempts"
+    depends on WAVESHARE_WIFI_ENABLE
+    range 1 20
+    default 5
+
+config WAVESHARE_WIFI_CONNECT_TIMEOUT_MS
+    int "Wi-Fi connect timeout (ms)"
+    depends on WAVESHARE_WIFI_ENABLE
+    range 1000 60000
+    default 15000
+
+config WAVESHARE_SDCARD_ENABLE
+    bool "Enable SD card runtime"
+    default y
+
+config WAVESHARE_SDCARD_MOUNT_POINT
+    string "SD card mount point"
+    depends on WAVESHARE_SDCARD_ENABLE
+    default "/sdcard"
+
+config WAVESHARE_SDCARD_USE_SDMMC
+    bool "Use SDMMC mode for SD card"
+    depends on WAVESHARE_SDCARD_ENABLE
+    default y
+
+config WAVESHARE_SDCARD_SDMMC_SLOT
+    int "SDMMC slot index"
+    depends on WAVESHARE_SDCARD_ENABLE
+    range 0 1
+    default 0
+
+config WAVESHARE_SDCARD_PIN_CLK
+    int "SD card CLK pin"
+    depends on WAVESHARE_SDCARD_ENABLE
+    range 0 48
+    default WAVESHARE_BOARD_SDMMC_CLK_GPIO
+
+config WAVESHARE_SDCARD_PIN_D0
+    int "SD card D0 pin"
+    depends on WAVESHARE_SDCARD_ENABLE
+    range 0 48
+    default WAVESHARE_BOARD_SDMMC_D0_GPIO
+
+config WAVESHARE_SDCARD_PIN_CMD
+    int "SD card CMD pin"
+    depends on WAVESHARE_SDCARD_ENABLE
+    range 0 48
+    default WAVESHARE_BOARD_SDMMC_CMD_GPIO
+
+config WAVESHARE_SDCARD_FORMAT_IF_MOUNT_FAILED
+    bool "Format SD card if mount fails"
+    depends on WAVESHARE_SDCARD_ENABLE
+    default n
+
+config WAVESHARE_MQTT_ENABLE
+    bool "Enable MQTT runtime"
+    default y
+
+config WAVESHARE_MQTT_BROKER_URI
+    string "MQTT broker URI"
+    depends on WAVESHARE_MQTT_ENABLE
+    default "mqtt://broker.emqx.io"
+
+config WAVESHARE_MQTT_USERNAME
+    string "MQTT username"
+    depends on WAVESHARE_MQTT_ENABLE
+    default ""
+
+config WAVESHARE_MQTT_PASSWORD
+    string "MQTT password"
+    depends on WAVESHARE_MQTT_ENABLE
+    default ""
+
+config WAVESHARE_MQTT_CLIENT_ID
+    string "MQTT client ID"
+    depends on WAVESHARE_MQTT_ENABLE
+    default "advanced-ota-runtime"
+
+config WAVESHARE_MQTT_LWT_TOPIC
+    string "MQTT last will topic"
+    depends on WAVESHARE_MQTT_ENABLE
+    default "runtime/status"
+
+menu "Wake Word Detection"
+
+config WAVESHARE_WAKEWORD_ENABLE
+    bool "Enable Wake Word Detection service"
+    default n
+
+config WAVESHARE_WAKEWORD_MODEL_NAME
+    string "Wake Word model name (e.g. 'hi_esp')"
+    depends on WAVESHARE_WAKEWORD_ENABLE
+    default "hi_esp"
+
+config WAVESHARE_WAKEWORD_THRESHOLD
+    float "Wake Word detection threshold"
+    depends on WAVESHARE_WAKEWORD_ENABLE
+    range 0 1
+    default 0.7
+
+endmenu
+
+endmenu
+

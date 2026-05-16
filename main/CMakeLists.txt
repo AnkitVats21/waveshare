@@ -1,2 +1,25 @@
-idf_component_register(SRCS "main.c"
-                    INCLUDE_DIRS ".")
+idf_component_register(
+        SRCS "main.cpp"
+                            "hal/WifiManager.cpp"
+                            "hal/AudioHalManager.cpp"
+                            "hal/Board.cpp"
+                            "app/LedService.cpp"
+                            "app/AppController.cpp"
+                            "app/audio/AudioService.cpp"
+                            "app/audio/RtpTaskBase.cpp"
+                            "app/audio/RtpStreamer.cpp"
+                            "app/audio/RtpReceiver.cpp"
+                            "app/audio/AudioPipelineManager.cpp"
+                            "app/audio/MicCapture.cpp"
+                            "app/audio/SpeakerPlayback.cpp"
+                            "services/EventBus.cpp"
+                            "common/LogRouter.cpp"
+                            "common/AsyncNetLogger.cpp"
+        INCLUDE_DIRS "."
+                            "hal"
+                            "app"
+                            "app/audio"
+                            "services"
+                            "common"
+        PRIV_REQUIRES espressif__esp-dsp
+)

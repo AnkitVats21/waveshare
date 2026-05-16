@@ -1,0 +1,26 @@
+#include "EventBus.h"
+#include "common/AppLogger.h"
+#include "common/app_types.h"
+
+// Define the event bases
+ESP_EVENT_DEFINE_BASE(APP_EVENTS);
+ESP_EVENT_DEFINE_BASE(AUDIO_SYSTEM_EVENTS);
+
+EventBus::EventBus() : custom_loop(nullptr) {}
+
+EventBus &EventBus::getInstance() {
+  static EventBus instance;
+  return instance;
+}
+
+void EventBus::init() {
+  LOGI_SYSTEM("Initializing Application Event Bus...");
+  esp_event_loop_args_t loop_args = {
+      .queue_size = 10,
+      .task_name = "app_event_loop_task",
+      .task_priority = 5, // Low priority to protect Wi-Fi
+      .task_stack_size = 4096,
+      .task_core_id = 0 // Pinned to Core 0
+  };
+  esp_event_loop_create(&loop_args, &custom_loop);
+}
