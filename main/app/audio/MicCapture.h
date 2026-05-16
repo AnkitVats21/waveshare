@@ -30,6 +30,11 @@ public:
    */
   void stop();
 
+  /**
+   * @brief Soft enable/disable of the capture loop
+   */
+  void setEnabled(bool enabled) { m_is_enabled = enabled; }
+
 private:
   // Persistent state variables inside the class instance context
   GlobalSystemSettings m_settings;
@@ -37,6 +42,7 @@ private:
   RingbufHandle_t m_tx_buffer;
   TaskHandle_t m_task_handle;
   volatile bool m_is_running;
+  volatile bool m_is_enabled = true;
   float *m_lms_coeffs;
   float *m_lms_delay_line;
   static constexpr int LMS_FILTER_SIZE = 128; // Adjust for echo tail length

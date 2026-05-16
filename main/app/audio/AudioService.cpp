@@ -87,6 +87,11 @@ bool AudioService::reinit(uint32_t sample_rate) {
     return AudioPipelineManager::initialize(*m_settings, *m_handles, *m_context);
 }
 
+void AudioService::setMicEnabled(bool enabled) {
+    if (m_settings) m_settings->mic_enabled = enabled;
+    AudioPipelineManager::setMicEnabled(enabled);
+}
+
 void AudioService::onSystemEvent(void *handler_arg, esp_event_base_t base,
                                  int32_t id, void *event_data) {
   AudioService *self = static_cast<AudioService *>(handler_arg);

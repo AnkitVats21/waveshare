@@ -13,7 +13,7 @@ import threading
 ESP32_IP = "192.168.1.19"
 UDP_PORT = 5006
 
-SAMPLE_RATE = 24000
+SAMPLE_RATE = 32000
 CHUNK_SAMPLES = 640          # 40ms @ 16kHz
 CHUNK_SIZE = CHUNK_SAMPLES * 2
 
@@ -34,7 +34,7 @@ class ChannelManager:
                 "https://stream-175.zeno.fm/9phrkb1e3v8uv?zt=eyJhbGciOiJIUzI1NiJ9.eyJzdHJlYW0iOiI5cGhya2IxZTN2OHV2IiwiaG9zdCI6InN0cmVhbS0xNzUuemVuby5mbSIsInJ0dGwiOjUsImp0aSI6IlI3cFMzb1FZUVVTXzA0WDByaHY2bFEiLCJpYXQiOjE3Nzg5MzQ3ODEsImV4cCI6MTc3ODkzNDg0MX0.MOPJn-UtY-OZPcXsZ3L2bTO02ohm9ORGP-22CpDdgAY",
         }
 
-        self.current_channel = "hungama"
+        self.current_channel = "bfm"
         self.lock = threading.Lock()
 
     def add_channel(self, name, url):

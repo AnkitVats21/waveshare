@@ -126,7 +126,7 @@ void MqttTask::processIncomingData(esp_mqtt_event_handle_t event) {
         std::string val = line.substr(pos + 1);
 
         if (key == "speaker_volume" || key == "mic_volume" ||
-            key == "sample_rate") {
+            key == "sample_rate" || key == "mic_enabled") {
           handleAudioConfig(key, val);
         } else if (key == "led_color") {
           handleLedConfig(val);
@@ -176,6 +176,10 @@ void MqttTask::handleAudioConfig(const std::string &key,
       uint32_t sample_rate = std::stoi(val);
       AudioService::getInstance().reinit(sample_rate);
       ESP_LOGI(m_config.name, "Sample rate updated to %d", sample_rate);
+    } else if (key == "mic_enabled") {
+      bool enabled = (val == "1" || val == "true");
+      AudioService::getInstance().setMicEnabled(enabled);
+      ESP_LOGI(m_config.name, "Mic enabled set to %d", enabled);
     }
   } catch (...) {
     ESP_LOGE(m_config.name, "Failed to parse audio config: %s=%s", key.c_str(),

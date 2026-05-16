@@ -105,3 +105,13 @@ void AudioPipelineManager::teardown(GlobalPipelineContext &context) {
     
     LOGI_AUDIO("Audio Pipeline teardown complete.");
 }
+
+void AudioPipelineManager::setMicEnabled(bool enabled) {
+    if (m_mic_task) {
+        m_mic_task->setEnabled(enabled);
+    }
+    if (m_rtp_tx) {
+        m_rtp_tx->setEnabled(enabled);
+    }
+    LOGI_AUDIO("Mic pipeline %s (Task + RTP)", enabled ? "ENABLED" : "SOFT-DISABLED");
+}

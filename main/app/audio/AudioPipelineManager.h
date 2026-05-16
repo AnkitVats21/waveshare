@@ -25,6 +25,11 @@ public:
    */
   static void teardown(GlobalPipelineContext &context);
 
+  /**
+   * @brief Toggle mic capture task state
+   */
+  static void setMicEnabled(bool enabled);
+
 private:
   static MicCaptureTask *m_mic_task;
   static SpeakerPlaybackTask *m_speaker_task;

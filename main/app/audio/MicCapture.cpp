@@ -47,6 +47,11 @@ void MicCaptureTask::worker() {
       "Live Audio Feed Pipeline Active: Passthrough Enabled (No AEC/LMS).");
 
   while (this->m_is_running) {
+    if (!m_is_enabled) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+
     // Call the updated board function to get a clean mono 16kHz audio chunk
     // directly
     if (board.getFeedData(pcm_buffer, SAMPLES_PER_CHUNK) == ESP_OK) {
