@@ -2,6 +2,7 @@
 
 #include "common/TaskBase.h"
 #include "mqtt_client.h"
+#include <string>
 
 
 #define CONFIG_MQTT_BROKER_URI "mqtts://your-hivemq-broker.cloud:8883"                                                                                                                                               
@@ -28,6 +29,8 @@ private:
   static constexpr const char *MQTT_PASSWORD = CONFIG_MQTT_PASSWORD;
   static constexpr const char *MQTT_CLIENT_ID = CONFIG_MQTT_CLIENT_ID;
   static constexpr const char *MQTT_LWT_TOPIC = CONFIG_MQTT_LWT_TOPIC;
+  static constexpr const char *TOPIC_CONFIG = "device/waveshare/config";
+  static constexpr const char *TOPIC_DYNAMIC_SUB = "device/subscribe/topic";
 
   // Enforce private constructors for Singleton Pattern
   MqttTask(const TaskBase::Config &config);
@@ -56,6 +59,7 @@ private:
   static void mqttEventHandlerBridge(void *handler_args, esp_event_base_t base,
                                      int32_t event_id, void *event_data);
   void handleMqttEvent(int32_t event_id, esp_mqtt_event_handle_t event);
+  void processIncomingData(esp_mqtt_event_handle_t event);
   static void staticOutgoingDataHandler(void *handler_arg,
                                         esp_event_base_t base, int32_t id,
                                         void *event_data);
