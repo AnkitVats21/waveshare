@@ -24,6 +24,11 @@ public:
              HardwareAudioHandles &handles, Board *board, EventBus *event_bus);
 
   /**
+   * @brief Reinitialize audio with a new configuration (e.g. sample rate change)
+   */
+  bool reinit(uint32_t sample_rate);
+
+  /**
    * @brief Check if the service is initialized
    */
   bool isInitialized() const { return m_initialized; }

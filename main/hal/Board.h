@@ -9,6 +9,7 @@
 #include "hal/Board_defs.h"
 #include "hal/HalBase.h"
 #include "led_strip.h"
+#include <cstdint>
 
 /**
  * @brief Board class to handle hardware-level initialization and access.
@@ -58,6 +59,9 @@ public:
 
   // SD Card
   esp_err_t initSdCard(const char *mount_point, size_t max_files);
+
+  esp_err_t deinitAudio();
+  esp_err_t reinitAudio(uint32_t sample_rate);
 
 private:
   Board() = default;

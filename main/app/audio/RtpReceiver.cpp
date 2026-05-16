@@ -1,14 +1,12 @@
 #include "RtpReceiver.h"
 #include "common/AppLogger.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include <string.h>
+#include "lwip/sockets.h"
 
 void RtpReceiver::processLoop() {
   m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
   if (m_socket < 0) {
     LOGE_NET("Failed to create RX socket");
-    vTaskDelete(NULL);
     return;
   }
 
@@ -20,59 +18,45 @@ void RtpReceiver::processLoop() {
   if (bind(m_socket, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
     LOGE_NET("Failed to bind RX socket on port %d", m_config.port);
     closeSocket();
-    vTaskDelete(NULL);
     return;
   }
 
-  uint8_t rx_packet_buffer[1500]; // Max Ethernet MTU
+  // Set receive timeout to prevent infinite blocking and allow m_is_running check
+  struct timeval timeout;
+  timeout.tv_sec = 1;
+  timeout.tv_usec = 0;
+  setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+  uint8_t rx_packet_buffer[1500];
   LOGI_NET("Smart RTP Listener Active on Port %d", m_config.port);
 
-  // uint16_t last_seq = 0;
-  // bool first_packet = true;
-
-  while (true) {
+  while (m_is_running) {
     struct sockaddr_in source_addr;
     socklen_t socklen = sizeof(source_addr);
 
-    int bytes_received =
-        recvfrom(m_socket, rx_packet_buffer, sizeof(rx_packet_buffer), 0,
-                 (struct sockaddr *)&source_addr, &socklen);
+    int bytes_received = recvfrom(m_socket, rx_packet_buffer, sizeof(rx_packet_buffer), 0,
+                                  (struct sockaddr *)&source_addr, &socklen);
 
-    if (bytes_received > 12) {
-      // 1. Parse RTP Header
-      // uint16_t seq = (rx_packet_buffer[2] << 8) | rx_packet_buffer[3];
+    if (bytes_received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            continue; // Timeout, just check m_is_running again
+        }
+        LOGE_NET("recvfrom error: %d", errno);
+        vTaskDelay(pdMS_TO_TICKS(100)); // Prevent tight loop on error
+        continue;
+    }
 
-      // 2. Detect Packet Loss
-      // if (!first_packet) {
-      //     uint16_t expected = last_seq + 1;
-      //     if (seq != expected) {
-      //         LOGW_NET("RTP Gap Detected! Expected %d, Got %d", expected,
-      //         seq);
-      //     }
-      // }
-      // first_packet = false;
-      // last_seq = seq;
-
-      // 3. Extract Payload
+    if (bytes_received > 12 && m_is_running) {
       uint8_t *payload_ptr = rx_packet_buffer + 12;
       size_t payload_size = bytes_received - 12;
 
-      // 4. Robust Transmit to RingBuffer
-      // Using 50ms timeout to survive bursty network traffic
-      BaseType_t ok = xRingbufferSend(m_ring_buffer, payload_ptr, payload_size,
-                                      pdMS_TO_TICKS(50));
-
+      BaseType_t ok = xRingbufferSend(m_ring_buffer, payload_ptr, payload_size, pdMS_TO_TICKS(10));
       if (ok != pdTRUE) {
-        LOGW_NET("RX RingBuffer FULL - Packet dropped! Size: %zu",
-                 payload_size);
+        // Buffer full
       }
     }
   }
-}
 
-void RtpReceiver::closeSocket() {
-  if (m_socket >= 0) {
-    close(m_socket);
-    m_socket = -1;
-  }
+  LOGI_NET("RtpReceiver task exiting...");
+  closeSocket();
 }

@@ -266,7 +266,7 @@ esp_err_t Board::initCodecs(uint32_t sample_rate) {
 }
 
 esp_err_t Board::getFeedData(int16_t *buffer, int buffer_len) {
-  if (!m_record_dev)
+  if (!m_initialized || !m_record_dev)
     return ESP_FAIL;
 
   // Mono calculation: 1 channel * 2 bytes per sample = 2 bytes per sample point
@@ -282,27 +282,27 @@ esp_err_t Board::getFeedData(int16_t *buffer, int buffer_len) {
 }
 
 esp_err_t Board::setPlayVolume(int volume) {
-  if (!m_play_dev)
+  if (!m_initialized || !m_play_dev)
     return ESP_FAIL;
   m_play_volume = volume;
   return esp_codec_dev_set_out_vol(m_play_dev, volume);
 }
 
 esp_err_t Board::getPlayVolume(int *volume) {
-  if (!m_play_dev)
+  if (!m_initialized || !m_play_dev)
     return ESP_FAIL;
   return esp_codec_dev_get_out_vol(m_play_dev, volume);
 }
 
 esp_err_t Board::setRecordGain(float db_value) {
-  if (!m_record_dev)
+  if (!m_initialized || !m_record_dev)
     return ESP_FAIL;
   m_record_volume = (int)db_value;
   return esp_codec_dev_set_in_gain(m_record_dev, db_value);
 }
 
 esp_err_t Board::getAecFrames(AudioFrame *frames, int num_frames) {
-  if (!m_record_dev || !m_tdm_work_buffer)
+  if (!m_initialized || !m_record_dev || !m_tdm_work_buffer)
     return ESP_FAIL;
 
   // Calculate bytes: 4 channels * 2 bytes per sample * number of frames
@@ -369,6 +369,63 @@ esp_err_t Board::initSdCard(const char *mount_point, size_t max_files) {
   }
   sdmmc_card_print_info(stdout, card);
   return ESP_OK;
+}
+
+esp_err_t Board::deinitAudio() {
+  // Guard to ensure we only deinit if hardware was actually running
+  if (!m_initialized) {
+    ESP_LOGI(TAG, "Board not initialized");
+    return ESP_OK;
+  }
+
+  // 1. Deinit Codec Devices (Close then Delete)
+  if (m_record_dev) {
+    esp_codec_dev_close(m_record_dev);
+    esp_codec_dev_delete(m_record_dev);
+    m_record_dev = nullptr;
+  }
+  if (m_play_dev) {
+    esp_codec_dev_close(m_play_dev);
+    esp_codec_dev_delete(m_play_dev);
+    m_play_dev = nullptr;
+  }
+
+  // 2. Deinit I2S Channels (Disable then Delete)
+  if (m_tx_handle) {
+    i2s_channel_disable(m_tx_handle);
+    i2s_del_channel(m_tx_handle);
+    m_tx_handle = nullptr;
+  }
+  if (m_rx_handle) {
+    i2s_channel_disable(m_rx_handle);
+    i2s_del_channel(m_rx_handle);
+    m_rx_handle = nullptr;
+  }
+
+  // m_initialized = false;
+  ESP_LOGI(TAG, "Audio deinitialized");
+  return ESP_OK;
+}
+
+esp_err_t Board::reinitAudio(uint32_t sample_rate) {
+  esp_err_t res = ESP_OK;
+  if (!m_initialized) {
+    ESP_LOGE(TAG, "Board not initialized");
+    res = ESP_FAIL;
+  }
+  if (deinitAudio() != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to deinit audio");
+    res = ESP_FAIL;
+  }
+  if (initI2s(sample_rate) != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to reinit I2S");
+    res = ESP_FAIL;
+  }
+  if (initCodecs(sample_rate) != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to reinit Codecs");
+    res = ESP_FAIL;
+  }
+  return res;
 }
 
 void Board::initRgbLeds() {
