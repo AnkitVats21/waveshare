@@ -3,6 +3,7 @@
 #include "common/TaskBase.h"
 #include "mqtt_client.h"
 #include <string>
+#include "common/app_types.h"
 
 #define CONFIG_MQTT_BROKER_URI                                                 \
   "mqtts://your-hivemq-broker.cloud:8883"
@@ -49,7 +50,7 @@ public:
   /**
    * @brief Safe startup method separating allocation from execution.
    */
-  bool init();
+  bool init(const GlobalSystemSettings &settings);
 
 protected:
   void run() override;
@@ -66,4 +67,12 @@ private:
   // Config Handlers
   void handleAudioConfig(const std::string &key, const std::string &val);
   void handleLedConfig(const std::string &val);
+
+  struct {
+    int speaker_volume;
+    float mic_volume;
+    uint32_t sample_rate;
+    bool mic_enabled;
+    struct { uint8_t r, g, b; } led_color;
+  } m_cache;
 };
