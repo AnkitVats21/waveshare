@@ -5,7 +5,7 @@
 RtpTaskBase::RtpTaskBase(const CommonConfig &config,
                          RingbufHandle_t ring_buffer, const char *log_tag)
     : m_config(config), m_ring_buffer(ring_buffer), m_task_handle(nullptr),
-      m_socket(-1), m_tag(log_tag), m_is_running(false) {}
+      m_socket(-1), m_tag(log_tag), m_is_running(false), m_is_enabled(true) {}
 
 RtpTaskBase::~RtpTaskBase() { stop(); }
 

@@ -22,6 +22,8 @@ public:
 
   void stop();
 
+  void setEnabled(bool enabled) { m_is_enabled = enabled; }
+
 protected:
   CommonConfig m_config;
   RingbufHandle_t m_ring_buffer;
@@ -29,6 +31,7 @@ protected:
   int m_socket;
   const char *m_tag;
   volatile bool m_is_running;
+  volatile bool m_is_enabled;
 
   // Pure virtual method: Derived classes implement their specific logic here
   virtual void processLoop() = 0;

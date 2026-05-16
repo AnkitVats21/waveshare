@@ -40,6 +40,7 @@ struct GlobalSystemSettings {
   // Stream Configuration
   AudioStreamFormat stream_format = AudioStreamFormat::PCM_S16LE;
   uint32_t sample_rate = 24000;
+  bool mic_enabled = true;
 
   // Network Settings
   std::string server_ip = "192.168.1.18";

@@ -46,6 +46,11 @@ void RtpStreamer::processLoop() {
   uint32_t notification_value = 1; // FORCED ACTIVE for testing
 
   while (m_is_running) {
+    if (!m_is_enabled) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+
     if (notification_value == 0) {
       xTaskNotifyWait(0x00, ULONG_MAX, &notification_value, pdMS_TO_TICKS(100));
       if (!m_is_running) break;

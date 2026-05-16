@@ -29,6 +29,11 @@ public:
   bool reinit(uint32_t sample_rate);
 
   /**
+   * @brief Soft enable/disable of mic pipeline
+   */
+  void setMicEnabled(bool enabled);
+
+  /**
    * @brief Check if the service is initialized
    */
   bool isInitialized() const { return m_initialized; }
