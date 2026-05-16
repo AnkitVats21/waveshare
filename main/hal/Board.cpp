@@ -122,69 +122,6 @@ esp_err_t Board::initIoExpander() {
   return ret;
 }
 
-// esp_err_t Board::initI2s(uint32_t sample_rate) {
-//   // 1. Configure the Master Controller Properties
-//   i2s_chan_config_t chan_cfg =
-//       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
-//   chan_cfg.auto_clear = true;
-
-//   esp_err_t ret = i2s_new_channel(&chan_cfg, &m_tx_handle, &m_rx_handle);
-//   if (ret != ESP_OK)
-//     return ret;
-
-//   // 2. Set up a Unified TDM Clock Configuration to lock the peripheral's
-//   // frequency
-//   i2s_tdm_clk_config_t unified_clk = I2S_TDM_CLK_DEFAULT_CONFIG(sample_rate);
-//   unified_clk.mclk_multiple =
-//       I2S_MCLK_MULTIPLE_256; // Standard crystal multiple
-
-//   // 3. Define the shared GPIO pin mappings across the audio bus
-//   i2s_tdm_gpio_config_t shared_gpio = {
-//       .mclk = (gpio_num_t)GPIO_I2S_MCLK,
-//       .bclk = (gpio_num_t)GPIO_I2S_SCLK,
-//       .ws = (gpio_num_t)GPIO_I2S_LRCK,
-//       .dout = (gpio_num_t)GPIO_I2S_DOUT,
-//       .din = (gpio_num_t)GPIO_I2S_SDIN,
-//       .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv =
-//       false},
-//   };
-
-//   // 4. RX Configuration: Capture across all 4 slots (Mic1, Mic2, Unused,
-//   Ref) i2s_tdm_config_t rx_tdm_cfg = {
-//       .clk_cfg = unified_clk,
-//       .slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(
-//           I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,
-//           (i2s_tdm_slot_mask_t)(I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2
-//           |
-//                                 I2S_TDM_SLOT3)),
-//       .gpio_cfg = shared_gpio,
-//   };
-
-//   // 5. FIX: Configure TX (Speaker) as TDM with an identical 4-slot frame
-//   // layout, but mask data output strictly to Slot 0 & Slot 1 for the
-//   // mono/stereo DAC.
-//   i2s_tdm_config_t tx_tdm_cfg = {
-//       .clk_cfg = unified_clk,
-//       .slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(
-//           I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,
-//           (i2s_tdm_slot_mask_t)(I2S_TDM_SLOT0 | I2S_TDM_SLOT1)),
-//       .gpio_cfg = shared_gpio,
-//   };
-
-//   // CRITICAL: Force the speaker to use the identical 4-slot geometry
-//   tx_tdm_cfg.slot_cfg.total_slot = I2S_TDM_SLOT4;
-
-//   // Initialize BOTH channels using TDM mode to prevent clock registers
-//   fighting ret |= i2s_channel_init_tdm_mode(m_tx_handle, &tx_tdm_cfg); ret |=
-//   i2s_channel_init_tdm_mode(m_rx_handle, &rx_tdm_cfg);
-
-//   // Enable the hardware lines simultaneously
-//   ret |= i2s_channel_enable(m_tx_handle);
-//   ret |= i2s_channel_enable(m_rx_handle);
-
-//   return ret;
-// }
-
 esp_err_t Board::initI2s(uint32_t sample_rate) {
   // 1. Configure the Master Controller Properties
   i2s_chan_config_t chan_cfg =
@@ -242,98 +179,6 @@ esp_err_t Board::initI2s(uint32_t sample_rate) {
 
   return ret;
 }
-
-// esp_err_t Board::initCodecs(uint32_t sample_rate) {
-//   audio_codec_i2s_cfg_t i2s_cfg = {};
-//   i2s_cfg.port = I2S_NUM_1;
-//   i2s_cfg.rx_handle = m_rx_handle;
-//   i2s_cfg.tx_handle = nullptr;
-//   const audio_codec_data_if_t *record_data_if =
-//       audio_codec_new_i2s_data(&i2s_cfg);
-
-//   audio_codec_i2c_cfg_t i2c_cfg_adc = {};
-//   i2c_cfg_adc.addr = ES7210_CODEC_DEFAULT_ADDR;
-//   i2c_cfg_adc.bus_handle = m_i2c_bus;
-//   const audio_codec_ctrl_if_t *record_ctrl_if =
-//       audio_codec_new_i2c_ctrl(&i2c_cfg_adc);
-
-//   es7210_codec_cfg_t es7210_cfg = {};
-//   es7210_cfg.ctrl_if = record_ctrl_if;
-//   es7210_cfg.mic_selected =
-//       ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
-//   es7210_cfg.master_mode = false;
-//   es7210_cfg.mclk_src = ES7210_MCLK_FROM_PAD;
-//   es7210_cfg.mclk_div = 0;
-//   const audio_codec_if_t *record_codec_if = es7210_codec_new(&es7210_cfg);
-
-//   esp_codec_dev_cfg_t record_dev_cfg = {};
-//   record_dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_IN;
-//   record_dev_cfg.codec_if = record_codec_if;
-//   record_dev_cfg.data_if = record_data_if;
-//   m_record_dev = esp_codec_dev_new(&record_dev_cfg);
-
-//   audio_codec_i2s_cfg_t i2s_cfg_tx = {};
-//   i2s_cfg_tx.port = I2S_NUM_1;
-//   i2s_cfg_tx.rx_handle = nullptr;
-//   i2s_cfg_tx.tx_handle = m_tx_handle;
-//   const audio_codec_data_if_t *play_data_if =
-//       audio_codec_new_i2s_data(&i2s_cfg_tx);
-
-//   audio_codec_i2c_cfg_t i2c_cfg_dac = {};
-//   i2c_cfg_dac.addr = ES8311_CODEC_DEFAULT_ADDR;
-//   i2c_cfg_dac.bus_handle = m_i2c_bus;
-//   const audio_codec_ctrl_if_t *play_ctrl_if =
-//       audio_codec_new_i2c_ctrl(&i2c_cfg_dac);
-//   const audio_codec_gpio_if_t *play_gpio_if = audio_codec_new_gpio();
-
-//   es8311_codec_cfg_t es8311_cfg = {};
-//   es8311_cfg.ctrl_if = play_ctrl_if;
-//   es8311_cfg.gpio_if = play_gpio_if;
-//   es8311_cfg.codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC;
-//   es8311_cfg.pa_pin = GPIO_PWR_CTRL;
-//   es8311_cfg.pa_reverted = false;
-//   es8311_cfg.master_mode = false;
-//   es8311_cfg.use_mclk = false;
-//   es8311_cfg.digital_mic = false;
-//   es8311_cfg.invert_mclk = false;
-//   es8311_cfg.invert_sclk = false;
-//   es8311_cfg.hw_gain = {};
-//   es8311_cfg.no_dac_ref = false;
-//   es8311_cfg.mclk_div = 0;
-//   const audio_codec_if_t *play_codec_if = es8311_codec_new(&es8311_cfg);
-
-//   esp_codec_dev_cfg_t play_dev_cfg = {};
-//   play_dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_OUT;
-//   play_dev_cfg.codec_if = play_codec_if;
-//   play_dev_cfg.data_if = play_data_if;
-//   m_play_dev = esp_codec_dev_new(&play_dev_cfg);
-
-//   esp_codec_dev_sample_info_t fs = {};
-//   fs.sample_rate = sample_rate;
-//   fs.channel = 1;
-//   fs.bits_per_sample = 16;
-//   fs.channel_mask = 0;
-//   fs.mclk_multiple = 0;
-
-//   esp_codec_dev_open(m_record_dev, &fs);
-//   esp_codec_dev_set_in_channel_gain(
-//       m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
-//       (float)m_record_volume);
-//   esp_codec_dev_set_in_channel_gain(
-//       m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1),
-//       (float)m_record_volume);
-//   esp_codec_dev_set_in_channel_gain(
-//       m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2),
-//       (float)m_record_volume);
-//   esp_codec_dev_set_in_channel_gain(
-//       m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3),
-//       (float)m_record_volume);
-
-//   esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
-//   esp_codec_dev_open(m_play_dev, &fs);
-
-//   return ESP_OK;
-// }
 
 esp_err_t Board::initCodecs(uint32_t sample_rate) {
   audio_codec_i2s_cfg_t i2s_cfg = {};
@@ -420,25 +265,6 @@ esp_err_t Board::initCodecs(uint32_t sample_rate) {
   return ESP_OK;
 }
 
-// esp_err_t Board::getFeedData(int16_t *buffer, int buffer_len) {
-//   if (!m_record_dev || !m_tdm_work_buffer)
-//     return ESP_FAIL;
-
-//   // 4 channels * 2 bytes per sample = 8 bytes per time-slice
-//   int bytes_to_read = buffer_len * 4 * sizeof(int16_t);
-
-//   if (esp_codec_dev_read(m_record_dev, (void *)m_tdm_work_buffer,
-//                          bytes_to_read) == ESP_OK) {
-//     int samples_count = bytes_to_read / (4 * sizeof(int16_t));
-//     for (int i = 0; i < samples_count; i++) {
-//       // Return only Mic 1 (Channel 0) at full 16kHz
-//       buffer[i] = m_tdm_work_buffer[i * 4 + 0];
-//     }
-//     return ESP_OK;
-//   }
-//   return ESP_FAIL;
-// }
-
 esp_err_t Board::getFeedData(int16_t *buffer, int buffer_len) {
   if (!m_record_dev)
     return ESP_FAIL;
@@ -474,34 +300,6 @@ esp_err_t Board::setRecordGain(float db_value) {
   m_record_volume = (int)db_value;
   return esp_codec_dev_set_in_gain(m_record_dev, db_value);
 }
-
-// esp_err_t Board::getAecFrames(AudioFrame *frames, int num_frames) {
-//   if (!m_record_dev || !m_tdm_work_buffer)
-//     return ESP_FAIL;
-
-//   int bytes_to_read = num_frames * 4 * sizeof(int16_t);
-//   if (bytes_to_read > (int)(TDM_BUF_SIZE * sizeof(int16_t))) {
-//     bytes_to_read = TDM_BUF_SIZE * sizeof(int16_t);
-//   }
-
-//   int ret = esp_codec_dev_read(m_record_dev, (void *)m_tdm_work_buffer,
-//                                bytes_to_read);
-
-//   if (ret == ESP_OK) {
-//     int actual_samples = bytes_to_read / (sizeof(int16_t) * 4);
-//     for (int i = 0; i < actual_samples; i++) {
-//       // Average Mic 1 and Mic 2 for the 'Mic' signal
-//       int32_t mic_mixed =
-//           (m_tdm_work_buffer[i * 4 + 0] + m_tdm_work_buffer[i * 4 + 1]) / 2;
-//       frames[i].mic = (int16_t)mic_mixed;
-
-//       // Use Channel 3 as the 'Reference' (Speaker Loopback)
-//       frames[i].ref = m_tdm_work_buffer[i * 4 + 3];
-//     }
-//     return ESP_OK;
-//   }
-//   return ESP_FAIL;
-// }
 
 esp_err_t Board::getAecFrames(AudioFrame *frames, int num_frames) {
   if (!m_record_dev || !m_tdm_work_buffer)
