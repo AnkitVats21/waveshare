@@ -1,24 +1,59 @@
 idf_component_register(
-        SRCS "main.cpp"
-                            "hal/WifiManager.cpp"
-                            "hal/Board.cpp"
-                            "app/AppController.cpp"
-                            "app/audio/AudioService.cpp"
-                            "app/audio/RtpTaskBase.cpp"
-                            "app/audio/RtpStreamer.cpp"
-                            "app/audio/RtpReceiver.cpp"
-                            "app/audio/AudioPipelineManager.cpp"
-                            "app/audio/MicCapture.cpp"
-                            "app/audio/SpeakerPlayback.cpp"
-                            "services/EventBus.cpp"
-                            "common/LogRouter.cpp"
-                            "common/AsyncNetLogger.cpp"
-                            "app/mqtt/MqttTask.cpp"
-        INCLUDE_DIRS "."
-                            "hal"
-                            "app"
-                            "app/audio"
-                            "app/mqtt"
-                            "services"
-                            "common"
+        SRCS
+            # Entry point
+            "main.cpp"
+
+            # HAL — Board orchestration
+            "hal/Board.cpp"
+
+            # HAL — Audio
+            "hal/audio/AudioHal.cpp"
+
+            # HAL — I/O
+            "hal/io/I2CBus.cpp"
+            "hal/io/IoExpander.cpp"
+
+            # HAL — LED
+            "hal/led/LedStripManager.cpp"
+
+            # HAL — Storage
+            "hal/storage/SdCardManager.cpp"
+
+            # HAL — Network
+            "hal/network/WifiManager.cpp"
+
+            # Application layer
+            "app/AppController.cpp"
+            "app/audio/AudioService.cpp"
+            "app/audio/RtpTaskBase.cpp"
+            "app/audio/RtpStreamer.cpp"
+            "app/audio/RtpReceiver.cpp"
+            "app/audio/AudioPipelineManager.cpp"
+            "app/audio/MicCapture.cpp"
+            "app/audio/SpeakerPlayback.cpp"
+            "app/mqtt/MqttTask.cpp"
+
+            # Services
+            "services/EventBus.cpp"
+
+            # Common utilities
+            "common/LogRouter.cpp"
+            "common/AsyncNetLogger.cpp"
+
+        INCLUDE_DIRS
+            "."
+            # HAL roots
+            "hal"
+            "hal/io"
+            "hal/led"
+            "hal/storage"
+            "hal/audio"
+            "hal/network"
+            # App layers
+            "app"
+            "app/audio"
+            "app/mqtt"
+            # Services / common
+            "services"
+            "common"
 )

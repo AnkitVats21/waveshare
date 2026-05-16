@@ -5,7 +5,7 @@
 #include "common/AsyncNetLogger.h"
 #include "common/LogRouter.h"
 #include "hal/Board.h"
-#include "hal/WifiManager.h"
+#include "hal/network/WifiManager.h"
 #include "services/EventBus.h"
 #include "app/mqtt/MqttTask.h"
 

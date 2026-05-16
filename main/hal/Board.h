@@ -1,91 +1,121 @@
 #pragma once
 
-#include "driver/i2c_master.h"
-#include "driver/i2s_std.h"
-#include "driver/i2s_tdm.h"
-#include "esp_codec_dev.h"
 #include "esp_err.h"
 #include "esp_io_expander.h"
 #include "hal/Board_defs.h"
 #include "hal/HalBase.h"
-#include "led_strip.h"
+#include "hal/audio/AudioHal.h"
+#include "hal/io/I2CBus.h"
+#include "hal/io/IoExpander.h"
+#include "hal/led/LedStripManager.h"
+#include "hal/storage/SdCardManager.h"
 #include <cstdint>
 
 /**
- * @brief Board class to handle hardware-level initialization and access.
- * Manages I2C, I2S, Codecs, and the RGB LED Strip.
+ * @brief Hardware orchestration layer for the Waveshare ESP32-S3 Audio Board.
+ *
+ * Board owns all concrete HAL component instances and coordinates their
+ * initialization in the correct hardware-dependent order.
+ *
+ * Responsibilities (what Board DOES):
+ *  - Owns: AudioHal, I2CBus, IoExpander, LedStripManager, SdCardManager
+ *  - Initializes hardware in correct dependency order
+ *  - Exposes unified, policy-aware APIs to the application layer
+ *  - Delegates all driver-level work to HAL components
+ *
+ * Non-responsibilities (what Board does NOT do):
+ *  - Contain raw driver logic or codec register sequences
+ *  - Contain LED or SD card implementation details
+ *  - Contain application streaming, RTP, or wake word logic
  */
 class Board : public HalBase {
 public:
   static Board &getInstance();
 
   /**
-   * @brief Initialize all board peripherals.
-   * @return true if successful
+   * @brief Initialize all board peripherals in dependency order.
+   * @return true on success
    */
   bool begin() override;
 
-  // Audio Configuration
+  // -- Pre-init configuration (call before begin()) --------------------------
   void setSampleRate(uint32_t sample_rate) { m_sample_rate = sample_rate; }
   void setInitialVolumes(int record, int play) {
     m_record_volume = record;
-    m_play_volume = play;
+    m_play_volume   = play;
   }
 
-  // Hardware Handle Accessors
-  i2c_master_bus_handle_t getI2cBus() { return m_i2c_bus; }
-  i2s_chan_handle_t getTxHandle() { return m_tx_handle; }
-  i2s_chan_handle_t getRxHandle() { return m_rx_handle; }
-  esp_codec_dev_handle_t getPlayDev() { return m_play_dev; }
-  esp_codec_dev_handle_t getRecordDev() { return m_record_dev; }
-  esp_io_expander_handle_t getIoExpander() { return m_io_expander; }
+  // -- Handle accessors (for HardwareAudioHandles population in main.cpp) ----
+  i2c_master_bus_handle_t  getI2cBus()    { return m_i2c.getBusHandle();    }
+  i2s_chan_handle_t         getTxHandle()  { return m_audio.getTxHandle();   }
+  i2s_chan_handle_t         getRxHandle()  { return m_audio.getRxHandle();   }
+  esp_codec_dev_handle_t   getPlayDev()   { return m_audio.getPlayDev();    }
+  esp_codec_dev_handle_t   getRecordDev() { return m_audio.getRecordDev();  }
+  esp_io_expander_handle_t getIoExpander(){ return m_io.getRawHandle();      }
 
-  // Low-level LED Control (Driver Layer)
-  void setLedPixel(uint32_t index, uint32_t r, uint32_t g, uint32_t b);
-  void setAllLedsColor(uint32_t r, uint32_t g, uint32_t b);
-  void refreshLeds();
-  void clearLeds();
+  // -- LED orchestration (delegates to LedStripManager) ----------------------
+  void setLedPixel(uint32_t index, uint32_t r, uint32_t g, uint32_t b) {
+    m_leds.setPixel(index, r, g, b);
+  }
+  void setAllLedsColor(uint32_t r, uint32_t g, uint32_t b) {
+    m_leds.setAll(r, g, b);
+  }
+  void refreshLeds() { m_leds.refresh(); }
+  void clearLeds()   { m_leds.clear();   }
 
-  // Audio Control
-  esp_err_t setPlayVolume(int volume);
-  esp_err_t getPlayVolume(int *volume);
-  esp_err_t setRecordGain(float db_value);
-  struct AudioFrame {
-    int16_t mic;
-    int16_t ref;
-  };
-  esp_err_t getAecFrames(AudioFrame *frames, int num_frames);
-  esp_err_t getFeedData(int16_t *buffer, int buffer_len);
+  // -- Audio orchestration APIs (delegate to AudioHal) -----------------------
 
-  // SD Card
-  esp_err_t initSdCard(const char *mount_point, size_t max_files);
+  /**
+   * @brief Read mono mic samples into the caller's buffer.
+   */
+  esp_err_t getFeedData(int16_t *buffer, int buffer_len) {
+    return m_audio.getFeedData(buffer, buffer_len);
+  }
 
-  esp_err_t deinitAudio();
+  /**
+   * @brief Read interleaved (mic + AEC reference) frames from the TDM bus.
+   * AudioFrame is an alias for AudioHal::AecFrame.
+   */
+  using AudioFrame = AudioHal::AecFrame;
+  esp_err_t getAecFrames(AudioFrame *frames, int num_frames) {
+    return m_audio.getAecFrames(frames, num_frames);
+  }
+
+  esp_err_t setPlayVolume(int volume)       { return m_audio.setPlayVolume(volume);   }
+  esp_err_t getPlayVolume(int *volume)      { return m_audio.getPlayVolume(volume);   }
+  esp_err_t setRecordGain(float db_value)   { return m_audio.setRecordGain(db_value); }
+
+  /**
+   * @brief Tear down I2S and codec hardware (called before reinitAudio).
+   */
+  esp_err_t deinitAudio() { return m_audio.deinit(); }
+
+  /**
+   * @brief Reinitialize audio subsystem at a new sample rate.
+   * Board guards against calling reinit on an uninitialized board.
+   */
   esp_err_t reinitAudio(uint32_t sample_rate);
 
+  // -- Storage (delegates to SdCardManager) ----------------------------------
+  esp_err_t initSdCard(const char *mount_point, size_t max_files) {
+    return m_storage.mount(mount_point, max_files);
+  }
+
 private:
-  Board() = default;
+  Board()  = default;
   ~Board() = default;
 
-  uint32_t m_sample_rate = 16000;
-  int m_record_volume = 70;
-  int m_play_volume = 80;
+  // HAL component instances — Board is the sole owner
+  I2CBus          m_i2c;
+  IoExpander      m_io;
+  AudioHal        m_audio;
+  LedStripManager m_leds;
+  SdCardManager   m_storage;
 
-  i2c_master_bus_handle_t m_i2c_bus = nullptr;
-  i2s_chan_handle_t m_tx_handle = nullptr;
-  i2s_chan_handle_t m_rx_handle = nullptr;
-  esp_codec_dev_handle_t m_play_dev = nullptr;
-  esp_codec_dev_handle_t m_record_dev = nullptr;
-  esp_io_expander_handle_t m_io_expander = nullptr;
-  led_strip_handle_t m_led_strip = nullptr;
-  int16_t *m_tdm_work_buffer = nullptr;
-  static constexpr size_t TDM_BUF_SIZE = 1024 * 4;
-
-  esp_err_t initI2c();
-  esp_err_t initIoExpander();
-  esp_err_t initI2s(uint32_t sample_rate);
-  esp_err_t initCodecs(uint32_t sample_rate);
-  void initRgbLeds();
+  // Pre-init settings (forwarded to AudioHal::Config on begin())
+  uint32_t m_sample_rate   = 16000;
+  int      m_record_volume = 70;
+  int      m_play_volume   = 80;
 
   static constexpr const char *TAG = "Board";
 };
