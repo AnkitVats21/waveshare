@@ -4,7 +4,7 @@
 # Layout:
 #   0x0000 - 0x8FFF  : bootloader
 #   0x9000 - 0xFFFF  : partition table + NVS + phy
-#   0x10000+         : app + OTA + data
+#   0x10000+         : app + OTA + data + model
 #
 # Name,      Type,  SubType,  Offset,    Size,     Flags
 nvs,         data,  nvs,      0x9000,    0x6000,
@@ -14,4 +14,5 @@ ota_0,       app,   ota_0,    0x210000,  0x200000,
 ota_1,       app,   ota_1,    0x410000,  0x200000,
 otadata,     data,  ota,      0x610000,  0x2000,
 nvs_keys,    data,  nvs_keys, 0x612000,  0x1000,
-storage,     data,  fat,      0x613000,  0x9ED000,
+model,       data,  spiffs,   0x613000,  0x400000,
+storage,     data,  fat,      0xA13000,  0x5ED000,

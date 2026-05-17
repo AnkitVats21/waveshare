@@ -3,6 +3,7 @@
 #include "RtpReceiver.h"
 #include "RtpStreamer.h"
 #include "SpeakerPlayback.h"
+#include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
 
 MicCaptureTask* AudioPipelineManager::m_mic_task = nullptr;
@@ -30,6 +31,15 @@ bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
   // 2. Start Hardware Tasks
   m_mic_task = new MicCaptureTask();
   m_mic_task->start(settings, hw_handles.mic_rx_handle, out_context.tx_ring_buffer);
+
+  // If WakeWordDetector is running it is the SOLE hardware (I2S) reader.
+  // Keep MicCapture soft-disabled so it never calls esp_codec_dev_read,
+  // and instead route the streaming ring buffer through the detector's feedTask.
+  if (WakeWordDetector::getInstance().isRunning()) {
+    m_mic_task->setEnabled(false);
+    WakeWordDetector::getInstance().setStreamRingbuf(out_context.tx_ring_buffer);
+    LOGI_AUDIO("WakeWordDetector active: MicCapture disabled, streaming via feedTask");
+  }
 
   m_speaker_task = new SpeakerPlaybackTask();
   m_speaker_task->start(settings, hw_handles.play_dev, out_context.rx_ring_buffer);
@@ -94,6 +104,9 @@ void AudioPipelineManager::teardown(GlobalPipelineContext &context) {
     }
 
     // 3. Cleanup Ring Buffers
+    // Clear the detector's streaming reference first so feedTask stops writing
+    WakeWordDetector::getInstance().setStreamRingbuf(nullptr);
+
     if (context.tx_ring_buffer) {
         vRingbufferDelete(context.tx_ring_buffer);
         context.tx_ring_buffer = nullptr;

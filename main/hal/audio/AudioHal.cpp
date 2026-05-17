@@ -1,12 +1,12 @@
 #include "hal/audio/AudioHal.h"
-#include "driver/i2s_tdm.h"
+#include "driver/i2s_std.h"
 #include "es7210_adc.h"
 #include "es8311_codec.h"
 #include "esp_codec_dev_defaults.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "hal/Board_defs.h"
-#include "hal/i2s_types.h"
+#include <stdlib.h>
 #include <string.h>
 
 // ============================================================================
@@ -18,14 +18,6 @@ esp_err_t AudioHal::init(const Config &cfg) {
   m_sample_rate   = cfg.sample_rate;
   m_record_volume = cfg.record_volume;
   m_play_volume   = cfg.play_volume;
-
-  // Allocate SPIRAM work buffer for 4-channel TDM AEC reads
-  m_tdm_work_buffer = (int16_t *)heap_caps_malloc(
-      TDM_BUF_SIZE * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-  if (!m_tdm_work_buffer) {
-    ESP_LOGE(TAG, "Failed to allocate TDM work buffer");
-    return ESP_ERR_NO_MEM;
-  }
 
   esp_err_t ret = initI2s(m_sample_rate);
   if (ret != ESP_OK) {
@@ -40,7 +32,7 @@ esp_err_t AudioHal::init(const Config &cfg) {
   }
 
   m_initialized = true;
-  ESP_LOGI(TAG, "AudioHal initialized at %lu Hz", m_sample_rate);
+  ESP_LOGI(TAG, "AudioHal initialized at %lu Hz (STD I2S, 4-ch ES7210)", m_sample_rate);
   return ESP_OK;
 }
 
@@ -71,7 +63,6 @@ esp_err_t AudioHal::deinit() {
     m_rx_handle = nullptr;
   }
 
-  // Note: TDM work buffer is kept across reinit cycles to avoid re-alloc
   m_initialized = false;
   ESP_LOGI(TAG, "Audio deinitialized");
   return ESP_OK;
@@ -104,73 +95,68 @@ esp_err_t AudioHal::reinit(uint32_t sample_rate) {
 }
 
 // ============================================================================
-// Private: I2S initialization
+// Private: I2S STD initialization (matches verified Waveshare demo BSP)
+//
+// The ES7210 and ES8311 share a single I2S_STD bus on I2S_NUM_1.
+// Both codecs are clocked together in STEREO 32-bit mode.  The ES7210
+// delivers 4 channels by time-multiplexing its 4 mics into the two 32-bit
+// stereo slots — two mics per WS half-cycle.
 // ============================================================================
 
 esp_err_t AudioHal::initI2s(uint32_t sample_rate) {
-  // 1. Master channel config
+  // 1. Master channel pair
   i2s_chan_config_t chan_cfg =
       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
   chan_cfg.auto_clear = true;
 
   esp_err_t ret = i2s_new_channel(&chan_cfg, &m_tx_handle, &m_rx_handle);
-  if (ret != ESP_OK)
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "i2s_new_channel failed: %s", esp_err_to_name(ret));
     return ret;
+  }
 
-  // 2. Unified TDM clock
-  i2s_tdm_clk_config_t unified_clk = I2S_TDM_CLK_DEFAULT_CONFIG(sample_rate);
-  unified_clk.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-
-  // 3. Shared GPIO mapping
-  i2s_tdm_gpio_config_t shared_gpio = {
-      .mclk = (gpio_num_t)GPIO_I2S_MCLK,
-      .bclk = (gpio_num_t)GPIO_I2S_SCLK,
-      .ws   = (gpio_num_t)GPIO_I2S_LRCK,
-      .dout = (gpio_num_t)GPIO_I2S_DOUT,
-      .din  = (gpio_num_t)GPIO_I2S_SDIN,
-      .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
+  // 2. STD Philips mode — Stereo, 32-bit (ES7210 needs ≥32-bit frames)
+  i2s_std_config_t std_cfg = {
+      .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
+      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
+          I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
+      .gpio_cfg = {
+          .mclk = (gpio_num_t)GPIO_I2S_MCLK,
+          .bclk = (gpio_num_t)GPIO_I2S_SCLK,
+          .ws   = (gpio_num_t)GPIO_I2S_LRCK,
+          .dout = (gpio_num_t)GPIO_I2S_DOUT,
+          .din  = (gpio_num_t)GPIO_I2S_SDIN,
+          .invert_flags = {
+              .mclk_inv = false,
+              .bclk_inv = false,
+              .ws_inv   = false,
+          },
+      },
   };
 
-  // 4. RX: Mono, Slot 0 only, 2 slots on wire for clock symmetry
-  i2s_tdm_config_t rx_tdm_cfg = {
-      .clk_cfg  = unified_clk,
-      .slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(
-          I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO,
-          (i2s_tdm_slot_mask_t)I2S_TDM_SLOT0),
-      .gpio_cfg = shared_gpio,
-  };
-  rx_tdm_cfg.slot_cfg.total_slot = I2S_TDM_SLOT2;
-
-  // 5. TX: Mono, Slot 0 only, match RX geometry exactly
-  i2s_tdm_config_t tx_tdm_cfg = {
-      .clk_cfg  = unified_clk,
-      .slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(
-          I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO,
-          (i2s_tdm_slot_mask_t)I2S_TDM_SLOT0),
-      .gpio_cfg = shared_gpio,
-  };
-  tx_tdm_cfg.slot_cfg.total_slot = I2S_TDM_SLOT2;
-
-  ret |= i2s_channel_init_tdm_mode(m_tx_handle, &tx_tdm_cfg);
-  ret |= i2s_channel_init_tdm_mode(m_rx_handle, &rx_tdm_cfg);
+  ret |= i2s_channel_init_std_mode(m_tx_handle, &std_cfg);
+  ret |= i2s_channel_init_std_mode(m_rx_handle, &std_cfg);
   ret |= i2s_channel_enable(m_tx_handle);
   ret |= i2s_channel_enable(m_rx_handle);
 
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "I2S STD channel init/enable failed: 0x%x", ret);
+  }
   return ret;
 }
 
 // ============================================================================
-// Private: Codec initialization (ES7210 ADC + ES8311 DAC)
+// Private: Codec initialization — ES7210 ADC (4 mics) + ES8311 DAC
 // ============================================================================
 
 esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
-  // --- Record path: ES7210 ADC ---
-  audio_codec_i2s_cfg_t i2s_cfg = {};
-  i2s_cfg.port      = I2S_NUM_1;
-  i2s_cfg.rx_handle = m_rx_handle;
-  i2s_cfg.tx_handle = nullptr;
+  // ---- Record path: ES7210 ADC (4-channel) ----------------------------------
+  audio_codec_i2s_cfg_t i2s_cfg_rx = {};
+  i2s_cfg_rx.port      = I2S_NUM_1;
+  i2s_cfg_rx.rx_handle = m_rx_handle;
+  i2s_cfg_rx.tx_handle = nullptr;
   const audio_codec_data_if_t *record_data_if =
-      audio_codec_new_i2s_data(&i2s_cfg);
+      audio_codec_new_i2s_data(&i2s_cfg_rx);
 
   audio_codec_i2c_cfg_t i2c_cfg_adc = {};
   i2c_cfg_adc.addr       = ES7210_CODEC_DEFAULT_ADDR;
@@ -178,12 +164,11 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
   const audio_codec_ctrl_if_t *record_ctrl_if =
       audio_codec_new_i2c_ctrl(&i2c_cfg_adc);
 
+  // Enable all 4 mics — required for RMNM AFE input format
   es7210_codec_cfg_t es7210_cfg = {};
   es7210_cfg.ctrl_if      = record_ctrl_if;
-  es7210_cfg.mic_selected = ES7210_SEL_MIC1; // Only Mic 1 for Mono record
-  es7210_cfg.master_mode  = false;
-  es7210_cfg.mclk_src     = ES7210_MCLK_FROM_PAD;
-  es7210_cfg.mclk_div     = 0;
+  es7210_cfg.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 |
+                            ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
   const audio_codec_if_t *record_codec_if = es7210_codec_new(&es7210_cfg);
 
   esp_codec_dev_cfg_t record_dev_cfg = {};
@@ -192,7 +177,25 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
   record_dev_cfg.data_if  = record_data_if;
   m_record_dev = esp_codec_dev_new(&record_dev_cfg);
 
-  // --- Playback path: ES8311 DAC ---
+  // Open with 2 channels / 32-bit to match I2S bus; ES7210 interleaves 4 mics
+  esp_codec_dev_sample_info_t record_fs = {};
+  record_fs.sample_rate    = sample_rate;
+  record_fs.channel        = 2;
+  record_fs.bits_per_sample = 32;
+
+  esp_codec_dev_open(m_record_dev, &record_fs);
+
+  // Set gain for all 4 mic channels
+  esp_codec_dev_set_in_channel_gain(
+      m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(
+      m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(
+      m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(
+      m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3), (float)m_record_volume);
+
+  // ---- Playback path: ES8311 DAC -------------------------------------------
   audio_codec_i2s_cfg_t i2s_cfg_tx = {};
   i2s_cfg_tx.port      = I2S_NUM_1;
   i2s_cfg_tx.rx_handle = nullptr;
@@ -215,12 +218,6 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
   es8311_cfg.pa_reverted = false;
   es8311_cfg.master_mode = false;
   es8311_cfg.use_mclk    = false;
-  es8311_cfg.digital_mic = false;
-  es8311_cfg.invert_mclk = false;
-  es8311_cfg.invert_sclk = false;
-  es8311_cfg.hw_gain     = {};
-  es8311_cfg.no_dac_ref  = false;
-  es8311_cfg.mclk_div    = 0;
   const audio_codec_if_t *play_codec_if = es8311_codec_new(&es8311_cfg);
 
   esp_codec_dev_cfg_t play_dev_cfg = {};
@@ -229,20 +226,14 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
   play_dev_cfg.data_if  = play_data_if;
   m_play_dev = esp_codec_dev_new(&play_dev_cfg);
 
-  // Unified sample format: 1-channel Mono, 16-bit
-  esp_codec_dev_sample_info_t fs = {};
-  fs.sample_rate    = sample_rate;
-  fs.channel        = 1;
-  fs.bits_per_sample = 16;
-  fs.channel_mask   = 0;
-  fs.mclk_multiple  = 0;
-
-  esp_codec_dev_open(m_record_dev, &fs);
-  esp_codec_dev_set_in_channel_gain(
-      m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
+  // ES8311 plays back mono 16-bit at the streaming sample rate
+  esp_codec_dev_sample_info_t play_fs = {};
+  play_fs.sample_rate    = sample_rate;
+  play_fs.channel        = 2;          // stereo on the bus
+  play_fs.bits_per_sample = 32;        // match I2S bus width
 
   esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
-  esp_codec_dev_open(m_play_dev, &fs);
+  esp_codec_dev_open(m_play_dev, &play_fs);
 
   return ESP_OK;
 }
@@ -251,38 +242,73 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
 // Audio frame APIs
 // ============================================================================
 
-esp_err_t AudioHal::getFeedData(int16_t *buffer, int buffer_len) {
+/**
+ * Read 4-channel interleaved audio from the ES7210 ADC.
+ *
+ * is_get_raw_channel = true  → buffer receives 4 raw int16 channels/frame
+ *                              (layout: slot0, slot1, slot2, slot3 — i.e. RMNM)
+ * is_get_raw_channel = false → remap to 3-channel: [Mic1, Mic2, Ref]
+ *
+ * The hardware read is always done as 4 * int16 per frame regardless.
+ * The ES7210 is opened in 32-bit stereo; each 32-bit word holds two 16-bit
+ * mic samples.  esp_codec_dev_read returns them already as int16 pairs.
+ */
+esp_err_t AudioHal::getFeedData(bool is_get_raw_channel, int16_t *buffer,
+                                int buffer_len) {
   if (!m_initialized || !m_record_dev)
     return ESP_FAIL;
 
-  // Mono: 1 channel * 2 bytes per sample
-  int bytes_to_read = buffer_len * 1 * sizeof(int16_t);
-  return (esp_codec_dev_read(m_record_dev, (void *)buffer, bytes_to_read) ==
-          ESP_OK)
-             ? ESP_OK
-             : ESP_FAIL;
+  esp_err_t ret = esp_codec_dev_read(m_record_dev, (void *)buffer, buffer_len);
+
+  if (ret == ESP_OK && !is_get_raw_channel) {
+    // Remap from 4-ch raw to 3-ch [Mic1, Mic2, Ref]
+    // Raw layout per frame: [Ref(0), Mic1(1), Unused(2), Mic2(3)]  ← RMNM
+    int audio_chunksize = buffer_len / (sizeof(int16_t) * ADC_I2S_CHANNEL);
+    for (int i = 0; i < audio_chunksize; i++) {
+      int16_t ref       = buffer[4 * i + 0];
+      buffer[3 * i + 0] = buffer[4 * i + 1]; // Mic1
+      buffer[3 * i + 1] = buffer[4 * i + 3]; // Mic2
+      buffer[3 * i + 2] = ref;               // Ref (for AEC)
+    }
+  }
+
+  return ret;
 }
 
-esp_err_t AudioHal::getAecFrames(AecFrame *frames, int num_frames) {
-  if (!m_initialized || !m_record_dev || !m_tdm_work_buffer)
+/**
+ * Convenience overload — raw 4-channel, for MicCapture streaming pipeline.
+ * After this call the caller typically uses only channel 0 (primary mic).
+ */
+esp_err_t AudioHal::getFeedData(int16_t *buffer, int buffer_len) {
+  return getFeedData(true, buffer, buffer_len);
+}
+
+// ============================================================================
+// Playback
+// ============================================================================
+
+esp_err_t AudioHal::audioPlay(const int16_t *data, int length,
+                              uint32_t /*ticks_to_wait*/) {
+  if (!m_initialized || !m_play_dev)
     return ESP_FAIL;
 
-  // 4 TDM channels * 2 bytes per sample
-  size_t bytes_to_read = num_frames * 4 * sizeof(int16_t);
-  if (bytes_to_read > TDM_BUF_SIZE * sizeof(int16_t))
-    bytes_to_read = TDM_BUF_SIZE * sizeof(int16_t);
+  // The I2S bus runs in stereo 32-bit mode.  Incoming data is 16-bit mono.
+  // Expand: each int16 → int32 (shift left 16 bits), then duplicate for stereo.
+  int num_samples = length / sizeof(int16_t);
+  // 2 stereo channels * 2 bytes (32-bit expanded from 16-bit)
+  int out_len = num_samples * 2 * sizeof(int32_t);
+  int32_t *out_buf = (int32_t *)malloc(out_len);
+  if (!out_buf) return ESP_ERR_NO_MEM;
 
-  esp_err_t ret = esp_codec_dev_read(m_record_dev, (void *)m_tdm_work_buffer,
-                                     bytes_to_read);
-  if (ret == ESP_OK) {
-    int actual_samples = bytes_to_read / (sizeof(int16_t) * 4);
-    for (int i = 0; i < actual_samples; i++) {
-      frames[i].mic = m_tdm_work_buffer[i * 4 + 0]; // Slot 0: Mic 1
-      frames[i].ref = m_tdm_work_buffer[i * 4 + 3]; // Slot 3: Speaker ref
-    }
-    return ESP_OK;
+  for (int i = 0; i < num_samples; i++) {
+    int32_t sample = ((int32_t)data[i]) << 16;
+    out_buf[2 * i + 0] = sample; // L
+    out_buf[2 * i + 1] = sample; // R
   }
-  return ESP_FAIL;
+
+  esp_err_t ret = esp_codec_dev_write(m_play_dev, out_buf, out_len);
+  free(out_buf);
+  return ret;
 }
 
 // ============================================================================

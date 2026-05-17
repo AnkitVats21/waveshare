@@ -66,19 +66,38 @@ public:
   // -- Audio orchestration APIs (delegate to AudioHal) -----------------------
 
   /**
-   * @brief Read mono mic samples into the caller's buffer.
+   * @brief Read 4-channel interleaved mic data.
+   *
+   * @param is_get_raw_channel  true  → raw 4-ch RMNM (for AFE/wake-word feed)
+   *                            false → remapped 3-ch [Mic1, Mic2, Ref]
+   * @param buffer     Destination int16_t buffer
+   * @param buffer_len Byte count to read
+   */
+  esp_err_t getFeedData(bool is_get_raw_channel, int16_t *buffer,
+                        int buffer_len) {
+    return m_audio.getFeedData(is_get_raw_channel, buffer, buffer_len);
+  }
+
+  /**
+   * @brief Convenience overload — raw 4-ch, for streaming pipeline.
    */
   esp_err_t getFeedData(int16_t *buffer, int buffer_len) {
     return m_audio.getFeedData(buffer, buffer_len);
   }
 
+  /** @brief Number of interleaved channels returned by getFeedData. */
+  int getFeedChannel() const { return m_audio.getFeedChannel(); }
+
+  /** @brief AFE input format string ("RMNM"). */
+  const char *getInputFormat() const { return m_audio.getInputFormat(); }
+
   /**
-   * @brief Read interleaved (mic + AEC reference) frames from the TDM bus.
-   * AudioFrame is an alias for AudioHal::AecFrame.
+   * @brief Write PCM audio to the ES8311 playback codec.
+   * @param data   16-bit mono PCM source buffer
+   * @param length Byte length of source buffer
    */
-  using AudioFrame = AudioHal::AecFrame;
-  esp_err_t getAecFrames(AudioFrame *frames, int num_frames) {
-    return m_audio.getAecFrames(frames, num_frames);
+  esp_err_t audioPlay(const int16_t *data, int length) {
+    return m_audio.audioPlay(data, length);
   }
 
   esp_err_t setPlayVolume(int volume)       { return m_audio.setPlayVolume(volume);   }
