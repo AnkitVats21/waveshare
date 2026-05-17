@@ -2,6 +2,7 @@
 #include "common/AppLogger.h"
 #include "esp_timer.h"
 #include <cstring>
+#include <cstdlib>
 
 void SpeakerPlaybackTask::start(const GlobalSystemSettings &settings,
                                 esp_codec_dev_handle_t device,
@@ -22,10 +23,9 @@ void SpeakerPlaybackTask::start(const GlobalSystemSettings &settings,
 }
 
 void SpeakerPlaybackTask::stop() {
-    if (!m_is_running) return;
-    m_is_running = false;
-    LOGI_HAL("Requesting SpeakerPlaybackTask stop...");
-    // The task will exit its loop and delete itself
+  if (!m_is_running) return;
+  m_is_running = false;
+  LOGI_HAL("Requesting SpeakerPlaybackTask stop...");
 }
 
 void SpeakerPlaybackTask::worker_bridge(void *pvParameters) {
@@ -35,11 +35,12 @@ void SpeakerPlaybackTask::worker_bridge(void *pvParameters) {
   esp_codec_dev_handle_t device = param->device;
   RingbufHandle_t rx_buffer = param->rx_buffer;
   delete param;
-
   self->worker(settings, device, rx_buffer);
 }
 
-void SpeakerPlaybackTask::worker(GlobalSystemSettings settings, esp_codec_dev_handle_t device, RingbufHandle_t rx_buffer) {
+void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
+                                  esp_codec_dev_handle_t device,
+                                  RingbufHandle_t rx_buffer) {
   if (device == nullptr) {
     LOGE_HAL("SpeakerPlaybackTask started without a valid codec device!");
     m_is_running = false;
@@ -49,17 +50,25 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings, esp_codec_dev_ha
 
   LOGI_HAL("Speaker Audio Pipeline Active (%lu Hz).", settings.sample_rate);
 
-  const size_t SILENCE_SAMPLES = 320;
-  int16_t *silence_buffer = (int16_t *)heap_caps_malloc(
-      SILENCE_SAMPLES * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  memset(silence_buffer, 0, SILENCE_SAMPLES * sizeof(int16_t));
+  // The I2S bus runs in 32-bit stereo mode.  RTP data arrives as 16-bit mono.
+  // We expand each int16 sample into a 32-bit left-justified stereo pair
+  // before writing to the codec device.
+  const size_t MAX_AUDIO_CHUNK_SAMPLES = 1024;  // in int16 samples
+  const size_t MAX_AUDIO_CHUNK_BYTES   = MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t);
+  const size_t EXPANDED_BUF_BYTES      = MAX_AUDIO_CHUNK_SAMPLES * 2 * sizeof(int32_t);
 
-  const size_t MAX_AUDIO_CHUNK_SIZE = 2048;
   int16_t *dma_safe_buffer = (int16_t *)heap_caps_malloc(
-      MAX_AUDIO_CHUNK_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      MAX_AUDIO_CHUNK_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  int32_t *expanded_buffer = (int32_t *)heap_caps_malloc(
+      EXPANDED_BUF_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+
+  const size_t SILENCE_SAMPLES = 320;
+  int32_t *silence_buffer = (int32_t *)heap_caps_malloc(
+      SILENCE_SAMPLES * 2 * sizeof(int32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  memset(silence_buffer, 0, SILENCE_SAMPLES * 2 * sizeof(int32_t));
 
   bool is_prebuffering = true;
-  const size_t PREBUFFER_THRESHOLD = 8000; // ~250ms safety
+  const size_t PREBUFFER_THRESHOLD = 8000;
 
   while (m_is_running) {
     size_t rx_chunk_bytes = 0;
@@ -74,27 +83,34 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings, esp_codec_dev_ha
     }
 
     void *rx_data_ptr = xRingbufferReceiveUpTo(
-        rx_buffer, &rx_chunk_bytes, pdMS_TO_TICKS(10), MAX_AUDIO_CHUNK_SIZE);
+        rx_buffer, &rx_chunk_bytes, pdMS_TO_TICKS(10), MAX_AUDIO_CHUNK_BYTES);
 
     if (rx_data_ptr == nullptr || rx_chunk_bytes == 0) {
-      esp_codec_dev_write(device, silence_buffer, SILENCE_SAMPLES * sizeof(int16_t));
+      esp_codec_dev_write(device, silence_buffer,
+                          SILENCE_SAMPLES * 2 * sizeof(int32_t));
       is_prebuffering = true;
       continue;
     }
 
+    size_t num_samples = rx_chunk_bytes / sizeof(int16_t);
     memcpy(dma_safe_buffer, rx_data_ptr, rx_chunk_bytes);
     vRingbufferReturnItem(rx_buffer, rx_data_ptr);
 
-    esp_err_t ret = esp_codec_dev_write(device, dma_safe_buffer, rx_chunk_bytes);
-
-    if (ret != ESP_OK) {
-      // LOGE_HAL("Codec write error: %d", ret);
+    // Expand 16-bit mono → 32-bit stereo (left-justify in 32-bit word)
+    for (size_t i = 0; i < num_samples; i++) {
+      int32_t sample = ((int32_t)dma_safe_buffer[i]) << 16;
+      expanded_buffer[2 * i + 0] = sample; // L
+      expanded_buffer[2 * i + 1] = sample; // R
     }
+
+    esp_codec_dev_write(device, expanded_buffer,
+                        num_samples * 2 * sizeof(int32_t));
   }
 
   LOGI_HAL("SpeakerPlaybackTask exiting.");
   heap_caps_free(silence_buffer);
   heap_caps_free(dma_safe_buffer);
+  heap_caps_free(expanded_buffer);
   m_task_handle = nullptr;
   vTaskDelete(NULL);
 }

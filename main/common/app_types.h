@@ -39,7 +39,7 @@ struct GlobalSystemSettings {
 
   // Stream Configuration
   AudioStreamFormat stream_format = AudioStreamFormat::PCM_S16LE;
-  uint32_t sample_rate = 24000;
+  uint32_t sample_rate = 16000;
   bool mic_enabled = true;
 
   // Network Settings

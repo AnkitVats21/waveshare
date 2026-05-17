@@ -31,20 +31,26 @@ void MicCaptureTask::worker_bridge(void *pvParameters) {
 void MicCaptureTask::worker() {
   Board &board = Board::getInstance();
   const size_t SAMPLES_PER_CHUNK = 320; // 20ms @ 16kHz
-  const size_t CHUNK_BYTE_SIZE = SAMPLES_PER_CHUNK * sizeof(int16_t);
+  const size_t CHUNK_BYTE_SIZE   = SAMPLES_PER_CHUNK * sizeof(int16_t);
 
-  // Allocate a simple internal SRAM buffer for the final mono PCM data
+  // The HAL now delivers 4 interleaved channels (RMNM) per frame.
+  // Allocate a 4-ch raw buffer and a separate mono output buffer.
+  const int    FEED_CH            = board.getFeedChannel(); // 4
+  const size_t RAW_BYTES          = SAMPLES_PER_CHUNK * FEED_CH * sizeof(int16_t);
+
+  int16_t *raw_buffer = (int16_t *)heap_caps_malloc(RAW_BYTES, MALLOC_CAP_SPIRAM);
   int16_t *pcm_buffer = (int16_t *)heap_caps_malloc(
       CHUNK_BYTE_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-  if (pcm_buffer == nullptr) {
-    LOGE_HAL("Failed to allocate local PCM buffer for Mic Task!");
+  if (!raw_buffer || !pcm_buffer) {
+    LOGE_HAL("Failed to allocate MicCapture buffers!");
+    if (raw_buffer) heap_caps_free(raw_buffer);
+    if (pcm_buffer) heap_caps_free(pcm_buffer);
     vTaskDelete(NULL);
     return;
   }
 
-  LOGI_HAL(
-      "Live Audio Feed Pipeline Active: Passthrough Enabled (No AEC/LMS).");
+  LOGI_HAL("MicCapture: reading 4-ch RMNM, forwarding ch0 (primary mic) to ring buffer.");
 
   while (this->m_is_running) {
     if (!m_is_enabled) {
@@ -52,21 +58,28 @@ void MicCaptureTask::worker() {
       continue;
     }
 
-    // Call the updated board function to get a clean mono 16kHz audio chunk
-    // directly
-    if (board.getFeedData(pcm_buffer, SAMPLES_PER_CHUNK) == ESP_OK) {
+    // Read raw 4-channel data (is_get_raw_channel = true)
+    if (board.getFeedData(/*raw=*/true, raw_buffer, (int)RAW_BYTES) == ESP_OK) {
 
-      // Send the raw live feed data straight to the PSRAM streaming Ring Buffer
+      // Extract channel 0 (primary mic, RMNM slot 0 = Reference; slot 1 = Mic1)
+      // RMNM: slot0=Ref, slot1=Mic1, slot2=Noise, slot3=Mic2
+      // Use slot 1 (Mic1) as the primary voice signal for streaming.
+      for (size_t i = 0; i < SAMPLES_PER_CHUNK; i++) {
+        pcm_buffer[i] = raw_buffer[i * FEED_CH + 1]; // Mic1
+      }
+
+      // Push mono PCM to the PSRAM streaming ring buffer
       BaseType_t ret =
           xRingbufferSend(this->m_tx_buffer, pcm_buffer, CHUNK_BYTE_SIZE, 0);
       if (ret != pdTRUE) {
-        // Downstream ring buffer full (Normal if RTP network streamer is
-        // busy/lagging)
+        // Downstream ring buffer full — normal if RTP streamer is busy
       }
     } else {
       vTaskDelay(pdMS_TO_TICKS(10));
     }
   }
+
+  heap_caps_free(raw_buffer);
 
   // Cleanup upon thread destruction
   heap_caps_free(pcm_buffer);

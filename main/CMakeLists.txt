@@ -33,6 +33,9 @@ idf_component_register(
             "app/audio/SpeakerPlayback.cpp"
             "app/mqtt/MqttTask.cpp"
 
+            # Wake Word Detection
+            "app/wake_word/WakeWordDetector.cpp"
+
             # Services
             "services/EventBus.cpp"
 
@@ -53,6 +56,7 @@ idf_component_register(
             "app"
             "app/audio"
             "app/mqtt"
+            "app/wake_word"
             # Services / common
             "services"
             "common"

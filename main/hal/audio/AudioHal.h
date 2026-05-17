@@ -1,7 +1,7 @@
 #pragma once
 
 #include "driver/i2c_master.h"
-#include "driver/i2s_tdm.h"
+#include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
 #include "esp_err.h"
 #include <cstdint>
@@ -10,15 +10,22 @@
  * @brief HAL driver for the audio subsystem of the Waveshare ESP32-S3 board.
  *
  * Owns and manages:
- *  - I2S TDM channel pair (TX + RX) via I2S_NUM_1
- *  - ES7210 ADC codec (record path)
+ *  - I2S STD channel pair (TX + RX) via I2S_NUM_1
+ *  - ES7210 ADC codec (record path — 4 channels for AFE/wake-word)
  *  - ES8311 DAC codec (playback path)
- *  - SPIRAM TDM work buffer for AEC frame extraction
+ *  - SPIRAM 4-ch work buffer used by getFeedData()
  *
  * AudioHal does NOT know about:
  *  - Application audio modes (wake word, streaming, AEC policy)
  *  - RTP, buffering, or FreeRTOS tasks
  *  - Board-level hardware policies
+ *
+ * I2S mode note:
+ *   The hardware uses a SINGLE I2S_STD bus (I2S_NUM_1) shared by both the
+ *   ES8311 DAC (playback) and ES7210 ADC (record).  Both codecs are clocked
+ *   by the same BCLK/WS pair.  The I2S bus is opened in STEREO 32-bit mode
+ *   so the ES7210 can deliver 4 channels via standard left/right framing
+ *   (matching the verified Waveshare demo BSP).
  *
  * Board owns one AudioHal instance and initializes it via init().
  * Board's public methods delegate to AudioHal for all audio operations.
@@ -26,23 +33,7 @@
 class AudioHal {
 public:
   /**
-   * @brief Interleaved mic + reference frame for AEC processing.
-   *
-   * Channel mapping for Waveshare ESP32-S3 Audio:
-   *   Slot 0 → Mic 1 (primary voice)
-   *   Slot 1 → Mic 2
-   *   Slot 3 → Speaker loopback (AEC reference)
-   */
-  struct AecFrame {
-    int16_t mic; // Primary voice channel
-    int16_t ref; // Speaker loopback reference
-  };
-
-  /**
    * @brief Configuration passed from Board before initialization.
-   *
-   * Board fills this from its own pre-init settings and passes the I2C
-   * bus handle so AudioHal can bind codec control interfaces to it.
    */
   struct Config {
     uint32_t                sample_rate   = 16000;
@@ -76,20 +67,61 @@ public:
   // --- Audio frame retrieval ------------------------------------------------
 
   /**
-   * @brief Read mono microphone samples directly into caller's buffer.
-   * @param buffer     Destination buffer for int16_t PCM samples
-   * @param buffer_len Number of samples to read
+   * @brief Read audio data from the 4-ch ES7210 ADC into caller's buffer.
+   *
+   * This is the primary capture API used by both the streaming pipeline and
+   * the AFE/wake-word engine.
+   *
+   * @param is_get_raw_channel
+   *   true  → return all 4 raw interleaved int16 channels as-is (RMNM order).
+   *            Required by the AFE feed task.
+   *   false → remap to a 3-channel layout: [Mic1, Mic2, Ref] per frame.
+   *            Useful for simplified AEC pipelines.
+   *
+   * @param buffer     Destination int16_t buffer.
+   * @param buffer_len Total byte count to read (must be a multiple of
+   *                   feed_channel * sizeof(int16_t) * chunksize).
    * @return ESP_OK on success
+   */
+  esp_err_t getFeedData(bool is_get_raw_channel, int16_t *buffer,
+                        int buffer_len);
+
+  /**
+   * @brief Convenience overload: reads raw 4-channel data (equivalent to
+   *        getFeedData(true, buffer, buffer_len)).
+   *        Used by the streaming pipeline and MicCapture task which only
+   *        need the first (primary mic) channel after the call.
    */
   esp_err_t getFeedData(int16_t *buffer, int buffer_len);
 
   /**
-   * @brief Read interleaved AEC frames (mic + reference) from the TDM bus.
-   * @param frames     Destination array of AecFrame structs
-   * @param num_frames Number of frames to read
+   * @brief Return number of interleaved channels the ES7210 delivers.
+   * @return 4 (always — hardware provides RMNM 4-channel interleaved)
+   */
+  int getFeedChannel() const { return ADC_I2S_CHANNEL; }
+
+  /**
+   * @brief Return the AFE input format string for this board.
+   * @return "RMNM"  (Reference, Mic1, Noise/unused, Mic2)
+   */
+  const char *getInputFormat() const { return "RMNM"; }
+
+  // --- Playback (write to ES8311 DAC) ---------------------------------------
+
+  /**
+   * @brief Write PCM audio data to the ES8311 playback codec.
+   *
+   * Input is always 16-bit mono @ m_sample_rate.  The function up-samples
+   * to stereo 32-bit as required by the shared I2S bus.
+   *
+   * @param data   Source int16_t PCM buffer (16-bit, mono, m_sample_rate)
+   * @param length Byte length of the source buffer
+   * @param ticks_to_wait  FreeRTOS ticks to wait for DMA space (unused, kept
+   *                       for API compatibility with the demo BSP)
    * @return ESP_OK on success
    */
-  esp_err_t getAecFrames(AecFrame *frames, int num_frames);
+  esp_err_t audioPlay(const int16_t *data, int length,
+                      uint32_t ticks_to_wait = 0);
 
   // --- Volume / Gain control ------------------------------------------------
 
@@ -110,17 +142,17 @@ private:
   esp_err_t initI2s(uint32_t sample_rate);
   esp_err_t initCodecs(uint32_t sample_rate);
 
-  i2c_master_bus_handle_t m_i2c_bus        = nullptr;
-  i2s_chan_handle_t       m_tx_handle       = nullptr;
-  i2s_chan_handle_t       m_rx_handle       = nullptr;
-  esp_codec_dev_handle_t  m_play_dev        = nullptr;
-  esp_codec_dev_handle_t  m_record_dev      = nullptr;
-  int16_t                *m_tdm_work_buffer = nullptr;
-  uint32_t                m_sample_rate     = 16000;
-  int                     m_record_volume   = 70;
-  int                     m_play_volume     = 80;
-  bool                    m_initialized     = false;
+  i2c_master_bus_handle_t m_i2c_bus     = nullptr;
+  i2s_chan_handle_t       m_tx_handle   = nullptr;
+  i2s_chan_handle_t       m_rx_handle   = nullptr;
+  esp_codec_dev_handle_t  m_play_dev    = nullptr;
+  esp_codec_dev_handle_t  m_record_dev  = nullptr;
+  uint32_t                m_sample_rate = 16000;
+  int                     m_record_volume = 70;
+  int                     m_play_volume   = 80;
+  bool                    m_initialized   = false;
 
-  static constexpr size_t TDM_BUF_SIZE = 1024 * 4;
-  static constexpr const char *TAG     = "AudioHal";
+  // Number of interleaved int16 channels the ES7210 streams over I2S
+  static constexpr int  ADC_I2S_CHANNEL = 4;
+  static constexpr const char *TAG      = "AudioHal";
 };

@@ -1,6 +1,7 @@
 #include "AppController.h"
 #include "app/audio/AudioPipelineManager.h"
 #include "app/audio/AudioService.h"
+#include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
 #include "common/LogRouter.h"
@@ -8,6 +9,7 @@
 #include "hal/network/WifiManager.h"
 #include "services/EventBus.h"
 #include "app/mqtt/MqttTask.h"
+#include "sdkconfig.h"
 
 AppController &AppController::getInstance() {
   static AppController instance;
@@ -29,6 +31,16 @@ void AppController::begin(GlobalSystemSettings &settings,
 
   // Initialize LED color directly via Board
   Board::getInstance().setAllLedsColor(0, 80, 0);
+
+#ifdef CONFIG_WAVESHARE_WAKEWORD_ENABLE
+  // Start wake-word detector immediately — it only needs Board (audio HW),
+  // not WiFi.  The detector fires EventBus WAKE_WORD_DETECTED events.
+  if (WakeWordDetector::getInstance().begin()) {
+    LOGI_SYSTEM("WakeWordDetector started.");
+  } else {
+    LOGW_SYSTEM("WakeWordDetector failed to start (check 'model' partition).");
+  }
+#endif
 
   LOGI_SYSTEM("AppController initialized and listening for system events.");
 }
