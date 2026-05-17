@@ -242,7 +242,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
       LOGI_SYSTEM("Wake word detected (1-ch) — streaming started");
       EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
                                       (uint32_t)res->trigger_channel_id);
-      Board::getInstance().setPlayVolume(20);
+      // Board::getInstance().setPlayVolume(20);
 
       if (m_callback) {
         wake_word_evt_data_t evtdata;
@@ -259,7 +259,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
       EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
                                       ch);
       // reduce the speaker volume to 20
-      Board::getInstance().setPlayVolume(20);
+      // Board::getInstance().setPlayVolume(20);
       if (m_callback) {
         wake_word_evt_data_t evtdata;
         evtdata.awaken_channel = (uint8_t)ch;
@@ -286,7 +286,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
                       "listening for wake word",
                       VAD_SILENCE_TIMEOUT_MS);
           // again reset the volume to the prev value
-          Board::getInstance().setPreviousVolume();
+          // Board::getInstance().setPreviousVolume();
           if (m_callback) {
             wake_word_evt_data_t evtdata = {};
             m_callback(WAKE_EVT_CMD_TIMEOUT, evtdata, m_user_data);
