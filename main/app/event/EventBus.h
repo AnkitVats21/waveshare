@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app_types.h"
+#include "common/app_types.h"
 #include "esp_event.h"
 
 // Declare the event base

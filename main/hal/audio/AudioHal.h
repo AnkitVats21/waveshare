@@ -1,9 +1,9 @@
 #pragma once
 
-#include "audio_codec_data_if.h"
 #include "audio_codec_ctrl_if.h"
-#include "audio_codec_if.h"
+#include "audio_codec_data_if.h"
 #include "audio_codec_gpio_if.h"
+#include "audio_codec_if.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
@@ -40,10 +40,10 @@ public:
    * @brief Configuration passed from Board before initialization.
    */
   struct Config {
-    uint32_t                sample_rate   = 16000;
-    int                     record_volume = 70;
-    int                     play_volume   = 80;
-    i2c_master_bus_handle_t i2c_bus       = nullptr;
+    uint32_t sample_rate = 16000;
+    int record_volume = 70;
+    int play_volume = 80;
+    i2c_master_bus_handle_t i2c_bus = nullptr;
   };
 
   // --- Lifecycle ------------------------------------------------------------
@@ -130,14 +130,15 @@ public:
   // --- Volume / Gain control ------------------------------------------------
 
   esp_err_t setPlayVolume(int volume);
+  esp_err_t setPreviousVolume();
   esp_err_t getPlayVolume(int *volume);
   esp_err_t setRecordGain(float db_value);
 
   // --- Handle accessors (for Board to satisfy HardwareAudioHandles) ----------
 
-  i2s_chan_handle_t      getTxHandle()  const { return m_tx_handle;  }
-  i2s_chan_handle_t      getRxHandle()  const { return m_rx_handle;  }
-  esp_codec_dev_handle_t getPlayDev()   const { return m_play_dev;   }
+  i2s_chan_handle_t getTxHandle() const { return m_tx_handle; }
+  i2s_chan_handle_t getRxHandle() const { return m_rx_handle; }
+  esp_codec_dev_handle_t getPlayDev() const { return m_play_dev; }
   esp_codec_dev_handle_t getRecordDev() const { return m_record_dev; }
 
   bool isInitialized() const { return m_initialized; }
@@ -146,27 +147,28 @@ private:
   esp_err_t initI2s(uint32_t sample_rate);
   esp_err_t initCodecs(uint32_t sample_rate);
 
-  i2c_master_bus_handle_t m_i2c_bus     = nullptr;
-  i2s_chan_handle_t       m_tx_handle   = nullptr;
-  i2s_chan_handle_t       m_rx_handle   = nullptr;
-  esp_codec_dev_handle_t  m_play_dev    = nullptr;
-  esp_codec_dev_handle_t  m_record_dev  = nullptr;
-  uint32_t                m_sample_rate   = 16000;
-  int                     m_record_volume = 70;
-  int                     m_play_volume   = 80;
-  bool                    m_initialized   = false;
+  i2c_master_bus_handle_t m_i2c_bus = nullptr;
+  i2s_chan_handle_t m_tx_handle = nullptr;
+  i2s_chan_handle_t m_rx_handle = nullptr;
+  esp_codec_dev_handle_t m_play_dev = nullptr;
+  esp_codec_dev_handle_t m_record_dev = nullptr;
+  uint32_t m_sample_rate = 16000;
+  int m_record_volume = 70;
+  int m_play_volume = 80;
+  int m_play_previous_volume = 80;
+  bool m_initialized = false;
 
   // Codec interface objects — must be deleted in deinit() to prevent
   // stale I2S handle pointers surviving into the next reinit cycle.
-  const audio_codec_data_if_t *m_record_data_if  = nullptr;
-  const audio_codec_ctrl_if_t *m_record_ctrl_if  = nullptr;
-  const audio_codec_if_t      *m_record_codec_if = nullptr;
-  const audio_codec_data_if_t *m_play_data_if    = nullptr;
-  const audio_codec_ctrl_if_t *m_play_ctrl_if    = nullptr;
-  const audio_codec_gpio_if_t *m_play_gpio_if    = nullptr;
-  const audio_codec_if_t      *m_play_codec_if   = nullptr;
+  const audio_codec_data_if_t *m_record_data_if = nullptr;
+  const audio_codec_ctrl_if_t *m_record_ctrl_if = nullptr;
+  const audio_codec_if_t *m_record_codec_if = nullptr;
+  const audio_codec_data_if_t *m_play_data_if = nullptr;
+  const audio_codec_ctrl_if_t *m_play_ctrl_if = nullptr;
+  const audio_codec_gpio_if_t *m_play_gpio_if = nullptr;
+  const audio_codec_if_t *m_play_codec_if = nullptr;
 
   // Number of interleaved int16 channels the ES7210 streams over I2S
-  static constexpr int  ADC_I2S_CHANNEL = 4;
-  static constexpr const char *TAG      = "AudioHal";
+  static constexpr int ADC_I2S_CHANNEL = 4;
+  static constexpr const char *TAG = "AudioHal";
 };

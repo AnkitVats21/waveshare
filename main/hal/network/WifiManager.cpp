@@ -3,7 +3,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
-#include "services/EventBus.h"
+#include "app/event/EventBus.h"
 #include <cstring>
 
 // Define the system-wide WiFi event base (shared with app_types.h declaration)

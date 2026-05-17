@@ -5,7 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "hal/Board.h"
 #include "mqtt_certificates.hpp"
-#include "services/EventBus.h"
+#include "app/event/EventBus.h"
 #include <cstdint>
 #include <sstream>
 
@@ -175,8 +175,9 @@ void MqttTask::handleAudioConfig(const std::string &key,
       float gain = std::stof(val);
       if (gain >= 0 && gain <= 100 && gain != m_cache.mic_volume) {
         m_cache.mic_volume = gain;
-        Board::getInstance().setRecordGain(gain);
-        ESP_LOGI(m_config.name, "Mic gain updated to %.1f", gain);
+        // Send the mic gain to AudioService using the EventBus
+        EventBus::getInstance().publish(APP_EVENTS, AppEvent::MIC_GAIN_UPDATE, gain);
+        ESP_LOGI(m_config.name, "Published MIC_GAIN_UPDATE event: %.1f", gain);
       }
     } else if (key == "sample_rate") {
       uint32_t sample_rate = std::stoi(val);
@@ -202,10 +203,12 @@ void MqttTask::handleAudioConfig(const std::string &key,
 void MqttTask::handleLedConfig(const std::string &val) {
   int r, g, b;
   if (sscanf(val.c_str(), "%d,%d,%d", &r, &g, &b) == 3) {
-    if (r != m_cache.led_color.r || g != m_cache.led_color.g || b != m_cache.led_color.b) {
+    if (r != m_cache.led_color.r || g != m_cache.led_color.g ||
+        b != m_cache.led_color.b) {
       m_cache.led_color = {(uint8_t)r, (uint8_t)g, (uint8_t)b};
-      Board::getInstance().setAllLedsColor((uint8_t)r, (uint8_t)g, (uint8_t)b);
-      ESP_LOGI(m_config.name, "LED color updated to %d,%d,%d", r, g, b);
+      RgbColor color = {(uint8_t)r, (uint8_t)g, (uint8_t)b};
+      EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COLOR_UPDATE, color);
+      ESP_LOGI(m_config.name, "Published LED_COLOR_UPDATE event: %d,%d,%d", r, g, b);
     }
   } else {
     ESP_LOGW(m_config.name, "Invalid led_color format: %s (expected r,g,b)",

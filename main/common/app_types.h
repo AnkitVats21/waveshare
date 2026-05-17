@@ -28,6 +28,15 @@ struct RgbColor {
   uint8_t b;
 };
 
+enum class LedMode : uint8_t { OFF, SOLID, BLINK, BREATH, RAINBOW };
+
+struct LedEventData {
+  LedMode mode;
+  RgbColor color;
+  uint32_t speed_ms;
+  uint8_t repeat_count; // 0 for infinite/not applicable
+};
+
 /**
  * @brief Unified Configuration Data Object
  */
@@ -80,7 +89,9 @@ enum class AppEvent : uint32_t {
   WAKE_WORD_DETECTED,
   STREAMING_STOP_REQUESTED,
   STOP_STREAMING,
-  LED_COLOR_UPDATE
+  LED_COLOR_UPDATE,
+  MIC_GAIN_UPDATE,
+  LED_COMMAND
 };
 
 /**

@@ -59,5 +59,6 @@ private:
   EventBus *m_event_bus = nullptr;
 
   bool m_initialized = false;
+  float m_mic_gain = 80.0f; // Stored mic gain, default to 80.0f
   static constexpr const char *TAG = "AudioSvc";
 };

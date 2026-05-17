@@ -3,7 +3,7 @@
 #include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
 #include "hal/Board.h"
-#include "services/EventBus.h"
+#include "app/event/EventBus.h"
 
 AudioService &AudioService::getInstance() {
   static AudioService instance;
@@ -52,6 +52,8 @@ bool AudioService::begin(GlobalSystemSettings &settings,
   m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::WAKE_WORD_DETECTED,
                          onSystemEvent, this);
   m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::STOP_STREAMING,
+                         onSystemEvent, this);
+  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::MIC_GAIN_UPDATE,
                          onSystemEvent, this);
 
   // 4. Start the background supervisor task
@@ -132,12 +134,18 @@ void AudioService::onSystemEvent(void *handler_arg, esp_event_base_t base,
       LOGI_AUDIO("Wake word: enabling RTP stream + setting optimal mic gain");
       // Enable RTP streamer so the receiver starts getting audio
       AudioPipelineManager::setRtpEnabled(true);
-      self->m_board->setRecordGain(80.0f);
+      self->m_board->setRecordGain(self->m_mic_gain);
 
     } else if (id == (int32_t)AppEvent::STOP_STREAMING) {
       LOGI_AUDIO("VAD timeout: disabling RTP stream");
       // Disable RTP streamer — receiver will see clean silence, no stale frames
       AudioPipelineManager::setRtpEnabled(false);
+    } else if (id == (int32_t)AppEvent::MIC_GAIN_UPDATE) {
+      if (event_data) {
+        float gain = *static_cast<float *>(event_data);
+        self->m_mic_gain = gain;
+        LOGI_AUDIO("AudioService stored optimal mic gain: %.1f dB", gain);
+      }
     }
   }
 }

@@ -346,8 +346,16 @@ esp_err_t AudioHal::audioPlay(const int16_t *data, int length,
 esp_err_t AudioHal::setPlayVolume(int volume) {
   if (!m_initialized || !m_play_dev)
     return ESP_FAIL;
+  m_play_previous_volume = m_play_volume;
   m_play_volume = volume;
   return esp_codec_dev_set_out_vol(m_play_dev, volume);
+}
+
+esp_err_t AudioHal::setPreviousVolume() {
+  if (!m_initialized || !m_play_dev)
+    return ESP_FAIL;
+  m_play_volume = m_play_previous_volume;
+  return esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
 }
 
 esp_err_t AudioHal::getPlayVolume(int *volume) {
@@ -360,8 +368,11 @@ esp_err_t AudioHal::setRecordGain(float db_value) {
   if (!m_initialized || !m_record_dev)
     return ESP_FAIL;
 
+  // ? below I've verified its not working as written in comment below there for
+  // changing the max gain
   // ES7210 gain range: 0–24 dB. Clamp to prevent MQTT values like 100.0
-  // (sent as a 0-100 percentage) from causing extreme clipping/distortion.
+  // (sent as a 0-100 percentage) from causing extreme
+  // clipping/distortion.
   static constexpr float MAX_GAIN_DB = 80.0f;
   static constexpr float MIN_GAIN_DB = 0.0f;
   if (db_value > MAX_GAIN_DB)
