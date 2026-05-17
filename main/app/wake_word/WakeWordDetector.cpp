@@ -142,22 +142,9 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
     return;
   }
 
-  // Mono Mic1 extraction buffer for the streaming ring buffer (IRAM-safe)
-  // RMNM layout: slot0=Ref, slot1=Mic1, slot2=Noise, slot3=Mic2
-  int mic_bytes = audio_chunksize * sizeof(int16_t);
-  int16_t *mic1_buff = (int16_t *)heap_caps_malloc(
-      mic_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  if (!mic1_buff) {
-    ESP_LOGE(TAG, "Failed to allocate mic1 buffer");
-    heap_caps_free(i2s_buff);
-    vTaskDelete(nullptr);
-    return;
-  }
-
   esp_task_wdt_add(nullptr);
 
   while (m_task_flag) {
-    // ── Sole hardware read ──────────────────────────────────────────────────
     // Pause if AudioHal is being reinit'd (m_hw_valid cleared by AudioService)
     if (!m_hw_valid) {
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -165,25 +152,18 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
       continue;
     }
 
+    // Sole hardware read — feedTask is the ONLY consumer of getFeedData.
+    // MicCaptureTask must stay soft-disabled while this task runs.
     board.getFeedData(/*raw=*/true, i2s_buff, buf_bytes);
 
-    // Feed the AFE engine (wake-word + beamforming)
+    // Feed the AFE engine (wake-word detection + beamforming)
     m_afe_handle->feed(afe_data, i2s_buff);
-
-    // ── Streaming path: extract Mic1 (slot 1) → tx ring buffer ─────────────
-    // Only streams when wake word has been detected (m_streaming_active).
-    RingbufHandle_t rb = m_stream_ringbuf;
-    if (rb && m_streaming_active) {
-      for (int i = 0; i < audio_chunksize; i++) {
-        mic1_buff[i] = i2s_buff[i * feed_channel + 1]; // slot 1 = Mic1
-      }
-      xRingbufferSend(rb, mic1_buff, mic_bytes, 0);
-    }
 
     esp_task_wdt_reset();
   }
 
-  heap_caps_free(mic1_buff);
+  // Note: streaming output is handled in detectTask using the AFE-processed
+  // res->data, which is cleaner (beamformed + AEC) than raw Mic1.
   heap_caps_free(i2s_buff);
   vTaskDelete(nullptr);
 }
@@ -214,10 +194,14 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
   int wakeup_flag = 0;
   int silence_frames = 0; // consecutive VAD-silence AFE frames
   int fetch_chunksize = m_afe_handle->get_fetch_chunksize(afe_data);
-  // Frames per second = sample_rate / fetch_chunksize
-  // Silence timeout in frames (compute once):
+  int fetch_bytes = fetch_chunksize * sizeof(int16_t);
+
+  // Silence timeout in AFE fetch frames
   const int SILENCE_TIMEOUT_FRAMES =
       (VAD_SILENCE_TIMEOUT_MS * 16000) / (fetch_chunksize * 1000);
+
+  ESP_LOGI(TAG, "detect: fetch_chunksize=%d, silence_timeout=%d frames",
+           fetch_chunksize, SILENCE_TIMEOUT_FRAMES);
 
   esp_task_wdt_add(nullptr);
 
@@ -226,6 +210,14 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     if (!res || res->ret_value == ESP_FAIL) {
       ESP_LOGE(TAG, "AFE fetch error");
       break;
+    }
+
+    // ── Stream AFE-processed audio to ring buffer ─────────────────────────
+    // res->data is the beamformed + AEC mono output — much cleaner than raw
+    // Mic1. Only write when wake word has activated streaming.
+    RingbufHandle_t rb = m_stream_ringbuf;
+    if (rb && m_streaming_active && res->data && res->data_size > 0) {
+      xRingbufferSend(rb, res->data, res->data_size, 0);
     }
 
     // ── Wake word detection ─────────────────────────────────────────────────
@@ -239,6 +231,8 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
       m_streaming_active = true;
       silence_frames = 0;
       LOGI_SYSTEM("Wake word detected (1-ch) — streaming started");
+      // Change LED color to 100,0,100
+      Board::getInstance().setAllLedsColor(100, 0, 100);
       EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
                                       (uint32_t)res->trigger_channel_id);
       if (m_callback) {
