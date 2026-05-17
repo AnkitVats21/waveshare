@@ -91,17 +91,15 @@ public:
 
     bool isRunning() const { return m_task_flag != 0; }
 
+    /** @brief Pause hardware reads in feedTask (call before AudioHal::reinit). */
+    void pauseHardware()  { m_hw_valid = false; }
+    /** @brief Resume hardware reads after AudioHal::reinit completes. */
+    void resumeHardware() { m_hw_valid = true;  }
+
     /**
      * @brief Wire in the tx ring buffer so feedTask can stream Mic1 audio.
-     *
-     * Call this BEFORE or AFTER begin() — feedTask checks the pointer each
-     * iteration.  When set, WakeWordDetector becomes the SOLE hardware reader
-     * and pushes Mic1 mono PCM into this buffer for the RTP pipeline.
-     * MicCaptureTask must be kept soft-disabled (setEnabled(false)) while the
-     * detector is running to prevent the two-reader DMA split problem.
-     *
-     * @param buf  tx_ring_buffer from GlobalPipelineContext (may be nullptr to
-     *             stop streaming, e.g. before pipeline teardown)
+     * When set, feedTask pushes Mic1 PCM here ONLY while m_streaming_active.
+     * MicCaptureTask must remain soft-disabled while detector runs.
      */
     void setStreamRingbuf(RingbufHandle_t buf) { m_stream_ringbuf = buf; }
 
@@ -122,6 +120,18 @@ private:
     wake_word_callback_t           m_callback        = nullptr;
     void                          *m_user_data       = nullptr;
     volatile RingbufHandle_t       m_stream_ringbuf  = nullptr;
+
+    // Streaming is gated: feedTask only writes to ring buffer when BOTH
+    // m_stream_ringbuf is set AND m_streaming_active is true.
+    // detectTask sets m_streaming_active=true on wake word, false on VAD timeout.
+    volatile bool                  m_streaming_active = false;
+
+    // Set false before AudioHal::reinit(), true after — prevents feedTask
+    // from calling esp_codec_dev_read on freed/invalid handles.
+    volatile bool                  m_hw_valid         = true;
+
+    // VAD silence timeout: stop streaming after this many ms of silence
+    static constexpr int VAD_SILENCE_TIMEOUT_MS = 3000;
 
     static constexpr const char *TAG = "WakeWord";
 };

@@ -59,12 +59,12 @@ bool WakeWordDetector::begin() {
     return false;
   }
 
-  // 2. Build AFE config (4-channel RMNM, low-cost mode, no NS/VAD)
+  // 2. Build AFE config (4-channel RMNM, low-cost mode)
   const char *input_format = board.getInputFormat(); // "RMNM"
   afe_config_t *afe_config =
       afe_config_init(input_format, models, AFE_TYPE_SR, AFE_MODE_LOW_COST);
   afe_config->ns_init = false;
-  afe_config->vad_init = false;
+  afe_config->vad_init = true; // needed for VAD-based streaming timeout
 
   // 3. Create AFE handle + data
   m_afe_handle = esp_afe_handle_from_config(afe_config);
@@ -158,18 +158,22 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
 
   while (m_task_flag) {
     // ── Sole hardware read ──────────────────────────────────────────────────
-    // feedTask is the ONLY consumer of esp_codec_dev_read.  MicCaptureTask
-    // must be kept soft-disabled (setEnabled(false)) while this task runs.
+    // Pause if AudioHal is being reinit'd (m_hw_valid cleared by AudioService)
+    if (!m_hw_valid) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      esp_task_wdt_reset();
+      continue;
+    }
+
     board.getFeedData(/*raw=*/true, i2s_buff, buf_bytes);
 
     // Feed the AFE engine (wake-word + beamforming)
     m_afe_handle->feed(afe_data, i2s_buff);
 
     // ── Streaming path: extract Mic1 (slot 1) → tx ring buffer ─────────────
-    // This replaces MicCaptureTask's hardware read so the streaming pipeline
-    // receives every DMA chunk with no gaps.
+    // Only streams when wake word has been detected (m_streaming_active).
     RingbufHandle_t rb = m_stream_ringbuf;
-    if (rb) {
+    if (rb && m_streaming_active) {
       for (int i = 0; i < audio_chunksize; i++) {
         mic1_buff[i] = i2s_buff[i * feed_channel + 1]; // slot 1 = Mic1
       }
@@ -208,6 +212,13 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
   }
 
   int wakeup_flag = 0;
+  int silence_frames = 0; // consecutive VAD-silence AFE frames
+  int fetch_chunksize = m_afe_handle->get_fetch_chunksize(afe_data);
+  // Frames per second = sample_rate / fetch_chunksize
+  // Silence timeout in frames (compute once):
+  const int SILENCE_TIMEOUT_FRAMES =
+      (VAD_SILENCE_TIMEOUT_MS * 16000) / (fetch_chunksize * 1000);
+
   esp_task_wdt_add(nullptr);
 
   while (m_task_flag) {
@@ -217,75 +228,96 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
       break;
     }
 
-    // --- Wake word detection ---
+    // ── Wake word detection ─────────────────────────────────────────────────
     if (res->wakeup_state == WAKENET_DETECTED) {
       if (multinet && model_data)
         multinet->clean(model_data);
     }
 
-    bool just_awoken = false;
-
     if (res->raw_data_channels == 1 && res->wakeup_state == WAKENET_DETECTED) {
-      // Single-channel AFE: wake confirmed immediately
       wakeup_flag = 1;
-      just_awoken = true;
-    } else if (res->raw_data_channels > 1 &&
-               res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
-      // Multi-channel AFE: wait for channel verification
-      wakeup_flag = 1;
-      just_awoken = true;
-
-      wake_word_evt_data_t evtdata;
-      evtdata.awaken_channel = (uint8_t)res->trigger_channel_id;
-
+      m_streaming_active = true;
+      silence_frames = 0;
+      LOGI_SYSTEM("Wake word detected (1-ch) — streaming started");
+      EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
+                                      (uint32_t)res->trigger_channel_id);
       if (m_callback) {
+        wake_word_evt_data_t evtdata;
+        evtdata.awaken_channel = (uint8_t)res->trigger_channel_id;
         m_callback(WAKE_EVT_AWAKEN, evtdata, m_user_data);
       }
-
-      // Fire EventBus event for the rest of the application
+    } else if (res->raw_data_channels > 1 &&
+               res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
+      wakeup_flag = 1;
+      m_streaming_active = true;
+      silence_frames = 0;
       uint32_t ch = (uint32_t)res->trigger_channel_id;
-      EventBus::getInstance().publish(
-          APP_EVENTS, AppEvent::WAKE_WORD_DETECTED, ch);
-      LOGI_SYSTEM("Wake word detected on channel %d", res->trigger_channel_id);
+      LOGI_SYSTEM("Wake word detected on channel %d — streaming started", ch);
+      // Change LED color to 100,0,100
+      Board::getInstance().setAllLedsColor(100, 0, 100);
+      EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
+                                      ch);
+      if (m_callback) {
+        wake_word_evt_data_t evtdata;
+        evtdata.awaken_channel = (uint8_t)ch;
+        m_callback(WAKE_EVT_AWAKEN, evtdata, m_user_data);
+      }
+    }
+
+    // ── VAD-based streaming timeout ─────────────────────────────────────────
+    // While streaming: track silence. Reset timer on speech, stop on timeout.
+    if (m_streaming_active) {
+      if (res->vad_state == VAD_SPEECH) {
+        silence_frames = 0; // voice activity — reset timer
+      } else {
+        silence_frames++;
+        if (silence_frames >= SILENCE_TIMEOUT_FRAMES) {
+          m_streaming_active = false;
+          silence_frames = 0;
+          wakeup_flag = 0;
+          m_afe_handle->enable_wakenet(afe_data); // re-arm wake word
+          uint32_t zero = 0;
+          EventBus::getInstance().publish(APP_EVENTS, AppEvent::STOP_STREAMING,
+                                          zero);
+          LOGI_SYSTEM("VAD silence timeout (%d ms) — streaming stopped, "
+                      "listening for wake word",
+                      VAD_SILENCE_TIMEOUT_MS);
+          // Change LED color to 0,0,0
+          Board::getInstance().setAllLedsColor(0, 0, 0);
+          if (m_callback) {
+            wake_word_evt_data_t evtdata = {};
+            m_callback(WAKE_EVT_CMD_TIMEOUT, evtdata, m_user_data);
+          }
+        }
+      }
     }
 
     esp_task_wdt_reset();
 
-    // --- Command recognition (only after wake word) ---
+    // ── Command recognition (only after wake word, if multinet loaded) ───────
     if (wakeup_flag == 1 && multinet && model_data) {
       esp_mn_state_t mn_state = multinet->detect(model_data, res->data);
-
-      if (mn_state == ESP_MN_STATE_DETECTING) {
+      if (mn_state == ESP_MN_STATE_DETECTING)
         continue;
-      }
 
       if (mn_state == ESP_MN_STATE_DETECTED) {
         esp_mn_results_t *mn_result = multinet->get_results(model_data);
         uint8_t cmd_id = (uint8_t)mn_result->command_id[0];
-        LOGI_SYSTEM("Speech command detected: id=%d  text=\"%s\"", cmd_id,
+        LOGI_SYSTEM("Speech command: id=%d text=\"%s\"", cmd_id,
                     mn_result->string);
-
         wake_word_evt_data_t evtdata;
         evtdata.sr_cmd = cmd_id;
-        if (m_callback) {
+        if (m_callback)
           m_callback(WAKE_EVT_CMD, evtdata, m_user_data);
-        }
       }
 
       if (mn_state == ESP_MN_STATE_TIMEOUT) {
-        ESP_LOGI(TAG, "Command timeout — re-enabling wake word");
-        m_afe_handle->enable_wakenet(afe_data);
-        wakeup_flag = 0;
-
-        wake_word_evt_data_t evtdata = {};
-        if (m_callback) {
-          m_callback(WAKE_EVT_CMD_TIMEOUT, evtdata, m_user_data);
-        }
+        // MultiNet timed out — VAD timeout will handle streaming stop
+        ESP_LOGI(TAG, "MultiNet timeout");
       }
     }
 
-    esp_task_wdt_reset();
-  }
+  } // while (m_task_flag)
 
   // Cleanup
   if (model_data && multinet)

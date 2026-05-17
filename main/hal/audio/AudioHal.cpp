@@ -42,6 +42,7 @@ esp_err_t AudioHal::deinit() {
     return ESP_OK;
   }
 
+  // 1. Close + delete codec devices first
   if (m_record_dev) {
     esp_codec_dev_close(m_record_dev);
     esp_codec_dev_delete(m_record_dev);
@@ -52,6 +53,18 @@ esp_err_t AudioHal::deinit() {
     esp_codec_dev_delete(m_play_dev);
     m_play_dev = nullptr;
   }
+
+  // 2. Delete codec interfaces (MUST happen before i2s_del_channel so the
+  //    esp_codec_dev framework releases its internal reference to the handles)
+  if (m_record_codec_if) { audio_codec_delete_codec_if(m_record_codec_if); m_record_codec_if = nullptr; }
+  if (m_record_ctrl_if)  { audio_codec_delete_ctrl_if(m_record_ctrl_if);   m_record_ctrl_if  = nullptr; }
+  if (m_record_data_if)  { audio_codec_delete_data_if(m_record_data_if);   m_record_data_if  = nullptr; }
+  if (m_play_codec_if)   { audio_codec_delete_codec_if(m_play_codec_if);   m_play_codec_if   = nullptr; }
+  if (m_play_gpio_if)    { audio_codec_delete_gpio_if(m_play_gpio_if);     m_play_gpio_if    = nullptr; }
+  if (m_play_ctrl_if)    { audio_codec_delete_ctrl_if(m_play_ctrl_if);     m_play_ctrl_if    = nullptr; }
+  if (m_play_data_if)    { audio_codec_delete_data_if(m_play_data_if);     m_play_data_if    = nullptr; }
+
+  // 3. Disable + delete I2S channels
   if (m_tx_handle) {
     i2s_channel_disable(m_tx_handle);
     i2s_del_channel(m_tx_handle);
@@ -155,37 +168,31 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
   i2s_cfg_rx.port      = I2S_NUM_1;
   i2s_cfg_rx.rx_handle = m_rx_handle;
   i2s_cfg_rx.tx_handle = nullptr;
-  const audio_codec_data_if_t *record_data_if =
-      audio_codec_new_i2s_data(&i2s_cfg_rx);
+  m_record_data_if = audio_codec_new_i2s_data(&i2s_cfg_rx);
 
   audio_codec_i2c_cfg_t i2c_cfg_adc = {};
   i2c_cfg_adc.addr       = ES7210_CODEC_DEFAULT_ADDR;
   i2c_cfg_adc.bus_handle = m_i2c_bus;
-  const audio_codec_ctrl_if_t *record_ctrl_if =
-      audio_codec_new_i2c_ctrl(&i2c_cfg_adc);
+  m_record_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg_adc);
 
-  // Enable all 4 mics — required for RMNM AFE input format
   es7210_codec_cfg_t es7210_cfg = {};
-  es7210_cfg.ctrl_if      = record_ctrl_if;
+  es7210_cfg.ctrl_if      = m_record_ctrl_if;
   es7210_cfg.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 |
                             ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
-  const audio_codec_if_t *record_codec_if = es7210_codec_new(&es7210_cfg);
+  m_record_codec_if = es7210_codec_new(&es7210_cfg);
 
   esp_codec_dev_cfg_t record_dev_cfg = {};
   record_dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_IN;
-  record_dev_cfg.codec_if = record_codec_if;
-  record_dev_cfg.data_if  = record_data_if;
+  record_dev_cfg.codec_if = m_record_codec_if;
+  record_dev_cfg.data_if  = m_record_data_if;
   m_record_dev = esp_codec_dev_new(&record_dev_cfg);
 
-  // Open with 2 channels / 32-bit to match I2S bus; ES7210 interleaves 4 mics
   esp_codec_dev_sample_info_t record_fs = {};
   record_fs.sample_rate    = sample_rate;
   record_fs.channel        = 2;
   record_fs.bits_per_sample = 32;
-
   esp_codec_dev_open(m_record_dev, &record_fs);
 
-  // Set gain for all 4 mic channels
   esp_codec_dev_set_in_channel_gain(
       m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
   esp_codec_dev_set_in_channel_gain(
@@ -200,38 +207,34 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
   i2s_cfg_tx.port      = I2S_NUM_1;
   i2s_cfg_tx.rx_handle = nullptr;
   i2s_cfg_tx.tx_handle = m_tx_handle;
-  const audio_codec_data_if_t *play_data_if =
-      audio_codec_new_i2s_data(&i2s_cfg_tx);
+  m_play_data_if = audio_codec_new_i2s_data(&i2s_cfg_tx);
 
   audio_codec_i2c_cfg_t i2c_cfg_dac = {};
   i2c_cfg_dac.addr       = ES8311_CODEC_DEFAULT_ADDR;
   i2c_cfg_dac.bus_handle = m_i2c_bus;
-  const audio_codec_ctrl_if_t *play_ctrl_if =
-      audio_codec_new_i2c_ctrl(&i2c_cfg_dac);
-  const audio_codec_gpio_if_t *play_gpio_if = audio_codec_new_gpio();
+  m_play_ctrl_if  = audio_codec_new_i2c_ctrl(&i2c_cfg_dac);
+  m_play_gpio_if  = audio_codec_new_gpio();
 
   es8311_codec_cfg_t es8311_cfg = {};
-  es8311_cfg.ctrl_if     = play_ctrl_if;
-  es8311_cfg.gpio_if     = play_gpio_if;
+  es8311_cfg.ctrl_if     = m_play_ctrl_if;
+  es8311_cfg.gpio_if     = m_play_gpio_if;
   es8311_cfg.codec_mode  = ESP_CODEC_DEV_WORK_MODE_DAC;
   es8311_cfg.pa_pin      = GPIO_PWR_CTRL;
   es8311_cfg.pa_reverted = false;
   es8311_cfg.master_mode = false;
   es8311_cfg.use_mclk    = false;
-  const audio_codec_if_t *play_codec_if = es8311_codec_new(&es8311_cfg);
+  m_play_codec_if = es8311_codec_new(&es8311_cfg);
 
   esp_codec_dev_cfg_t play_dev_cfg = {};
   play_dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_OUT;
-  play_dev_cfg.codec_if = play_codec_if;
-  play_dev_cfg.data_if  = play_data_if;
+  play_dev_cfg.codec_if = m_play_codec_if;
+  play_dev_cfg.data_if  = m_play_data_if;
   m_play_dev = esp_codec_dev_new(&play_dev_cfg);
 
-  // ES8311 plays back mono 16-bit at the streaming sample rate
   esp_codec_dev_sample_info_t play_fs = {};
   play_fs.sample_rate    = sample_rate;
-  play_fs.channel        = 2;          // stereo on the bus
-  play_fs.bits_per_sample = 32;        // match I2S bus width
-
+  play_fs.channel        = 2;
+  play_fs.bits_per_sample = 32;
   esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
   esp_codec_dev_open(m_play_dev, &play_fs);
 

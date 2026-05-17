@@ -128,3 +128,10 @@ void AudioPipelineManager::setMicEnabled(bool enabled) {
     }
     LOGI_AUDIO("Mic pipeline %s (Task + RTP)", enabled ? "ENABLED" : "SOFT-DISABLED");
 }
+
+void AudioPipelineManager::setRtpEnabled(bool enabled) {
+    if (m_rtp_tx) {
+        m_rtp_tx->setEnabled(enabled);
+    }
+    LOGI_AUDIO("RTP streamer %s (WW mode)", enabled ? "ENABLED" : "DISABLED");
+}
