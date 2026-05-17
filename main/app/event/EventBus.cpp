@@ -5,6 +5,7 @@
 // Define the event bases
 ESP_EVENT_DEFINE_BASE(APP_EVENTS);
 ESP_EVENT_DEFINE_BASE(AUDIO_SYSTEM_EVENTS);
+ESP_EVENT_DEFINE_BASE(MQTT_SYSTEM_EVENTS);
 
 EventBus::EventBus() : custom_loop(nullptr) {}
 
