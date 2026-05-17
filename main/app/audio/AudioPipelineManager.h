@@ -30,6 +30,10 @@ public:
    */
   static void setMicEnabled(bool enabled);
 
+  /** @brief Gate just the RTP streamer (network output) without touching
+   *         MicCapture hardware reads. Used when WakeWordDetector owns I2S. */
+  static void setRtpEnabled(bool enabled);
+
 private:
   static MicCaptureTask *m_mic_task;
   static SpeakerPlaybackTask *m_speaker_task;

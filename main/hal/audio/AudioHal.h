@@ -1,5 +1,9 @@
 #pragma once
 
+#include "audio_codec_data_if.h"
+#include "audio_codec_ctrl_if.h"
+#include "audio_codec_if.h"
+#include "audio_codec_gpio_if.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
@@ -147,10 +151,20 @@ private:
   i2s_chan_handle_t       m_rx_handle   = nullptr;
   esp_codec_dev_handle_t  m_play_dev    = nullptr;
   esp_codec_dev_handle_t  m_record_dev  = nullptr;
-  uint32_t                m_sample_rate = 16000;
+  uint32_t                m_sample_rate   = 16000;
   int                     m_record_volume = 70;
   int                     m_play_volume   = 80;
   bool                    m_initialized   = false;
+
+  // Codec interface objects — must be deleted in deinit() to prevent
+  // stale I2S handle pointers surviving into the next reinit cycle.
+  const audio_codec_data_if_t *m_record_data_if  = nullptr;
+  const audio_codec_ctrl_if_t *m_record_ctrl_if  = nullptr;
+  const audio_codec_if_t      *m_record_codec_if = nullptr;
+  const audio_codec_data_if_t *m_play_data_if    = nullptr;
+  const audio_codec_ctrl_if_t *m_play_ctrl_if    = nullptr;
+  const audio_codec_gpio_if_t *m_play_gpio_if    = nullptr;
+  const audio_codec_if_t      *m_play_codec_if   = nullptr;
 
   // Number of interleaved int16 channels the ES7210 streams over I2S
   static constexpr int  ADC_I2S_CHANNEL = 4;
