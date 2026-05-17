@@ -73,6 +73,8 @@ bool Board::begin() {
   if (m_audio.init(audio_cfg) != ESP_OK)
     return false;
 
+  m_current_mic_gain = (float)m_record_volume; // Sync stored gain with initialized gain
+
   // 4. RGB LED strip — no dependencies, safe to init last
   m_leds.init((gpio_num_t)LED_STRIP_GPIO_PIN, LED_STRIP_LED_COUNT);
 
@@ -92,4 +94,23 @@ esp_err_t Board::reinitAudio(uint32_t sample_rate) {
   }
   // Delegate the actual tear-down + reinit to AudioHal
   return m_audio.reinit(sample_rate);
+}
+
+esp_err_t Board::setRecordGain(float db_value, bool force) {
+  if (!m_initialized) {
+    ESP_LOGE(TAG, "Cannot setRecordGain: Board not initialized");
+    return ESP_FAIL;
+  }
+
+  if (!force && m_current_mic_gain == db_value) {
+    ESP_LOGI(TAG, "setRecordGain: mic gain is already %.1f dB, skipping...", db_value);
+    return ESP_OK;
+  }
+
+  esp_err_t ret = m_audio.setRecordGain(db_value);
+  if (ret == ESP_OK) {
+    m_current_mic_gain = db_value;
+    ESP_LOGI(TAG, "setRecordGain: mic gain updated to %.1f dB", db_value);
+  }
+  return ret;
 }

@@ -1,10 +1,10 @@
 #include "app/AppController.h"
+#include "app/event/EventBus.h"
 #include "common/AppLogger.h"
 #include "common/LogRouter.h"
 #include "common/app_types.h"
 #include "hal/Board.h"
 #include "hal/network/WifiManager.h"
-#include "services/EventBus.h"
 
 // Global instances for configuration and context
 GlobalSystemSettings sys_settings;

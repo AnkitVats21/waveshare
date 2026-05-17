@@ -9,10 +9,10 @@
 #include "esp_wn_models.h"
 #include "model_path.h"
 
+#include "app/event/EventBus.h"
 #include "common/AppLogger.h"
 #include "common/app_types.h"
 #include "hal/Board.h"
-#include "services/EventBus.h"
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -231,10 +231,10 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
       m_streaming_active = true;
       silence_frames = 0;
       LOGI_SYSTEM("Wake word detected (1-ch) — streaming started");
-      // Change LED color to 100,0,100
-      Board::getInstance().setAllLedsColor(100, 0, 100);
       EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
                                       (uint32_t)res->trigger_channel_id);
+      Board::getInstance().setPlayVolume(20);
+
       if (m_callback) {
         wake_word_evt_data_t evtdata;
         evtdata.awaken_channel = (uint8_t)res->trigger_channel_id;
@@ -247,10 +247,10 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
       silence_frames = 0;
       uint32_t ch = (uint32_t)res->trigger_channel_id;
       LOGI_SYSTEM("Wake word detected on channel %d — streaming started", ch);
-      // Change LED color to 100,0,100
-      Board::getInstance().setAllLedsColor(100, 0, 100);
       EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
                                       ch);
+      // reduce the speaker volume to 20
+      Board::getInstance().setPlayVolume(20);
       if (m_callback) {
         wake_word_evt_data_t evtdata;
         evtdata.awaken_channel = (uint8_t)ch;
@@ -276,8 +276,8 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
           LOGI_SYSTEM("VAD silence timeout (%d ms) — streaming stopped, "
                       "listening for wake word",
                       VAD_SILENCE_TIMEOUT_MS);
-          // Change LED color to 0,0,0
-          Board::getInstance().setAllLedsColor(0, 0, 0);
+          // again reset the volume to the prev value
+          Board::getInstance().setPreviousVolume();
           if (m_callback) {
             wake_word_evt_data_t evtdata = {};
             m_callback(WAKE_EVT_CMD_TIMEOUT, evtdata, m_user_data);

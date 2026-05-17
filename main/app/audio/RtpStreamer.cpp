@@ -16,10 +16,10 @@ void RtpStreamer::eventHandlerBridge(void *handler_arg, esp_event_base_t base,
   if (instance == nullptr || instance->m_task_handle == nullptr)
     return;
 
-  AppEvent event_id = static_cast<AppEvent>(id);
-  xTaskNotify(instance->m_task_handle,
-              (event_id == AppEvent::WAKE_WORD_DETECTED) ? 1 : 0,
-              eSetValueWithOverwrite);
+  // AppEvent event_id = static_cast<AppEvent>(id);
+  // xTaskNotify(instance->m_task_handle,
+  //             (event_id == AppEvent::WAKE_WORD_DETECTED) ? 1 : 0,
+  //             eSetValueWithOverwrite);
 }
 
 void RtpStreamer::processLoop() {
@@ -53,15 +53,19 @@ void RtpStreamer::processLoop() {
 
     if (notification_value == 0) {
       xTaskNotifyWait(0x00, ULONG_MAX, &notification_value, pdMS_TO_TICKS(100));
-      if (!m_is_running) break;
-      
-      if (notification_value == 0) continue;
+      if (!m_is_running)
+        break;
+
+      if (notification_value == 0)
+        continue;
 
       // Resuming... flush buffer
       size_t clear_size = 0;
       while (true) {
-        uint8_t *stale = static_cast<uint8_t *>(xRingbufferReceive(m_ring_buffer, &clear_size, 0));
-        if (!stale) break;
+        uint8_t *stale = static_cast<uint8_t *>(
+            xRingbufferReceive(m_ring_buffer, &clear_size, 0));
+        if (!stale)
+          break;
         vRingbufferReturnItem(m_ring_buffer, stale);
       }
       continue;
@@ -85,7 +89,8 @@ void RtpStreamer::processLoop() {
       vRingbufferReturnItem(m_ring_buffer, audio_ptr);
 
       sendto(m_socket, tx_frame_buffer, 12 + chunk_size, 0,
-             reinterpret_cast<struct sockaddr *>(&dest_addr), sizeof(dest_addr));
+             reinterpret_cast<struct sockaddr *>(&dest_addr),
+             sizeof(dest_addr));
     }
   }
 

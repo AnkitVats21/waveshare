@@ -36,8 +36,9 @@ idf_component_register(
             # Wake Word Detection
             "app/wake_word/WakeWordDetector.cpp"
 
-            # Services
-            "services/EventBus.cpp"
+            # Event and LED Services
+            "app/event/EventBus.cpp"
+            "app/led/LedService.cpp"
 
             # Common utilities
             "common/LogRouter.cpp"
@@ -57,6 +58,8 @@ idf_component_register(
             "app/audio"
             "app/mqtt"
             "app/wake_word"
+            "app/led"
+            "app/event"
             # Services / common
             "services"
             "common"

@@ -42,16 +42,17 @@ public:
   void setSampleRate(uint32_t sample_rate) { m_sample_rate = sample_rate; }
   void setInitialVolumes(int record, int play) {
     m_record_volume = record;
-    m_play_volume   = play;
+    m_play_volume = play;
   }
+  void setPreviousVolume() { m_audio.setPreviousVolume(); }
 
   // -- Handle accessors (for HardwareAudioHandles population in main.cpp) ----
-  i2c_master_bus_handle_t  getI2cBus()    { return m_i2c.getBusHandle();    }
-  i2s_chan_handle_t         getTxHandle()  { return m_audio.getTxHandle();   }
-  i2s_chan_handle_t         getRxHandle()  { return m_audio.getRxHandle();   }
-  esp_codec_dev_handle_t   getPlayDev()   { return m_audio.getPlayDev();    }
-  esp_codec_dev_handle_t   getRecordDev() { return m_audio.getRecordDev();  }
-  esp_io_expander_handle_t getIoExpander(){ return m_io.getRawHandle();      }
+  i2c_master_bus_handle_t getI2cBus() { return m_i2c.getBusHandle(); }
+  i2s_chan_handle_t getTxHandle() { return m_audio.getTxHandle(); }
+  i2s_chan_handle_t getRxHandle() { return m_audio.getRxHandle(); }
+  esp_codec_dev_handle_t getPlayDev() { return m_audio.getPlayDev(); }
+  esp_codec_dev_handle_t getRecordDev() { return m_audio.getRecordDev(); }
+  esp_io_expander_handle_t getIoExpander() { return m_io.getRawHandle(); }
 
   // -- LED orchestration (delegates to LedStripManager) ----------------------
   void setLedPixel(uint32_t index, uint32_t r, uint32_t g, uint32_t b) {
@@ -61,7 +62,7 @@ public:
     m_leds.setAll(r, g, b);
   }
   void refreshLeds() { m_leds.refresh(); }
-  void clearLeds()   { m_leds.clear();   }
+  void clearLeds() { m_leds.clear(); }
 
   // -- Audio orchestration APIs (delegate to AudioHal) -----------------------
 
@@ -100,9 +101,9 @@ public:
     return m_audio.audioPlay(data, length);
   }
 
-  esp_err_t setPlayVolume(int volume)       { return m_audio.setPlayVolume(volume);   }
-  esp_err_t getPlayVolume(int *volume)      { return m_audio.getPlayVolume(volume);   }
-  esp_err_t setRecordGain(float db_value)   { return m_audio.setRecordGain(db_value); }
+  esp_err_t setPlayVolume(int volume) { return m_audio.setPlayVolume(volume); }
+  esp_err_t getPlayVolume(int *volume) { return m_audio.getPlayVolume(volume); }
+  esp_err_t setRecordGain(float db_value, bool force = false);
 
   /**
    * @brief Tear down I2S and codec hardware (called before reinitAudio).
@@ -121,20 +122,21 @@ public:
   }
 
 private:
-  Board()  = default;
+  Board() = default;
   ~Board() = default;
 
   // HAL component instances — Board is the sole owner
-  I2CBus          m_i2c;
-  IoExpander      m_io;
-  AudioHal        m_audio;
+  I2CBus m_i2c;
+  IoExpander m_io;
+  AudioHal m_audio;
   LedStripManager m_leds;
-  SdCardManager   m_storage;
+  SdCardManager m_storage;
 
   // Pre-init settings (forwarded to AudioHal::Config on begin())
-  uint32_t m_sample_rate   = 16000;
-  int      m_record_volume = 70;
-  int      m_play_volume   = 80;
+  uint32_t m_sample_rate = 16000;
+  int m_record_volume = 70;
+  int m_play_volume = 80;
+  float m_current_mic_gain = -999.0f; // Track active mic gain value
 
   static constexpr const char *TAG = "Board";
 };

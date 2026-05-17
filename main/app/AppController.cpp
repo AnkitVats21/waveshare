@@ -1,15 +1,16 @@
 #include "AppController.h"
 #include "app/audio/AudioPipelineManager.h"
 #include "app/audio/AudioService.h"
+#include "app/mqtt/MqttTask.h"
 #include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
 #include "common/LogRouter.h"
 #include "hal/Board.h"
 #include "hal/network/WifiManager.h"
-#include "services/EventBus.h"
-#include "app/mqtt/MqttTask.h"
 #include "sdkconfig.h"
+#include "app/event/EventBus.h"
+#include "app/led/LedService.h"
 
 AppController &AppController::getInstance() {
   static AppController instance;
@@ -23,14 +24,18 @@ void AppController::begin(GlobalSystemSettings &settings,
   m_context = &context;
   m_handles = &handles;
 
+  // Initialize LED task service (runs asynchronously at low priority)
+  LedService::getInstance().begin(&Board::getInstance(), &EventBus::getInstance());
+
   // Subscribe to WiFi events via the EventBus
   EventBus::getInstance().subscribe(WIFI_SYSTEM_EVENTS, WifiEvent::CONNECTED,
                                     &AppController::onNetworkReady, this);
   EventBus::getInstance().subscribe(WIFI_SYSTEM_EVENTS, WifiEvent::DISCONNECTED,
                                     &AppController::onNetworkLost, this);
 
-  // Initialize LED color directly via Board
-  Board::getInstance().setAllLedsColor(0, 80, 0);
+  // Initializing the board setting the LED color to red (GRB: G=80, R=0 => red)
+  LedEventData init_led = {LedMode::SOLID, {0, 80, 0}, 0, 0};
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, init_led);
 
 #ifdef CONFIG_WAVESHARE_WAKEWORD_ENABLE
   // Start wake-word detector immediately — it only needs Board (audio HW),
@@ -49,6 +54,10 @@ void AppController::onNetworkReady(void *handler_arg, esp_event_base_t base,
                                    int32_t id, void *event_data) {
   AppController *self = static_cast<AppController *>(handler_arg);
   LOGI_SYSTEM("Network connection established. Starting bootstrap...");
+  
+  // Network connected: set LED color to green (GRB: R=80 => green)
+  LedEventData green_led = {LedMode::SOLID, {80, 0, 0}, 0, 0};
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, green_led);
 
   // 1. Setup Network Logging
   AsyncNetLogger::getInstance().init(self->m_settings->server_ip, 5005);
@@ -58,9 +67,19 @@ void AppController::onNetworkReady(void *handler_arg, esp_event_base_t base,
 
   // 2. Bootstrap Audio System
   self->bootstrapAudio();
+  
+  // Audio system started: blink the LED blue 2 times
+  LedEventData blue_blink = {LedMode::BLINK, {0, 0, 80}, 250, 2};
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, blue_blink);
+  vTaskDelay(pdMS_TO_TICKS(1100)); // Let the blink pattern complete before next animation
 
   // 3. Initialize MQTT
   self->initMqtt();
+  
+  // MQTT Task started: blink the LED purple/magenta 2 times
+  LedEventData purple_blink = {LedMode::BLINK, {80, 0, 80}, 250, 2};
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, purple_blink);
+  vTaskDelay(pdMS_TO_TICKS(1100));
 }
 
 void AppController::onNetworkLost(void *handler_arg, esp_event_base_t base,
@@ -69,6 +88,10 @@ void AppController::onNetworkLost(void *handler_arg, esp_event_base_t base,
   LOGW_WIFI("Network connection lost. Tearing down network services.");
 
   self->teardownNetworkServices();
+  
+  // Set LED color to RED (GRB: G=80 => red)
+  LedEventData red_led = {LedMode::SOLID, {0, 80, 0}, 0, 0};
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, red_led);
 }
 
 void AppController::bootstrapAudio() {
