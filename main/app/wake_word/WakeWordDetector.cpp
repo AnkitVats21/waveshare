@@ -1,4 +1,5 @@
 #include "app/wake_word/WakeWordDetector.h"
+#include <cstring>
 
 #include "esp_afe_sr_iface.h"
 #include "esp_afe_sr_models.h"
@@ -82,6 +83,7 @@ bool WakeWordDetector::begin() {
   }
 
   m_task_flag = 1;
+  m_streaming_active = false;
 
   // 4. Launch tasks  (detect on Core 1, feed on Core 0 — mirrors demo BSP)
   xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", 8 * 1024,
@@ -144,6 +146,9 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
 
   esp_task_wdt_add(nullptr);
 
+  int warmup_chunks = 50; // Ignore/zero-out the first 50 chunks (~800ms) to
+                          // allow mic hardware bias to stabilize
+
   while (m_task_flag) {
     // Pause if AudioHal is being reinit'd (m_hw_valid cleared by AudioService)
     if (!m_hw_valid) {
@@ -155,6 +160,11 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
     // Sole hardware read — feedTask is the ONLY consumer of getFeedData.
     // MicCaptureTask must stay soft-disabled while this task runs.
     board.getFeedData(/*raw=*/true, i2s_buff, buf_bytes);
+
+    if (warmup_chunks > 0) {
+      warmup_chunks--;
+      std::memset(i2s_buff, 0, buf_bytes);
+    }
 
     // Feed the AFE engine (wake-word detection + beamforming)
     m_afe_handle->feed(afe_data, i2s_buff);
@@ -194,7 +204,6 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
   int wakeup_flag = 0;
   int silence_frames = 0; // consecutive VAD-silence AFE frames
   int fetch_chunksize = m_afe_handle->get_fetch_chunksize(afe_data);
-  int fetch_bytes = fetch_chunksize * sizeof(int16_t);
 
   // Silence timeout in AFE fetch frames
   const int SILENCE_TIMEOUT_FRAMES =

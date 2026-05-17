@@ -44,11 +44,30 @@ void RtpStreamer::processLoop() {
   rtp_hdr->ssrc = lwip_htonl(esp_random());
 
   uint32_t notification_value = 1; // FORCED ACTIVE for testing
+  bool was_enabled = false;
+  int skip_packets = 0;
 
   while (m_is_running) {
     if (!m_is_enabled) {
+      was_enabled = false;
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
+    }
+
+    if (!was_enabled) {
+      was_enabled = true;
+      skip_packets = 8; // Discard first 8 packets (~160ms) of transient startup noise
+
+      // Flush buffer on transition to clean out any old state
+      size_t clear_size = 0;
+      while (true) {
+        uint8_t *stale = static_cast<uint8_t *>(
+            xRingbufferReceive(m_ring_buffer, &clear_size, 0));
+        if (!stale)
+          break;
+        vRingbufferReturnItem(m_ring_buffer, stale);
+      }
+      LOGI_NET("RTP Streamer active: flushed ringbuffer, ignoring first %d packets to suppress transient noise", skip_packets);
     }
 
     if (notification_value == 0) {
@@ -76,6 +95,12 @@ void RtpStreamer::processLoop() {
         m_ring_buffer, &chunk_size, pdMS_TO_TICKS(50), 1400));
 
     if (audio_ptr != nullptr) {
+      if (skip_packets > 0) {
+        skip_packets--;
+        vRingbufferReturnItem(m_ring_buffer, audio_ptr);
+        continue;
+      }
+
       rtp_hdr->sequence_num = lwip_htons(seq_num++);
       rtp_hdr->timestamp = lwip_htonl(timestamp_tracker);
 
