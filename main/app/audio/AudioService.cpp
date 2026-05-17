@@ -65,70 +65,79 @@ bool AudioService::begin(GlobalSystemSettings &settings,
 }
 
 bool AudioService::reinit(uint32_t sample_rate) {
-    if (!m_initialized) return false;
+  if (!m_initialized)
+    return false;
 
-    LOGI_AUDIO("AudioService: Reinitializing for sample rate %lu Hz", sample_rate);
+  LOGI_AUDIO("AudioService: Reinitializing for sample rate %lu Hz",
+             sample_rate);
 
-    // 1. Pause WakeWordDetector feedTask so it stops calling esp_codec_dev_read
-    //    before we destroy the hardware handles (prevents UAF / semaphore crash)
-    auto &ww = WakeWordDetector::getInstance();
-    bool ww_was_running = ww.isRunning();
-    if (ww_was_running) {
-        ww.pauseHardware();
-        vTaskDelay(pdMS_TO_TICKS(30)); // let feedTask exit current read
-    }
+  // 1. Pause WakeWordDetector feedTask so it stops calling esp_codec_dev_read
+  //    before we destroy the hardware handles (prevents UAF / semaphore crash)
+  auto &ww = WakeWordDetector::getInstance();
+  bool ww_was_running = ww.isRunning();
+  if (ww_was_running) {
+    ww.pauseHardware();
+    vTaskDelay(pdMS_TO_TICKS(30)); // let feedTask exit current read
+  }
 
-    // 2. Stop high-level pipeline tasks and clear ring buffer reference
-    AudioPipelineManager::teardown(*m_context);
+  // 2. Stop high-level pipeline tasks and clear ring buffer reference
+  AudioPipelineManager::teardown(*m_context);
 
-    // 3. Reinit hardware via Board
-    m_board->reinitAudio(sample_rate);
+  // 3. Reinit hardware via Board
+  m_board->reinitAudio(sample_rate);
 
-    // 4. Update settings + handles
-    m_settings->sample_rate = sample_rate;
-    m_handles->speaker_tx_handle = m_board->getTxHandle();
-    m_handles->mic_rx_handle     = m_board->getRxHandle();
-    m_handles->play_dev          = m_board->getPlayDev();
-    m_handles->record_dev        = m_board->getRecordDev();
+  // 4. Update settings + handles
+  m_settings->sample_rate = sample_rate;
+  m_handles->speaker_tx_handle = m_board->getTxHandle();
+  m_handles->mic_rx_handle = m_board->getRxHandle();
+  m_handles->play_dev = m_board->getPlayDev();
+  m_handles->record_dev = m_board->getRecordDev();
 
-    // 5. Resume WakeWordDetector (new handles are ready)
-    if (ww_was_running) {
-        ww.resumeHardware();
-    }
+  // 5. Resume WakeWordDetector (new handles are ready)
+  if (ww_was_running) {
+    ww.resumeHardware();
+  }
 
-    // 6. Restart pipeline (will re-wire WW ring buffer if running)
-    return AudioPipelineManager::initialize(*m_settings, *m_handles, *m_context);
+  // 6. Restart pipeline (will re-wire WW ring buffer if running)
+  return AudioPipelineManager::initialize(*m_settings, *m_handles, *m_context);
 }
 
 void AudioService::setMicEnabled(bool enabled) {
-    if (m_settings) m_settings->mic_enabled = enabled;
+  if (m_settings)
+    m_settings->mic_enabled = enabled;
 
-    // When WakeWordDetector is running, it owns the hardware and is the sole
-    // I2S reader. MicCapture must stay disabled. Instead we toggle streaming
-    // by wiring/clearing the ring buffer on the WakeWordDetector.
-    auto &ww = WakeWordDetector::getInstance();
-    if (ww.isRunning()) {
-        ww.setStreamRingbuf(enabled ? m_context->tx_ring_buffer : nullptr);
-        // Also gate the RTP streamer (controls network output)
-        AudioPipelineManager::setRtpEnabled(enabled);
-        LOGI_AUDIO("Mic toggle (WW mode): streaming %s", enabled ? "ENABLED" : "DISABLED");
-    } else {
-        AudioPipelineManager::setMicEnabled(enabled);
-    }
+  // When WakeWordDetector is running, it owns the hardware and is the sole
+  // I2S reader. MicCapture must stay disabled. Instead we toggle streaming
+  // by wiring/clearing the ring buffer on the WakeWordDetector.
+  auto &ww = WakeWordDetector::getInstance();
+  if (ww.isRunning()) {
+    ww.setStreamRingbuf(enabled ? m_context->tx_ring_buffer : nullptr);
+    // Also gate the RTP streamer (controls network output)
+    AudioPipelineManager::setRtpEnabled(enabled);
+    LOGI_AUDIO("Mic toggle (WW mode): streaming %s",
+               enabled ? "ENABLED" : "DISABLED");
+  } else {
+    AudioPipelineManager::setMicEnabled(enabled);
+  }
 }
 
 void AudioService::onSystemEvent(void *handler_arg, esp_event_base_t base,
                                  int32_t id, void *event_data) {
   AudioService *self = static_cast<AudioService *>(handler_arg);
-  if (!self) return;
+  if (!self)
+    return;
 
   if (base == APP_EVENTS) {
     if (id == (int32_t)AppEvent::WAKE_WORD_DETECTED) {
-      LOGI_AUDIO("Wake Word event received. Ensuring Mic Gain is optimal...");
-      self->m_board->setRecordGain(20.0f); // More reasonable gain
+      LOGI_AUDIO("Wake word: enabling RTP stream + setting optimal mic gain");
+      // Enable RTP streamer so the receiver starts getting audio
+      AudioPipelineManager::setRtpEnabled(true);
+      self->m_board->setRecordGain(80.0f);
+
     } else if (id == (int32_t)AppEvent::STOP_STREAMING) {
-      LOGI_AUDIO("Streaming stop event. Resetting audio states.");
-      // Reset volume or gain if needed
+      LOGI_AUDIO("VAD timeout: disabling RTP stream");
+      // Disable RTP streamer — receiver will see clean silence, no stale frames
+      AudioPipelineManager::setRtpEnabled(false);
     }
   }
 }

@@ -14,10 +14,10 @@
 // ============================================================================
 
 esp_err_t AudioHal::init(const Config &cfg) {
-  m_i2c_bus       = cfg.i2c_bus;
-  m_sample_rate   = cfg.sample_rate;
+  m_i2c_bus = cfg.i2c_bus;
+  m_sample_rate = cfg.sample_rate;
   m_record_volume = cfg.record_volume;
-  m_play_volume   = cfg.play_volume;
+  m_play_volume = cfg.play_volume;
 
   esp_err_t ret = initI2s(m_sample_rate);
   if (ret != ESP_OK) {
@@ -32,7 +32,8 @@ esp_err_t AudioHal::init(const Config &cfg) {
   }
 
   m_initialized = true;
-  ESP_LOGI(TAG, "AudioHal initialized at %lu Hz (STD I2S, 4-ch ES7210)", m_sample_rate);
+  ESP_LOGI(TAG, "AudioHal initialized at %lu Hz (STD I2S, 4-ch ES7210)",
+           m_sample_rate);
   return ESP_OK;
 }
 
@@ -56,13 +57,34 @@ esp_err_t AudioHal::deinit() {
 
   // 2. Delete codec interfaces (MUST happen before i2s_del_channel so the
   //    esp_codec_dev framework releases its internal reference to the handles)
-  if (m_record_codec_if) { audio_codec_delete_codec_if(m_record_codec_if); m_record_codec_if = nullptr; }
-  if (m_record_ctrl_if)  { audio_codec_delete_ctrl_if(m_record_ctrl_if);   m_record_ctrl_if  = nullptr; }
-  if (m_record_data_if)  { audio_codec_delete_data_if(m_record_data_if);   m_record_data_if  = nullptr; }
-  if (m_play_codec_if)   { audio_codec_delete_codec_if(m_play_codec_if);   m_play_codec_if   = nullptr; }
-  if (m_play_gpio_if)    { audio_codec_delete_gpio_if(m_play_gpio_if);     m_play_gpio_if    = nullptr; }
-  if (m_play_ctrl_if)    { audio_codec_delete_ctrl_if(m_play_ctrl_if);     m_play_ctrl_if    = nullptr; }
-  if (m_play_data_if)    { audio_codec_delete_data_if(m_play_data_if);     m_play_data_if    = nullptr; }
+  if (m_record_codec_if) {
+    audio_codec_delete_codec_if(m_record_codec_if);
+    m_record_codec_if = nullptr;
+  }
+  if (m_record_ctrl_if) {
+    audio_codec_delete_ctrl_if(m_record_ctrl_if);
+    m_record_ctrl_if = nullptr;
+  }
+  if (m_record_data_if) {
+    audio_codec_delete_data_if(m_record_data_if);
+    m_record_data_if = nullptr;
+  }
+  if (m_play_codec_if) {
+    audio_codec_delete_codec_if(m_play_codec_if);
+    m_play_codec_if = nullptr;
+  }
+  if (m_play_gpio_if) {
+    audio_codec_delete_gpio_if(m_play_gpio_if);
+    m_play_gpio_if = nullptr;
+  }
+  if (m_play_ctrl_if) {
+    audio_codec_delete_ctrl_if(m_play_ctrl_if);
+    m_play_ctrl_if = nullptr;
+  }
+  if (m_play_data_if) {
+    audio_codec_delete_data_if(m_play_data_if);
+    m_play_data_if = nullptr;
+  }
 
   // 3. Disable + delete I2S channels
   if (m_tx_handle) {
@@ -130,21 +152,23 @@ esp_err_t AudioHal::initI2s(uint32_t sample_rate) {
 
   // 2. STD Philips mode — Stereo, 32-bit (ES7210 needs ≥32-bit frames)
   i2s_std_config_t std_cfg = {
-      .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
-      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-          I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-      .gpio_cfg = {
-          .mclk = (gpio_num_t)GPIO_I2S_MCLK,
-          .bclk = (gpio_num_t)GPIO_I2S_SCLK,
-          .ws   = (gpio_num_t)GPIO_I2S_LRCK,
-          .dout = (gpio_num_t)GPIO_I2S_DOUT,
-          .din  = (gpio_num_t)GPIO_I2S_SDIN,
-          .invert_flags = {
-              .mclk_inv = false,
-              .bclk_inv = false,
-              .ws_inv   = false,
+      .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
+      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT,
+                                                      I2S_SLOT_MODE_STEREO),
+      .gpio_cfg =
+          {
+              .mclk = (gpio_num_t)GPIO_I2S_MCLK,
+              .bclk = (gpio_num_t)GPIO_I2S_SCLK,
+              .ws = (gpio_num_t)GPIO_I2S_LRCK,
+              .dout = (gpio_num_t)GPIO_I2S_DOUT,
+              .din = (gpio_num_t)GPIO_I2S_SDIN,
+              .invert_flags =
+                  {
+                      .mclk_inv = false,
+                      .bclk_inv = false,
+                      .ws_inv = false,
+                  },
           },
-      },
   };
 
   ret |= i2s_channel_init_std_mode(m_tx_handle, &std_cfg);
@@ -165,31 +189,31 @@ esp_err_t AudioHal::initI2s(uint32_t sample_rate) {
 esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
   // ---- Record path: ES7210 ADC (4-channel) ----------------------------------
   audio_codec_i2s_cfg_t i2s_cfg_rx = {};
-  i2s_cfg_rx.port      = I2S_NUM_1;
+  i2s_cfg_rx.port = I2S_NUM_1;
   i2s_cfg_rx.rx_handle = m_rx_handle;
   i2s_cfg_rx.tx_handle = nullptr;
   m_record_data_if = audio_codec_new_i2s_data(&i2s_cfg_rx);
 
   audio_codec_i2c_cfg_t i2c_cfg_adc = {};
-  i2c_cfg_adc.addr       = ES7210_CODEC_DEFAULT_ADDR;
+  i2c_cfg_adc.addr = ES7210_CODEC_DEFAULT_ADDR;
   i2c_cfg_adc.bus_handle = m_i2c_bus;
   m_record_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg_adc);
 
   es7210_codec_cfg_t es7210_cfg = {};
-  es7210_cfg.ctrl_if      = m_record_ctrl_if;
-  es7210_cfg.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 |
-                            ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
+  es7210_cfg.ctrl_if = m_record_ctrl_if;
+  es7210_cfg.mic_selected =
+      ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
   m_record_codec_if = es7210_codec_new(&es7210_cfg);
 
   esp_codec_dev_cfg_t record_dev_cfg = {};
   record_dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_IN;
   record_dev_cfg.codec_if = m_record_codec_if;
-  record_dev_cfg.data_if  = m_record_data_if;
+  record_dev_cfg.data_if = m_record_data_if;
   m_record_dev = esp_codec_dev_new(&record_dev_cfg);
 
   esp_codec_dev_sample_info_t record_fs = {};
-  record_fs.sample_rate    = sample_rate;
-  record_fs.channel        = 2;
+  record_fs.sample_rate = sample_rate;
+  record_fs.channel = 2;
   record_fs.bits_per_sample = 32;
   esp_codec_dev_open(m_record_dev, &record_fs);
 
@@ -204,36 +228,36 @@ esp_err_t AudioHal::initCodecs(uint32_t sample_rate) {
 
   // ---- Playback path: ES8311 DAC -------------------------------------------
   audio_codec_i2s_cfg_t i2s_cfg_tx = {};
-  i2s_cfg_tx.port      = I2S_NUM_1;
+  i2s_cfg_tx.port = I2S_NUM_1;
   i2s_cfg_tx.rx_handle = nullptr;
   i2s_cfg_tx.tx_handle = m_tx_handle;
   m_play_data_if = audio_codec_new_i2s_data(&i2s_cfg_tx);
 
   audio_codec_i2c_cfg_t i2c_cfg_dac = {};
-  i2c_cfg_dac.addr       = ES8311_CODEC_DEFAULT_ADDR;
+  i2c_cfg_dac.addr = ES8311_CODEC_DEFAULT_ADDR;
   i2c_cfg_dac.bus_handle = m_i2c_bus;
-  m_play_ctrl_if  = audio_codec_new_i2c_ctrl(&i2c_cfg_dac);
-  m_play_gpio_if  = audio_codec_new_gpio();
+  m_play_ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg_dac);
+  m_play_gpio_if = audio_codec_new_gpio();
 
   es8311_codec_cfg_t es8311_cfg = {};
-  es8311_cfg.ctrl_if     = m_play_ctrl_if;
-  es8311_cfg.gpio_if     = m_play_gpio_if;
-  es8311_cfg.codec_mode  = ESP_CODEC_DEV_WORK_MODE_DAC;
-  es8311_cfg.pa_pin      = GPIO_PWR_CTRL;
+  es8311_cfg.ctrl_if = m_play_ctrl_if;
+  es8311_cfg.gpio_if = m_play_gpio_if;
+  es8311_cfg.codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC;
+  es8311_cfg.pa_pin = GPIO_PWR_CTRL;
   es8311_cfg.pa_reverted = false;
   es8311_cfg.master_mode = false;
-  es8311_cfg.use_mclk    = false;
+  es8311_cfg.use_mclk = false;
   m_play_codec_if = es8311_codec_new(&es8311_cfg);
 
   esp_codec_dev_cfg_t play_dev_cfg = {};
   play_dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_OUT;
   play_dev_cfg.codec_if = m_play_codec_if;
-  play_dev_cfg.data_if  = m_play_data_if;
+  play_dev_cfg.data_if = m_play_data_if;
   m_play_dev = esp_codec_dev_new(&play_dev_cfg);
 
   esp_codec_dev_sample_info_t play_fs = {};
-  play_fs.sample_rate    = sample_rate;
-  play_fs.channel        = 2;
+  play_fs.sample_rate = sample_rate;
+  play_fs.channel = 2;
   play_fs.bits_per_sample = 32;
   esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
   esp_codec_dev_open(m_play_dev, &play_fs);
@@ -268,7 +292,7 @@ esp_err_t AudioHal::getFeedData(bool is_get_raw_channel, int16_t *buffer,
     // Raw layout per frame: [Ref(0), Mic1(1), Unused(2), Mic2(3)]  ← RMNM
     int audio_chunksize = buffer_len / (sizeof(int16_t) * ADC_I2S_CHANNEL);
     for (int i = 0; i < audio_chunksize; i++) {
-      int16_t ref       = buffer[4 * i + 0];
+      int16_t ref = buffer[4 * i + 0];
       buffer[3 * i + 0] = buffer[4 * i + 1]; // Mic1
       buffer[3 * i + 1] = buffer[4 * i + 3]; // Mic2
       buffer[3 * i + 2] = ref;               // Ref (for AEC)
@@ -301,7 +325,8 @@ esp_err_t AudioHal::audioPlay(const int16_t *data, int length,
   // 2 stereo channels * 2 bytes (32-bit expanded from 16-bit)
   int out_len = num_samples * 2 * sizeof(int32_t);
   int32_t *out_buf = (int32_t *)malloc(out_len);
-  if (!out_buf) return ESP_ERR_NO_MEM;
+  if (!out_buf)
+    return ESP_ERR_NO_MEM;
 
   for (int i = 0; i < num_samples; i++) {
     int32_t sample = ((int32_t)data[i]) << 16;
@@ -334,6 +359,17 @@ esp_err_t AudioHal::getPlayVolume(int *volume) {
 esp_err_t AudioHal::setRecordGain(float db_value) {
   if (!m_initialized || !m_record_dev)
     return ESP_FAIL;
+
+  // ES7210 gain range: 0–24 dB. Clamp to prevent MQTT values like 100.0
+  // (sent as a 0-100 percentage) from causing extreme clipping/distortion.
+  static constexpr float MAX_GAIN_DB = 80.0f;
+  static constexpr float MIN_GAIN_DB = 0.0f;
+  if (db_value > MAX_GAIN_DB)
+    db_value = MAX_GAIN_DB;
+  if (db_value < MIN_GAIN_DB)
+    db_value = MIN_GAIN_DB;
+
   m_record_volume = (int)db_value;
+  ESP_LOGI(TAG, "Record gain set to %.1f dB", db_value);
   return esp_codec_dev_set_in_gain(m_record_dev, db_value);
 }
