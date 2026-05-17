@@ -88,12 +88,12 @@ void MqttTask::handleMqttEvent(int32_t event_id,
     esp_mqtt_client_subscribe(m_mqtt_handle, "device/esp32s3/commands", 0);
     esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG, 0);
     esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_DYNAMIC_SUB, 0);
-    bus.publish(APP_EVENTS, AppEventId::MQTT_CONNECTED, true);
+    bus.publish(MQTT_SYSTEM_EVENTS, AppEventId::MQTT_CONNECTED, true);
     break;
 
   case MQTT_EVENT_DISCONNECTED:
     ESP_LOGW(m_config.name, "MQTTS Session Disconnected.");
-    bus.publish(APP_EVENTS, AppEventId::MQTT_DISCONNECTED, false);
+    bus.publish(MQTT_SYSTEM_EVENTS, AppEventId::MQTT_DISCONNECTED, false);
     break;
 
   case MQTT_EVENT_DATA:
