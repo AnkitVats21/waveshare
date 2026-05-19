@@ -25,7 +25,7 @@ public:
     AudioStreamFormat format = AudioStreamFormat::PCM_S16LE;
   };
 
-  RtpStreamer(const TxConfig &config, RingbufHandle_t tx_ring_buffer);
+  RtpStreamer(const TxConfig &config, RingbufHandle_t tx_ring_buffer, int shared_socket);
 
   /**
    * @brief Event handler bridge for receiving notifications from the EventBus

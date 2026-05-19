@@ -1,5 +1,6 @@
 #include "KeyService.h"
 #include "esp_log.h"
+#include "hal/Board.h"
 
 KeyService::KeyService(ExpanderKeyInput &input) : m_input(input) {}
 
@@ -30,6 +31,28 @@ void KeyService::taskLoop() {
 
         if (pressed) {
           ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
+
+          if (keys[i] == KeyId::KEY_3) {
+            int vol = 0;
+            if (Board::getInstance().getPlayVolume(&vol) == ESP_OK) {
+              int new_vol = vol + 5;
+              if (new_vol > 100) new_vol = 100;
+              Board::getInstance().setPlayVolume(new_vol);
+              ESP_LOGI(TAG, "Volume increased: %d -> %d", vol, new_vol);
+            } else {
+              ESP_LOGE(TAG, "Failed to get current speaker volume");
+            }
+          } else if (keys[i] == KeyId::KEY_5) {
+            int vol = 0;
+            if (Board::getInstance().getPlayVolume(&vol) == ESP_OK) {
+              int new_vol = vol - 5;
+              if (new_vol < 0) new_vol = 0;
+              Board::getInstance().setPlayVolume(new_vol);
+              ESP_LOGI(TAG, "Volume decreased: %d -> %d", vol, new_vol);
+            } else {
+              ESP_LOGE(TAG, "Failed to get current speaker volume");
+            }
+          }
         } else {
           ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);
         }

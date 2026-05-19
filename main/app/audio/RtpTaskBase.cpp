@@ -3,9 +3,10 @@
 #include "lwip/sockets.h"
 
 RtpTaskBase::RtpTaskBase(const CommonConfig &config,
-                         RingbufHandle_t ring_buffer, const char *log_tag)
+                         RingbufHandle_t ring_buffer, int shared_socket, const char *log_tag)
     : m_config(config), m_ring_buffer(ring_buffer), m_task_handle(nullptr),
-      m_socket(-1), m_tag(log_tag), m_is_running(false), m_is_enabled(true) {}
+      m_socket(shared_socket), m_is_shared_socket(shared_socket >= 0), m_tag(log_tag),
+      m_is_running(false), m_is_enabled(true) {}
 
 RtpTaskBase::~RtpTaskBase() { stop(); }
 
@@ -21,7 +22,7 @@ bool RtpTaskBase::begin() {
 void RtpTaskBase::stop() {
   m_is_running = false;
   
-  // Close socket to unblock any pending recvfrom/sendto
+  // Close socket if not shared to unblock any pending recvfrom/sendto
   closeSocket();
 
   // We give some time for the task to exit itself, 
@@ -35,7 +36,7 @@ void RtpTaskBase::stop() {
 }
 
 void RtpTaskBase::closeSocket() {
-  if (m_socket >= 0) {
+  if (m_socket >= 0 && !m_is_shared_socket) {
     // shutdown(m_socket, SHUT_RDWR); // Force unblock
     close(m_socket);
     m_socket = -1;

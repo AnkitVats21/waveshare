@@ -5,11 +5,14 @@
 #include "SpeakerPlayback.h"
 #include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
+#include "lwip/sockets.h"
+#include <cstring>
 
 MicCaptureTask* AudioPipelineManager::m_mic_task = nullptr;
 SpeakerPlaybackTask* AudioPipelineManager::m_speaker_task = nullptr;
 RtpStreamer* AudioPipelineManager::m_rtp_tx = nullptr;
 RtpReceiver* AudioPipelineManager::m_rtp_rx = nullptr;
+int AudioPipelineManager::m_shared_socket = -1;
 
 bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
                                       const HardwareAudioHandles &hw_handles,
@@ -44,7 +47,35 @@ bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
   m_speaker_task = new SpeakerPlaybackTask();
   m_speaker_task->start(settings, hw_handles.play_dev, out_context.rx_ring_buffer);
 
-  // 3. Start RTP Transmitter
+  // 3. Create Shared Bidirectional UDP Socket
+  m_shared_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+  if (m_shared_socket < 0) {
+      LOGE_AUDIO("Failed to create shared RTP UDP socket!");
+      return false;
+  }
+
+  struct sockaddr_in bind_addr;
+  std::memset(&bind_addr, 0, sizeof(bind_addr));
+  bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  bind_addr.sin_family = AF_INET;
+  bind_addr.sin_port = htons(settings.rx_rtp_port); // Bind locally to the designated port (5005)
+
+  if (bind(m_shared_socket, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
+      LOGE_AUDIO("Failed to bind shared UDP socket on port %d!", settings.rx_rtp_port);
+      close(m_shared_socket);
+      m_shared_socket = -1;
+      return false;
+  }
+
+  // Set receive timeout so that recvfrom doesn't block indefinitely on socket read
+  struct timeval timeout;
+  timeout.tv_sec = 1;
+  timeout.tv_usec = 0;
+  if (setsockopt(m_shared_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+      LOGE_AUDIO("Failed to set receive timeout on shared UDP socket!");
+  }
+
+  // 4. Start RTP Transmitter (using shared socket)
   RtpStreamer::TxConfig tx_cfg;
   tx_cfg.target_ip = settings.server_ip;
   tx_cfg.port = settings.tx_rtp_port;
@@ -53,19 +84,19 @@ bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
   tx_cfg.stack_size = 4096;
   tx_cfg.core_id = settings.network_core_id;
 
-  m_rtp_tx = new RtpStreamer(tx_cfg, out_context.tx_ring_buffer);
+  m_rtp_tx = new RtpStreamer(tx_cfg, out_context.tx_ring_buffer, m_shared_socket);
   if (!m_rtp_tx->begin()) {
       LOGE_AUDIO("Failed to start RTP Streamer");
   }
 
-  // 4. Start RTP Receiver
+  // 5. Start RTP Receiver (using shared socket)
   RtpTaskBase::CommonConfig rx_cfg;
   rx_cfg.port = settings.rx_rtp_port;
   rx_cfg.priority = settings.rx_priority;
   rx_cfg.stack_size = 4096;
   rx_cfg.core_id = settings.network_core_id;
 
-  m_rtp_rx = new RtpReceiver(rx_cfg, out_context.rx_ring_buffer, "rtp_receiver");
+  m_rtp_rx = new RtpReceiver(rx_cfg, out_context.rx_ring_buffer, m_shared_socket, "rtp_receiver");
   if (!m_rtp_rx->begin()) {
       LOGE_AUDIO("Failed to start RTP Receiver");
   }
@@ -86,6 +117,13 @@ void AudioPipelineManager::teardown(GlobalPipelineContext &context) {
         m_rtp_rx->stop();
         delete m_rtp_rx;
         m_rtp_rx = nullptr;
+    }
+
+    // 1b. Close the shared socket now that tasks are stopped
+    if (m_shared_socket >= 0) {
+        close(m_shared_socket);
+        m_shared_socket = -1;
+        LOGI_AUDIO("Shared UDP socket closed.");
     }
 
     // 2. Stop Hardware Tasks

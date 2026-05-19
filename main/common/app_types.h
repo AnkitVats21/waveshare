@@ -54,7 +54,7 @@ struct GlobalSystemSettings {
   // Network Settings
   std::string server_ip = "192.168.1.18";
   uint16_t tx_rtp_port = 5005;
-  uint16_t rx_rtp_port = 5006;
+  uint16_t rx_rtp_port = 5005;
 
   // Task/Resource Settings
   BaseType_t network_core_id = 0;
