@@ -39,4 +39,5 @@ private:
   static SpeakerPlaybackTask *m_speaker_task;
   static RtpStreamer *m_rtp_tx;
   static RtpReceiver *m_rtp_rx;
+  static int m_shared_socket;
 };

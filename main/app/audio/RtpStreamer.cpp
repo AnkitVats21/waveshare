@@ -7,8 +7,8 @@
 #include <climits>
 #include <cstring>
 
-RtpStreamer::RtpStreamer(const TxConfig &config, RingbufHandle_t tx_ring_buffer)
-    : RtpTaskBase(config, tx_ring_buffer, "RtpStreamer"), m_tx_config(config) {}
+RtpStreamer::RtpStreamer(const TxConfig &config, RingbufHandle_t tx_ring_buffer, int shared_socket)
+    : RtpTaskBase(config, tx_ring_buffer, shared_socket, "RtpStreamer"), m_tx_config(config) {}
 
 void RtpStreamer::eventHandlerBridge(void *handler_arg, esp_event_base_t base,
                                      int32_t id, void *event_data) {
@@ -23,9 +23,8 @@ void RtpStreamer::eventHandlerBridge(void *handler_arg, esp_event_base_t base,
 }
 
 void RtpStreamer::processLoop() {
-  m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
   if (m_socket < 0) {
-    LOGE_NET("Failed to create TX socket");
+    LOGE_NET("Invalid TX socket");
     return;
   }
 

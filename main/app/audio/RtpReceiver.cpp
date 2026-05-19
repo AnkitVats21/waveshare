@@ -4,31 +4,13 @@
 #include "lwip/sockets.h"
 
 void RtpReceiver::processLoop() {
-  m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
   if (m_socket < 0) {
-    LOGE_NET("Failed to create RX socket");
+    LOGE_NET("Invalid RX socket");
     return;
   }
-
-  struct sockaddr_in bind_addr;
-  bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  bind_addr.sin_family = AF_INET;
-  bind_addr.sin_port = htons(m_config.port);
-
-  if (bind(m_socket, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
-    LOGE_NET("Failed to bind RX socket on port %d", m_config.port);
-    closeSocket();
-    return;
-  }
-
-  // Set receive timeout to prevent infinite blocking and allow m_is_running check
-  struct timeval timeout;
-  timeout.tv_sec = 1;
-  timeout.tv_usec = 0;
-  setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
   uint8_t rx_packet_buffer[1500];
-  LOGI_NET("Smart RTP Listener Active on Port %d", m_config.port);
+  LOGI_NET("Smart RTP Listener Active on Port %d (Shared Socket)", m_config.port);
 
   while (m_is_running) {
     struct sockaddr_in source_addr;

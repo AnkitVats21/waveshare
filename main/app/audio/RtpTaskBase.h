@@ -14,7 +14,7 @@ public:
   };
 
   RtpTaskBase(const CommonConfig &config, RingbufHandle_t ring_buffer,
-              const char *log_tag);
+              int shared_socket, const char *log_tag);
 
   virtual ~RtpTaskBase();
 
@@ -29,6 +29,7 @@ protected:
   RingbufHandle_t m_ring_buffer;
   TaskHandle_t m_task_handle;
   int m_socket;
+  bool m_is_shared_socket;
   const char *m_tag;
   volatile bool m_is_running;
   volatile bool m_is_enabled;
