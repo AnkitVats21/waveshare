@@ -1,9 +1,9 @@
 #include "AudioService.h"
 #include "app/audio/AudioPipelineManager.h"
+#include "app/event/EventBus.h"
 #include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
 #include "hal/Board.h"
-#include "app/event/EventBus.h"
 
 AudioService &AudioService::getInstance() {
   static AudioService instance;
@@ -160,6 +160,6 @@ void AudioService::run() {
     // 3. Silence detection
     // 4. Resource monitoring
 
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Low frequency monitoring
+    vTaskDelay(pdMS_TO_TICKS(100)); // Low frequency monitoring
   }
 }

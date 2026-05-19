@@ -5,6 +5,8 @@
 #include "common/app_types.h"
 #include "hal/Board.h"
 #include "hal/network/WifiManager.h"
+#include "hal/input/ExpanderKeyInput.h"
+#include "app/input/KeyService.h"
 
 // Global instances for configuration and context
 GlobalSystemSettings sys_settings;
@@ -24,6 +26,11 @@ extern "C" void app_main(void) {
   } else {
     LOGI_SYSTEM("Board hardware and NVS ready.");
   }
+
+  // 2b. Initialize Key Polling Service
+  static ExpanderKeyInput key_input(board.getIoExpanderInstance());
+  static KeyService key_service(key_input);
+  key_service.start();
 
   // 3. Initialize Event Bus
   EventBus::getInstance().init();
