@@ -1,11 +1,11 @@
 #include "MqttTask.h"
 #include "app/audio/AudioService.h"
+#include "app/event/EventBus.h"
 #include "common/AppLogger.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "hal/Board.h"
 #include "mqtt_certificates.hpp"
-#include "app/event/EventBus.h"
 #include <cstdint>
 #include <sstream>
 
@@ -65,7 +65,7 @@ void MqttTask::run() {
                                     staticOutgoingDataHandler, this);
 
   while (m_running) {
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 
   esp_mqtt_client_stop(m_mqtt_handle);
@@ -176,7 +176,8 @@ void MqttTask::handleAudioConfig(const std::string &key,
       if (gain >= 0 && gain <= 100 && gain != m_cache.mic_volume) {
         m_cache.mic_volume = gain;
         // Send the mic gain to AudioService using the EventBus
-        EventBus::getInstance().publish(APP_EVENTS, AppEvent::MIC_GAIN_UPDATE, gain);
+        EventBus::getInstance().publish(APP_EVENTS, AppEvent::MIC_GAIN_UPDATE,
+                                        gain);
         ESP_LOGI(m_config.name, "Published MIC_GAIN_UPDATE event: %.1f", gain);
       }
     } else if (key == "sample_rate") {
@@ -207,8 +208,10 @@ void MqttTask::handleLedConfig(const std::string &val) {
         b != m_cache.led_color.b) {
       m_cache.led_color = {(uint8_t)r, (uint8_t)g, (uint8_t)b};
       RgbColor color = {(uint8_t)r, (uint8_t)g, (uint8_t)b};
-      EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COLOR_UPDATE, color);
-      ESP_LOGI(m_config.name, "Published LED_COLOR_UPDATE event: %d,%d,%d", r, g, b);
+      EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COLOR_UPDATE,
+                                      color);
+      ESP_LOGI(m_config.name, "Published LED_COLOR_UPDATE event: %d,%d,%d", r,
+               g, b);
     }
   } else {
     ESP_LOGW(m_config.name, "Invalid led_color format: %s (expected r,g,b)",

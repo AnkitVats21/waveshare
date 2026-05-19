@@ -15,12 +15,12 @@
 class IoExpander {
 public:
   enum Pin : uint8_t {
-    PA_EN   = 8,  // Port 1, Pin 0 — Power amplifier enable
-    LCD_BL  = 9,  // Port 1, Pin 1 — LCD backlight
+    PA_EN = 8,    // Port 1, Pin 0 — Power amplifier enable
+    LCD_BL = 9,   // Port 1, Pin 1 — LCD backlight
     LCD_RST = 10, // Port 1, Pin 2 — LCD reset
-    RGB_R   = 1,  // Port 0, Pin 1
-    RGB_G   = 2,  // Port 0, Pin 2
-    RGB_B   = 3   // Port 0, Pin 3
+    RGB_R = 1,    // Port 0, Pin 1
+    RGB_G = 2,    // Port 0, Pin 2
+    RGB_B = 3     // Port 0, Pin 3
   };
 
   /**
@@ -60,9 +60,22 @@ public:
   /** @brief Return the raw expander handle for any code that still needs it. */
   esp_io_expander_handle_t getRawHandle() const { return m_expander; }
 
+  /**
+   * @brief Read all 16 input pins.
+   * @param value Returned 16-bit pin state.
+   */
+  esp_err_t readInputs(uint16_t &value);
+
+  /**
+   * @brief Read single pin state.
+   * @param pin Pin enum value
+   * @return true if HIGH
+   */
+  bool readPin(uint8_t pin);
+
 private:
   i2c_master_dev_handle_t m_dev_handle = nullptr;
-  esp_io_expander_handle_t m_expander  = nullptr;
+  esp_io_expander_handle_t m_expander = nullptr;
 
   uint16_t m_output_state = 0xFFFF;
   uint16_t m_config_state = 0xFFFF; // default all inputs
@@ -70,7 +83,7 @@ private:
   esp_err_t writeReg16(uint8_t reg, uint16_t value);
 
   // TCA9555 register map
-  static constexpr uint8_t REG_INPUT_PORT0  = 0x00;
+  static constexpr uint8_t REG_INPUT_PORT0 = 0x00;
   static constexpr uint8_t REG_OUTPUT_PORT0 = 0x02;
   static constexpr uint8_t REG_CONFIG_PORT0 = 0x06;
 

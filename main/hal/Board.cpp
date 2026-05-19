@@ -53,14 +53,9 @@ bool Board::begin() {
                 ESP_IO_EXPANDER_I2C_TCA9555_ADDRESS_000) != ESP_OK)
     return false;
 
-  // Power-on codec PA and reset rails via IO expander pins 8, 9, 10
-  m_io.setDirection(IO_EXPANDER_PIN_NUM_8 | IO_EXPANDER_PIN_NUM_9 |
-                        IO_EXPANDER_PIN_NUM_10,
-                    true /* output */);
-  esp_io_expander_set_level(m_io.getRawHandle(),
-                            IO_EXPANDER_PIN_NUM_8 | IO_EXPANDER_PIN_NUM_9 |
-                                IO_EXPANDER_PIN_NUM_10,
-                            1);
+  // Power-on codec PA enable via IO expander pin 8 (pins 9, 10, 11 are inputs for Keys 3, 4, 5)
+  m_io.setDirection(IO_EXPANDER_PIN_NUM_8, true /* output */);
+  esp_io_expander_set_level(m_io.getRawHandle(), IO_EXPANDER_PIN_NUM_8, 1);
   vTaskDelay(pdMS_TO_TICKS(200)); // Allow power rails to stabilize
 
   // 3. Audio HAL — I2S + ES7210/ES8311 codec initialization

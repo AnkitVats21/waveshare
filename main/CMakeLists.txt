@@ -13,6 +13,9 @@ idf_component_register(
             "hal/io/I2CBus.cpp"
             "hal/io/IoExpander.cpp"
 
+            # HAL — Input
+            "hal/input/ExpanderKeyInput.cpp"
+
             # HAL — LED
             "hal/led/LedStripManager.cpp"
 
@@ -32,6 +35,7 @@ idf_component_register(
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
             "app/mqtt/MqttTask.cpp"
+            "app/input/KeyService.cpp"
 
             # Wake Word Detection
             "app/wake_word/WakeWordDetector.cpp"

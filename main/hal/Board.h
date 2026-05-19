@@ -53,6 +53,7 @@ public:
   esp_codec_dev_handle_t getPlayDev() { return m_audio.getPlayDev(); }
   esp_codec_dev_handle_t getRecordDev() { return m_audio.getRecordDev(); }
   esp_io_expander_handle_t getIoExpander() { return m_io.getRawHandle(); }
+  IoExpander &getIoExpanderInstance() { return m_io; }
 
   // -- LED orchestration (delegates to LedStripManager) ----------------------
   void setLedPixel(uint32_t index, uint32_t r, uint32_t g, uint32_t b) {
