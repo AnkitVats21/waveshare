@@ -33,8 +33,8 @@ void AppController::begin(GlobalSystemSettings &settings,
   EventBus::getInstance().subscribe(WIFI_SYSTEM_EVENTS, WifiEvent::DISCONNECTED,
                                     &AppController::onNetworkLost, this);
 
-  // Initializing the board setting the LED color to red (GRB: G=80, R=0 => red)
-  LedEventData init_led = {LedMode::SOLID, {0, 80, 0}, 0, 0};
+  // Initializing the board setting the LED color to red (GRB: G=0, R=80 => red)
+  LedEventData init_led = {LedMode::SOLID, RED_LED, 0, 0};
   EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, init_led);
 
 #ifdef CONFIG_WAVESHARE_WAKEWORD_ENABLE
@@ -56,20 +56,22 @@ void AppController::onNetworkReady(void *handler_arg, esp_event_base_t base,
   LOGI_SYSTEM("Network connection established. Starting bootstrap...");
   
   // Network connected: set LED color to green (GRB: R=80 => green)
-  LedEventData green_led = {LedMode::SOLID, {80, 0, 0}, 0, 0};
+  LedEventData green_led = {LedMode::SOLID, GREEN_LED, 0, 0};
   EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, green_led);
 
   // 1. Setup Network Logging
-  AsyncNetLogger::getInstance().init(self->m_settings->server_ip, 5005);
+  // TODO: Move the hardcoded logger udp port to the config 
+// #ifdef NETWORK_LOGGER
+  AsyncNetLogger::getInstance().init(self->m_settings->server_ip, 5006);
   AsyncNetLogger::getInstance().startWorker();
   LogRouter::getInstance().setNetworkStreamingState(
       LogRouter::State::ROUTE_CONSOLE_AND_NETWORK);
-
+// #endif
   // 2. Bootstrap Audio System
   self->bootstrapAudio();
   
   // Audio system started: blink the LED blue 2 times
-  LedEventData blue_blink = {LedMode::BLINK, {0, 0, 80}, 250, 2};
+  LedEventData blue_blink = {LedMode::BLINK, BLUE_LED, 250, 2};
   EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, blue_blink);
   vTaskDelay(pdMS_TO_TICKS(1100)); // Let the blink pattern complete before next animation
 
@@ -77,7 +79,7 @@ void AppController::onNetworkReady(void *handler_arg, esp_event_base_t base,
   self->initMqtt();
   
   // MQTT Task started: blink the LED purple/magenta 2 times
-  LedEventData purple_blink = {LedMode::BLINK, {80, 0, 80}, 250, 2};
+  LedEventData purple_blink = {LedMode::BLINK, PURPLE_LED, 250, 2};
   EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, purple_blink);
   vTaskDelay(pdMS_TO_TICKS(1100));
 }
@@ -90,7 +92,7 @@ void AppController::onNetworkLost(void *handler_arg, esp_event_base_t base,
   self->teardownNetworkServices();
   
   // Set LED color to RED (GRB: G=80 => red)
-  LedEventData red_led = {LedMode::SOLID, {0, 80, 0}, 0, 0};
+  LedEventData red_led = {LedMode::BLINK, RED_LED, 0, 0};
   EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, red_led);
 }
 

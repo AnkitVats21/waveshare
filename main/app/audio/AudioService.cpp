@@ -55,6 +55,14 @@ bool AudioService::begin(GlobalSystemSettings &settings,
                          onSystemEvent, this);
   m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::MIC_GAIN_UPDATE,
                          onSystemEvent, this);
+  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::ASSISTANT_TALKING,
+                         onSystemEvent, this);
+  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::ASSISTANT_SILENT,
+                         onSystemEvent, this);
+  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::ASSISTANT_TURN_COMPLETE,
+                         onSystemEvent, this);
+  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::USER_INTERRUPTED,
+                         onSystemEvent, this);
 
   // 4. Start the background supervisor task
   if (!this->start()) {
@@ -130,22 +138,84 @@ void AudioService::onSystemEvent(void *handler_arg, esp_event_base_t base,
     return;
 
   if (base == APP_EVENTS) {
+    auto &ww = WakeWordDetector::getInstance();
+
     if (id == (int32_t)AppEvent::WAKE_WORD_DETECTED) {
       LOGI_AUDIO("Wake word: enabling RTP stream + setting optimal mic gain");
+      ww.setAssistantActive(false);
+      ww.setVadDeferred(false);
+      AudioPipelineManager::setRtpRxInterrupted(false);
       // Enable RTP streamer so the receiver starts getting audio
       AudioPipelineManager::setRtpEnabled(true);
       self->m_board->setRecordGain(self->m_mic_gain);
 
     } else if (id == (int32_t)AppEvent::STOP_STREAMING) {
-      LOGI_AUDIO("VAD timeout: disabling RTP stream");
+      LOGI_AUDIO("VAD timeout: disabling RTP stream + turning off LEDs");
+      ww.setAssistantActive(false);
+      ww.setVadDeferred(false);
       // Disable RTP streamer — receiver will see clean silence, no stale frames
       AudioPipelineManager::setRtpEnabled(false);
+
+      // Turn off LEDs
+      LedEventData led_cmd = {LedMode::OFF, {0, 0, 0}, 0, 0};
+      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+
     } else if (id == (int32_t)AppEvent::MIC_GAIN_UPDATE) {
       if (event_data) {
         float gain = *static_cast<float *>(event_data);
         self->m_mic_gain = gain;
         LOGI_AUDIO("AudioService stored optimal mic gain: %.1f dB", gain);
       }
+    } else if (id == (int32_t)AppEvent::ASSISTANT_TALKING) {
+      LOGI_AUDIO("Assistant talking: deferring VAD + setting LED to solid green");
+      ww.setAssistantActive(true);
+      ww.setVadDeferred(true);
+
+      // Set LED to solid green (GRB color: G=0, R=80, B=0 => green in our system)
+      LedEventData led_cmd = {LedMode::SOLID, {0, 80, 0}, 0, 0};
+      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+
+    } else if (id == (int32_t)AppEvent::ASSISTANT_SILENT) {
+      LOGI_AUDIO("Assistant silent: deferring VAD + setting LED to breathe pink");
+      ww.setAssistantActive(true);
+      ww.setVadDeferred(true);
+
+      // Set LED to breathe pink (GRB color: G=0, R=80, B=80 => pink/magenta)
+      LedEventData led_cmd = {LedMode::BREATH, {0, 80, 80}, 1500, 0};
+      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+
+    } else if (id == (int32_t)AppEvent::ASSISTANT_TURN_COMPLETE) {
+      LOGI_AUDIO("Assistant turn complete: activating VAD + turning off LEDs");
+      ww.setAssistantActive(false);
+      ww.setVadDeferred(false);
+      AudioPipelineManager::setRtpRxInterrupted(false);
+
+      // Turn off LEDs
+      LedEventData led_cmd = {LedMode::OFF, {0, 0, 0}, 0, 0};
+      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+
+    } else if (id == (int32_t)AppEvent::USER_INTERRUPTED) {
+      LOGI_AUDIO("User interrupted: flushing rx playback queue + setting LED to breathe pink");
+      ww.setAssistantActive(false);
+      ww.setVadDeferred(false);
+      AudioPipelineManager::setRtpRxInterrupted(true);
+
+      // Flush the playback queue (rx_ring_buffer)
+      if (self->m_context && self->m_context->rx_ring_buffer) {
+        size_t clear_size = 0;
+        while (true) {
+          uint8_t *stale = static_cast<uint8_t *>(
+              xRingbufferReceive(self->m_context->rx_ring_buffer, &clear_size, 0));
+          if (!stale)
+            break;
+          vRingbufferReturnItem(self->m_context->rx_ring_buffer, stale);
+        }
+        LOGI_AUDIO("Playback queue flushed on barge-in.");
+      }
+
+      // Set LED to breathe pink
+      LedEventData led_cmd = {LedMode::BREATH, {0, 80, 80}, 1500, 0};
+      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
     }
   }
 }

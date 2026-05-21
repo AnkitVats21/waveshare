@@ -91,6 +91,16 @@ public:
 
     bool isRunning() const { return m_task_flag != 0; }
 
+    void setVadDeferred(bool deferred) { m_vad_deferred = deferred; }
+    bool isVadDeferred() const { return m_vad_deferred; }
+    void setAssistantActive(bool active) {
+        m_assistant_active = active;
+        if (active) {
+            m_interruption_triggered = false;
+        }
+    }
+    bool isAssistantActive() const { return m_assistant_active; }
+
     /** @brief Pause hardware reads in feedTask (call before AudioHal::reinit). */
     void pauseHardware()  { m_hw_valid = false; }
     /** @brief Resume hardware reads after AudioHal::reinit completes. */
@@ -120,6 +130,10 @@ private:
     wake_word_callback_t           m_callback        = nullptr;
     void                          *m_user_data       = nullptr;
     volatile RingbufHandle_t       m_stream_ringbuf  = nullptr;
+
+    volatile bool                  m_vad_deferred = false;
+    volatile bool                  m_assistant_active = false;
+    volatile bool                  m_interruption_triggered = false;
 
     // Streaming is gated: feedTask only writes to ring buffer when BOTH
     // m_stream_ringbuf is set AND m_streaming_active is true.

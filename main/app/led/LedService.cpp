@@ -14,7 +14,7 @@ LedService &LedService::getInstance() {
   return instance;
 }
 
-LedService::LedService() : TaskBase({"LedService", 3072, 2, 1}) {
+LedService::LedService() : TaskBase({"LedService", 3072, 2, 0}) {
   m_current_command.mode = LedMode::OFF;
   m_current_command.color = {0, 0, 0};
   m_current_command.speed_ms = 0;

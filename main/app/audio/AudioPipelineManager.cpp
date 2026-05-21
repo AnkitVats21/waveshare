@@ -69,8 +69,8 @@ bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
 
   // Set receive timeout so that recvfrom doesn't block indefinitely on socket read
   struct timeval timeout;
-  timeout.tv_sec = 1;
-  timeout.tv_usec = 0;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 200000;
   if (setsockopt(m_shared_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
       LOGE_AUDIO("Failed to set receive timeout on shared UDP socket!");
   }
@@ -172,4 +172,10 @@ void AudioPipelineManager::setRtpEnabled(bool enabled) {
         m_rtp_tx->setEnabled(enabled);
     }
     LOGI_AUDIO("RTP streamer %s (WW mode)", enabled ? "ENABLED" : "DISABLED");
+}
+
+void AudioPipelineManager::setRtpRxInterrupted(bool interrupted) {
+    if (m_rtp_rx) {
+        m_rtp_rx->setInterrupted(interrupted);
+    }
 }
