@@ -89,7 +89,7 @@ bool WakeWordDetector::begin() {
   xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", 8 * 1024,
                           (void *)afe_data, 5, nullptr, 1);
   xTaskCreatePinnedToCore(feedTaskBridge, "ww_feed", 8 * 1024, (void *)afe_data,
-                          5, nullptr, 0);
+                          6, nullptr, 1);
 
   LOGI_SYSTEM("WakeWordDetector started");
   return true;
@@ -259,7 +259,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
       EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED,
                                       ch);
       // reduce the speaker volume to 20
-      // Board::getInstance().setPlayVolume(20);
+      Board::getInstance().setPlayVolume(30);
       if (m_callback) {
         wake_word_evt_data_t evtdata;
         evtdata.awaken_channel = (uint8_t)ch;
@@ -272,8 +272,21 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     if (m_streaming_active) {
       if (res->vad_state == VAD_SPEECH) {
         silence_frames = 0; // voice activity — reset timer
+
+        // Barge-in check: If the assistant is active and we haven't triggered the interruption yet,
+        // publish USER_INTERRUPTED exactly once.
+        if (m_assistant_active && !m_interruption_triggered) {
+          m_interruption_triggered = true;
+          ESP_LOGI(TAG, "User interrupted: triggering barge-in event");
+          EventBus::getInstance().publish(APP_EVENTS, AppEvent::USER_INTERRUPTED, 0);
+        }
       } else {
-        silence_frames++;
+        if (m_vad_deferred) {
+          silence_frames = 0; // Pause silence timeout while deferred
+        } else {
+          silence_frames++;
+        }
+
         if (silence_frames >= SILENCE_TIMEOUT_FRAMES) {
           m_streaming_active = false;
           silence_frames = 0;
@@ -286,7 +299,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
                       "listening for wake word",
                       VAD_SILENCE_TIMEOUT_MS);
           // again reset the volume to the prev value
-          // Board::getInstance().setPreviousVolume();
+          Board::getInstance().setPreviousVolume();
           if (m_callback) {
             wake_word_evt_data_t evtdata = {};
             m_callback(WAKE_EVT_CMD_TIMEOUT, evtdata, m_user_data);

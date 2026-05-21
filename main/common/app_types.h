@@ -30,6 +30,20 @@ struct RgbColor {
 
 enum class LedMode : uint8_t { OFF, SOLID, BLINK, BREATH, RAINBOW };
 
+//TODO: define some predefined rgb color that is used in the system
+#define RED_LED {0, 80, 0} // #800000
+#define GREEN_LED {80, 0, 0} // #008000
+#define BLUE_LED {0, 0, 80} // #000080
+#define YELLOW_LED {80, 80, 0} // #808000
+#define PURPLE_LED {160, 88, 0} // #88ff00
+#define ORANGE_LED {80, 40, 0} // #804000
+#define PINK_LED {80, 0, 40} // #800040
+#define BROWN_LED {80, 60, 0} // #806000
+#define WHITE_LED {80, 80, 80} // #C0C0C0
+#define OFF_LED {0, 0, 0}
+
+
+
 struct LedEventData {
   LedMode mode;
   RgbColor color;
@@ -92,7 +106,11 @@ enum class AppEvent : uint32_t {
   STOP_STREAMING,
   LED_COLOR_UPDATE,
   MIC_GAIN_UPDATE,
-  LED_COMMAND
+  LED_COMMAND,
+  ASSISTANT_TALKING,
+  ASSISTANT_SILENT,
+  ASSISTANT_TURN_COMPLETE,
+  USER_INTERRUPTED
 };
 
 /**

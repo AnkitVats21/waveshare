@@ -34,6 +34,9 @@ public:
    *         MicCapture hardware reads. Used when WakeWordDetector owns I2S. */
   static void setRtpEnabled(bool enabled);
 
+  /** @brief Signal that the current turn is interrupted by a user barge-in. */
+  static void setRtpRxInterrupted(bool interrupted);
+
 private:
   static MicCaptureTask *m_mic_task;
   static SpeakerPlaybackTask *m_speaker_task;
