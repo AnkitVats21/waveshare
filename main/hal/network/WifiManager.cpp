@@ -6,8 +6,8 @@
 #include "app/event/EventBus.h"
 #include <cstring>
 
-// Define the system-wide WiFi event base (shared with app_types.h declaration)
-ESP_EVENT_DEFINE_BASE(WIFI_SYSTEM_EVENTS);
+// WIFI_SYSTEM_EVENTS base is defined in app/event/EventBus.cpp
+
 
 WifiManager::WifiManager(const Config &config)
     : m_config(config), m_retry_cnt(0) {}

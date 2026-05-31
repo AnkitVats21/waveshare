@@ -1,64 +1,54 @@
 #pragma once
 
+#include "common/IService.h"
 #include "common/TaskBase.h"
-#include "common/app_types.h"
-#include "esp_event.h"
+#include "common/hw_types.h"
+#include "common/system_settings.h"
+#include "app/wake_word/IWakeWordListener.h"
+#include "services/BufferManager.h"
 
-// Forward declarations
 class Board;
-class EventBus;
 
 /**
- * @brief Unified Audio Service
- * Coordinates the entire audio lifecycle (Mic, Speaker, Pipeline)
- * and reacts to system events.
+ * @brief Unified Audio Service.
+ *
+ * Extends IService  — standardized event subscription and dispatch.
+ * Extends TaskBase  — background supervisor loop.
+ * Implements IWakeWordListener — receives wake-word/VAD/barge-in callbacks
+ *   directly from WakeWordDetector without EventBus round-trips.
  */
-class AudioService : public TaskBase {
+class AudioService : public IService, public TaskBase, public IWakeWordListener {
 public:
   static AudioService &getInstance();
 
-  /**
-   * @brief Initialize the audio service and its sub-managers
-   */
-  bool begin(GlobalSystemSettings &settings, GlobalPipelineContext &context,
-             HardwareAudioHandles &handles, Board *board, EventBus *event_bus);
+  bool begin(GlobalSystemSettings &settings, HardwareAudioHandles &handles,
+             Board *board);
 
-  /**
-   * @brief Reinitialize audio with a new configuration (e.g. sample rate change)
-   */
   bool reinit(uint32_t sample_rate);
-
-  /**
-   * @brief Soft enable/disable of mic pipeline
-   */
   void setMicEnabled(bool enabled);
-
-  /**
-   * @brief Check if the service is initialized
-   */
   bool isInitialized() const { return m_initialized; }
 
+  // IService interface
+  bool onStart() override;
+  void onEvent(esp_event_base_t base, int32_t id, void *data) override;
+
+  // IWakeWordListener interface
+  void onWakeWord(uint8_t channel) override;
+  void onVadTimeout() override;
+  void onUserSpeechDetected() override;
+
 protected:
-  /**
-   * @brief Background supervisory loop
-   */
   void run() override;
 
 private:
-  AudioService() : TaskBase({"AudioService", 8192, 5, 0}) {}
-  ~AudioService() = default;
-
-  // Event Handlers
-  static void onSystemEvent(void *handler_arg, esp_event_base_t base,
-                            int32_t id, void *event_data);
+  AudioService() : IService("AudioSvc"), TaskBase({"AudioService", 8192, 5, 0}) {}
 
   GlobalSystemSettings *m_settings = nullptr;
-  GlobalPipelineContext *m_context = nullptr;
-  HardwareAudioHandles *m_handles = nullptr;
-  Board *m_board = nullptr;
-  EventBus *m_event_bus = nullptr;
+  HardwareAudioHandles *m_handles  = nullptr;
+  Board                *m_board    = nullptr;
 
-  bool m_initialized = false;
-  float m_mic_gain = 80.0f; // Stored mic gain, default to 80.0f
+  bool  m_initialized = false;
+  float m_mic_gain    = 80.0f;
+
   static constexpr const char *TAG = "AudioSvc";
 };

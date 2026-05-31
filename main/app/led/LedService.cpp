@@ -1,6 +1,6 @@
 #include "app/led/LedService.h"
-#include "app/event/EventBus.h"
 #include "common/AppLogger.h"
+#include "common/events/app_events.h"
 #include "esp_log.h"
 #include "hal/Board.h"
 #include <cmath>
@@ -14,34 +14,35 @@ LedService &LedService::getInstance() {
   return instance;
 }
 
-LedService::LedService() : TaskBase({"LedService", 3072, 2, 0}) {
-  m_current_command.mode = LedMode::OFF;
-  m_current_command.color = {0, 0, 0};
-  m_current_command.speed_ms = 0;
+LedService::LedService() : IService("LedSvc"), TaskBase({"LedService", 3072, 2, 0}) {
+  m_current_command.mode        = LedMode::OFF;
+  m_current_command.color       = OFF_LED;
+  m_current_command.speed_ms    = 0;
   m_current_command.repeat_count = 0;
 }
 
-bool LedService::begin(Board *board, EventBus *event_bus) {
+// ---------------------------------------------------------------------------
+// begin() — backward-compat shim used by AppController::onStart()
+// ---------------------------------------------------------------------------
+bool LedService::begin(Board *board, EventBus * /*event_bus*/) {
+  m_board = board;
+  return onStart();
+}
+
+bool LedService::onStart() {
   if (m_initialized)
     return true;
 
-  m_board = board;
-  m_event_bus = event_bus;
-
-  if (!m_board || !m_event_bus) {
-    ESP_LOGE(TAG, "Cannot start: board or event_bus is null");
+  if (!m_board) {
+    ESP_LOGE(TAG, "Cannot start: board is null");
     return false;
   }
 
-  // Subscribe to LED and system notifications
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::LED_COMMAND,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::LED_COLOR_UPDATE,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::WAKE_WORD_DETECTED,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::STOP_STREAMING,
-                         onSystemEvent, this);
+  // IService::subscribeEvent routes all these events to onEvent()
+  subscribeEvent(APP_EVENTS, AppEvent::LED_COMMAND);
+  subscribeEvent(APP_EVENTS, AppEvent::LED_COLOR_UPDATE);
+  subscribeEvent(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED);
+  subscribeEvent(APP_EVENTS, AppEvent::STOP_STREAMING);
 
   if (!this->start()) {
     ESP_LOGE(TAG, "Failed to start LedService thread");
@@ -53,62 +54,46 @@ bool LedService::begin(Board *board, EventBus *event_bus) {
   return true;
 }
 
-void LedService::onSystemEvent(void *handler_arg, esp_event_base_t base,
-                               int32_t id, void *event_data) {
-  LedService *self = static_cast<LedService *>(handler_arg);
-  if (self) {
-    self->handleEvent(id, event_data);
-  }
+// ---------------------------------------------------------------------------
+// IService::onEvent — single dispatch point, no manual cast needed
+// ---------------------------------------------------------------------------
+void LedService::onEvent(esp_event_base_t /*base*/, int32_t id, void *data) {
+  applyEvent(id, data);
 }
 
-void LedService::handleEvent(int32_t id, void *event_data) {
+void LedService::applyEvent(int32_t id, void *event_data) {
   std::lock_guard<std::mutex> lock(m_mutex);
 
   switch (static_cast<AppEvent>(id)) {
   case AppEvent::LED_COMMAND:
     if (event_data) {
       m_current_command = *static_cast<LedEventData *>(event_data);
-      m_command_dirty = true;
-      ESP_LOGD(TAG, "LedCommand updated: mode=%d, r=%d, g=%d, b=%d",
-               (int)m_current_command.mode, m_current_command.color.r,
-               m_current_command.color.g, m_current_command.color.b);
+      m_command_dirty   = true;
+      ESP_LOGD(TAG, "LedCommand updated: mode=%d", (int)m_current_command.mode);
     }
     break;
 
   case AppEvent::LED_COLOR_UPDATE:
     if (event_data) {
-      RgbColor color = *static_cast<RgbColor *>(event_data);
+      RgbColor color         = *static_cast<RgbColor *>(event_data);
       m_current_command.mode = LedMode::SOLID;
       m_current_command.color = color;
-      m_current_command.speed_ms = 0;
+      m_current_command.speed_ms    = 0;
       m_current_command.repeat_count = 0;
       m_command_dirty = true;
-      ESP_LOGI(TAG, "LedColorUpdate: SOLID r=%d, g=%d, b=%d", color.r, color.g,
-               color.b);
     }
     break;
 
   case AppEvent::WAKE_WORD_DETECTED:
-    // When wake word is detected, let's start a beautiful continuous rainbow
-    // pattern or pulsing breathing effect! Since the original was
-    // setAllLedsColor(0, 100, 100)[g,r,b] (cyan/magenta), let's breathing pulse
-    // that color!
-    m_current_command.mode = LedMode::BREATH;
-    m_current_command.color = {0, 100, 100};
-    m_current_command.speed_ms = 30; // smooth breath timing
-    m_current_command.repeat_count = 0;
-    m_command_dirty = true;
-    ESP_LOGI(TAG, "WakeWord detected event: Triggering BREATH pink animation");
+    m_current_command = {LedMode::BREATH, {0, 100, 100}, 30, 0};
+    m_command_dirty   = true;
+    ESP_LOGI(TAG, "WakeWord: triggering BREATH animation");
     break;
 
   case AppEvent::STOP_STREAMING:
-    // When we stop streaming, turn the LEDs off
-    m_current_command.mode = LedMode::OFF;
-    m_current_command.color = {0, 0, 0};
-    m_current_command.speed_ms = 0;
-    m_current_command.repeat_count = 0;
-    m_command_dirty = true;
-    ESP_LOGI(TAG, "StopStreaming event: Turning LEDs OFF");
+    m_current_command = {LedMode::OFF, OFF_LED, 0, 0};
+    m_command_dirty   = true;
+    ESP_LOGI(TAG, "StopStreaming: LEDs OFF");
     break;
 
   default:
@@ -116,11 +101,13 @@ void LedService::handleEvent(int32_t id, void *event_data) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Animation loop (TaskBase::run)
+// ---------------------------------------------------------------------------
 void LedService::run() {
-  uint32_t step = 0;
-  bool blink_state = false;
-  float breath_val = 0.0f;
-  float breath_dir = 0.08f; // breathing speed
+  uint32_t step      = 0;
+  bool     blink_state = false;
+  float    breath_val  = 0.0f;
 
   while (m_running) {
     LedEventData cmd;
@@ -128,15 +115,15 @@ void LedService::run() {
 
     {
       std::lock_guard<std::mutex> lock(m_mutex);
-      cmd = m_current_command;
+      cmd   = m_current_command;
       dirty = m_command_dirty;
       m_command_dirty = false;
     }
 
     if (dirty) {
-      step = 0;
+      step        = 0;
       blink_state = false;
-      breath_val = 0.0f;
+      breath_val  = 0.0f;
     }
 
     uint32_t delay_ms = 100;
@@ -153,8 +140,7 @@ void LedService::run() {
       break;
 
     case LedMode::BLINK:
-      if (cmd.repeat_count > 0 && step >= cmd.repeat_count * 2) {
-        // Blink finished, turn off
+      if (cmd.repeat_count > 0 && step >= (uint32_t)cmd.repeat_count * 2) {
         m_board->clearLeds();
         {
           std::lock_guard<std::mutex> lock(m_mutex);
@@ -175,27 +161,20 @@ void LedService::run() {
 
     case LedMode::BREATH: {
       float factor = sinf(breath_val);
-      if (factor < 0)
-        factor = -factor;
+      if (factor < 0) factor = -factor;
 
-      uint8_t r = (uint8_t)(cmd.color.r * factor);
-      uint8_t g = (uint8_t)(cmd.color.g * factor);
-      uint8_t b = (uint8_t)(cmd.color.b * factor);
+      m_board->setAllLedsColor(
+          (uint8_t)(cmd.color.r * factor),
+          (uint8_t)(cmd.color.g * factor),
+          (uint8_t)(cmd.color.b * factor));
 
-      m_board->setAllLedsColor(r, g, b);
-
-      breath_val += breath_dir;
+      breath_val += 0.08f;
       if (breath_val >= M_PI) {
         breath_val = 0.0f;
-        if (cmd.repeat_count > 0) {
-          step++;
-          if (step >= cmd.repeat_count) {
-            m_board->clearLeds();
-            {
-              std::lock_guard<std::mutex> lock(m_mutex);
-              m_current_command.mode = LedMode::OFF;
-            }
-          }
+        if (cmd.repeat_count > 0 && ++step >= cmd.repeat_count) {
+          m_board->clearLeds();
+          std::lock_guard<std::mutex> lock(m_mutex);
+          m_current_command.mode = LedMode::OFF;
         }
       }
       delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30;
@@ -206,30 +185,18 @@ void LedService::run() {
       for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
         uint8_t hue = (step + (i * 256 / LED_STRIP_LED_COUNT)) & 255;
         uint8_t r = 0, g = 0, b = 0;
-
         if (hue < 85) {
-          r = hue * 3;
-          g = 255 - hue * 3;
-          b = 0;
+          r = hue * 3; g = 255 - hue * 3; b = 0;
         } else if (hue < 170) {
-          hue -= 85;
-          r = 255 - hue * 3;
-          g = 0;
-          b = hue * 3;
+          hue -= 85; r = 255 - hue * 3; g = 0; b = hue * 3;
         } else {
-          hue -= 170;
-          r = 0;
-          g = hue * 3;
-          b = 255 - hue * 3;
+          hue -= 170; r = 0; g = hue * 3; b = 255 - hue * 3;
         }
-
-        // Scale brightness down to 25% (very bright WS2812 can draw a lot of
-        // power)
         m_board->setLedPixel(i, r / 4, g / 4, b / 4);
       }
       m_board->refreshLeds();
-      step = (step + 5) & 255;
-      delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30;
+      step      = (step + 5) & 255;
+      delay_ms  = (cmd.speed_ms > 0) ? cmd.speed_ms : 30;
       break;
     }
 

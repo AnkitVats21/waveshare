@@ -2,9 +2,15 @@
 
 #include "common/app_types.h"
 #include "driver/i2s_std.h"
-#include "freertos/FreeRTOS.h" // Added for TaskHandle_t
-#include "freertos/ringbuf.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "services/BufferManager.h"
+
+// ---------------------------------------------------------------------------
+// Buffer declaration — this subsystem owns the microphone→network ring buffer.
+// Size: 128 KB in PSRAM (holds ~2 s of 16-bit mono at 16 kHz).
+// ---------------------------------------------------------------------------
+DECLARE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
 
 /**
  * @brief Task for capturing audio from the microphone and sending it to a ring
@@ -13,17 +19,15 @@
 class MicCaptureTask {
 public:
   MicCaptureTask()
-      : m_handle(nullptr), m_tx_buffer(nullptr), m_task_handle(nullptr),
+      : m_handle(nullptr), m_task_handle(nullptr),
         m_is_running(false) {}
 
   /**
    * @brief Start the microphone capture task
    * @param settings System settings
    * @param handle Pre-initialized I2S handle
-   * @param tx_ring_buffer Buffer to send captured audio to
    */
-  void start(const GlobalSystemSettings &settings, i2s_chan_handle_t handle,
-             RingbufHandle_t tx_ring_buffer);
+  void start(const GlobalSystemSettings &settings, i2s_chan_handle_t handle);
 
   /**
    * @brief Cleanly stops the microphone capture task loop and frees memory
@@ -39,7 +43,6 @@ private:
   // Persistent state variables inside the class instance context
   GlobalSystemSettings m_settings;
   i2s_chan_handle_t m_handle;
-  RingbufHandle_t m_tx_buffer;
   TaskHandle_t m_task_handle;
   volatile bool m_is_running;
   volatile bool m_is_enabled = true;

@@ -78,7 +78,7 @@ class RTPRadioStreamer:
 
         self.seq_num = 0
         self.timestamp = 0
-        self.ssrc = 0x12345678
+        self.ssrc = 0x55667788
 
         self.running = False
         self.thread = None

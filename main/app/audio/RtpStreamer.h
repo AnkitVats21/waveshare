@@ -1,7 +1,7 @@
 #pragma once
 
 #include "RtpTaskBase.h"
-#include "app_types.h"
+#include "common/system_settings.h"
 #include "esp_event_base.h"
 
 /**
@@ -25,7 +25,7 @@ public:
     AudioStreamFormat format = AudioStreamFormat::PCM_S16LE;
   };
 
-  RtpStreamer(const TxConfig &config, RingbufHandle_t tx_ring_buffer, int shared_socket);
+  RtpStreamer(const TxConfig &config, BufferManager::BufferId buf_id, int shared_socket);
 
   /**
    * @brief Event handler bridge for receiving notifications from the EventBus

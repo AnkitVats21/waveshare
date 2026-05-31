@@ -1,7 +1,9 @@
 #include "MqttTask.h"
+#include "sdkconfig.h"
 #include "app/audio/AudioService.h"
 #include "app/event/EventBus.h"
 #include "common/AppLogger.h"
+#include "common/events/mqtt_events.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "hal/Board.h"
@@ -9,7 +11,16 @@
 #include <cstdint>
 #include <sstream>
 
-MqttTask::MqttTask(const TaskBase::Config &config) : TaskBase(config) {}
+// MQTT credentials — read from Kconfig (menuconfig → Waveshare Config)
+static constexpr const char *MQTTS_BROKER_URI  = CONFIG_WAVESHARE_MQTT_BROKER_URI;
+static constexpr const char *MQTT_USERNAME     = CONFIG_WAVESHARE_MQTT_USERNAME;
+static constexpr const char *MQTT_PASSWORD     = CONFIG_WAVESHARE_MQTT_PASSWORD;
+static constexpr const char *MQTT_CLIENT_ID    = CONFIG_WAVESHARE_MQTT_CLIENT_ID;
+static constexpr const char *TOPIC_CONFIG      = "device/waveshare/config";
+static constexpr const char *TOPIC_DYNAMIC_SUB = "device/subscribe/topic";
+
+MqttTask::MqttTask(const TaskBase::Config &config)
+    : IService("MqttTask"), TaskBase(config) {}
 
 MqttTask &MqttTask::getInstance() {
   static TaskBase::Config default_config = {
@@ -23,14 +34,17 @@ MqttTask &MqttTask::getInstance() {
 }
 
 bool MqttTask::init(const GlobalSystemSettings &settings) {
-  // Populate initial cache from boot settings
-  m_cache.speaker_volume = 80; // Default or read from board
-  m_cache.mic_volume = 70.0f;
-  m_cache.sample_rate = settings.sample_rate;
-  m_cache.mic_enabled = settings.mic_enabled;
-  m_cache.led_color = {0, 80, 0}; // Initial green
-
+  m_cache.speaker_volume = 80;
+  m_cache.mic_volume     = 70.0f;
+  m_cache.sample_rate    = settings.sample_rate;
+  m_cache.mic_enabled    = settings.mic_enabled;
+  m_cache.led_color      = {0, 80, 0};
   return start();
+}
+
+bool MqttTask::onStart() {
+  // Delegated to init() for backward compat — called from IService framework.
+  return m_running; // Already started if init() was called first
 }
 
 void MqttTask::run() {
@@ -40,7 +54,11 @@ void MqttTask::run() {
   esp_mqtt_client_config_t mqtt_cfg = {};
 
   // 1. Broker Network URL
-  mqtt_cfg.broker.address.uri = MQTTS_BROKER_URI;
+  std::string broker_uri = MQTTS_BROKER_URI;
+  if (broker_uri.find("mqtt://") != 0 && broker_uri.find("mqtts://") != 0 && broker_uri.find("ws://") != 0 && broker_uri.find("wss://") != 0) {
+      broker_uri = "mqtts://" + broker_uri;
+  }
+  mqtt_cfg.broker.address.uri = broker_uri.c_str();
 
   // 2. TLS / SSL Security verification configuration
   mqtt_cfg.broker.verification.certificate = BROKER_ROOT_CA_PEM;
@@ -61,7 +79,7 @@ void MqttTask::run() {
   esp_mqtt_client_start(m_mqtt_handle);
 
   EventBus::getInstance().subscribe(APP_EVENTS,
-                                    AppEventId::OUTGOING_DATA_SUBMIT,
+                                    MqttEvent::OUTGOING_DATA_SUBMIT,
                                     staticOutgoingDataHandler, this);
 
   while (m_running) {
@@ -88,12 +106,12 @@ void MqttTask::handleMqttEvent(int32_t event_id,
     esp_mqtt_client_subscribe(m_mqtt_handle, "device/esp32s3/commands", 0);
     esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG, 0);
     esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_DYNAMIC_SUB, 0);
-    bus.publish(MQTT_SYSTEM_EVENTS, AppEventId::MQTT_CONNECTED, true);
+    bus.publish(MQTT_SYSTEM_EVENTS, MqttEvent::CONNECTED, true);
     break;
 
   case MQTT_EVENT_DISCONNECTED:
     ESP_LOGW(m_config.name, "MQTTS Session Disconnected.");
-    bus.publish(MQTT_SYSTEM_EVENTS, AppEventId::MQTT_DISCONNECTED, false);
+    bus.publish(MQTT_SYSTEM_EVENTS, MqttEvent::DISCONNECTED, false);
     break;
 
   case MQTT_EVENT_DATA:
@@ -227,7 +245,7 @@ void MqttTask::staticOutgoingDataHandler(void *handler_arg,
     float *outbound_payload = static_cast<float *>(event_data);
     char buffer[32];
     snprintf(buffer, sizeof(buffer), "%.2f", *outbound_payload);
-    esp_mqtt_client_publish(self->m_mqtt_handle, "device/esp32s3/telemetry",
+    esp_mqtt_client_publish(self->m_mqtt_handle, "device/waveshare/telemetry",
                             buffer, 0, 1, 0);
   }
 }

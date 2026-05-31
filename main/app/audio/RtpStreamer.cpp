@@ -7,8 +7,10 @@
 #include <climits>
 #include <cstring>
 
-RtpStreamer::RtpStreamer(const TxConfig &config, RingbufHandle_t tx_ring_buffer, int shared_socket)
-    : RtpTaskBase(config, tx_ring_buffer, shared_socket, "RtpStreamer"), m_tx_config(config) {}
+RtpStreamer::RtpStreamer(const TxConfig &config, BufferManager::BufferId buf_id,
+                         int shared_socket)
+    : RtpTaskBase(config, buf_id, shared_socket, "RtpStreamer"),
+      m_tx_config(config) {}
 
 void RtpStreamer::eventHandlerBridge(void *handler_arg, esp_event_base_t base,
                                      int32_t id, void *event_data) {
@@ -27,6 +29,8 @@ void RtpStreamer::processLoop() {
     LOGE_NET("Invalid TX socket");
     return;
   }
+
+  auto &bm = BufferManager::getInstance();
 
   struct sockaddr_in dest_addr;
   dest_addr.sin_addr.s_addr = inet_addr(m_tx_config.target_ip.c_str());
@@ -57,15 +61,8 @@ void RtpStreamer::processLoop() {
       was_enabled = true;
       skip_packets = 8; // Discard first 8 packets (~160ms) of transient startup noise
 
-      // Flush buffer on transition to clean out any old state
-      size_t clear_size = 0;
-      while (true) {
-        uint8_t *stale = static_cast<uint8_t *>(
-            xRingbufferReceive(m_ring_buffer, &clear_size, 0));
-        if (!stale)
-          break;
-        vRingbufferReturnItem(m_ring_buffer, stale);
-      }
+      // Flush stale data on transition to active state
+      bm.flush(m_buf_id);
       LOGI_NET("RTP Streamer active: flushed ringbuffer, ignoring first %d packets to suppress transient noise", skip_packets);
     }
 
@@ -77,26 +74,19 @@ void RtpStreamer::processLoop() {
       if (notification_value == 0)
         continue;
 
-      // Resuming... flush buffer
-      size_t clear_size = 0;
-      while (true) {
-        uint8_t *stale = static_cast<uint8_t *>(
-            xRingbufferReceive(m_ring_buffer, &clear_size, 0));
-        if (!stale)
-          break;
-        vRingbufferReturnItem(m_ring_buffer, stale);
-      }
+      // Resuming... flush stale data
+      bm.flush(m_buf_id);
       continue;
     }
 
-    size_t chunk_size = 0;
-    uint8_t *audio_ptr = static_cast<uint8_t *>(xRingbufferReceiveUpTo(
-        m_ring_buffer, &chunk_size, pdMS_TO_TICKS(50), 1400));
+    size_t chunk_size  = 0;
+    uint8_t *audio_ptr = static_cast<uint8_t *>(
+        bm.receive(m_buf_id, &chunk_size, pdMS_TO_TICKS(50), 1400));
 
-    if (audio_ptr != nullptr) {
+      if (audio_ptr != nullptr) {
       if (skip_packets > 0) {
         skip_packets--;
-        vRingbufferReturnItem(m_ring_buffer, audio_ptr);
+        bm.returnItem(m_buf_id, audio_ptr);
         continue;
       }
 
@@ -110,7 +100,7 @@ void RtpStreamer::processLoop() {
       }
 
       std::memcpy(tx_frame_buffer + 12, audio_ptr, chunk_size);
-      vRingbufferReturnItem(m_ring_buffer, audio_ptr);
+      bm.returnItem(m_buf_id, audio_ptr);
 
       sendto(m_socket, tx_frame_buffer, 12 + chunk_size, 0,
              reinterpret_cast<struct sockaddr *>(&dest_addr),
