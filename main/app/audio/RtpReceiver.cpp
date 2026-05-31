@@ -108,6 +108,7 @@
 #include "lwip/sockets.h"
 #include "app/event/EventBus.h"
 #include "common/app_types.h"
+#include "services/BufferManager.h"
 
 // Define your SSRC Constants (Match these with your Go Server configuration)
 #define SSRC_AI_ASSISTANT  0x11223344  // Example SSRC for AI voice
@@ -201,21 +202,18 @@ void RtpReceiver::processLoop() {
           }
           last_rtp_packet_time = xTaskGetTickCount();
 
-          // Stream to your standard assistant buffer
-          xRingbufferSend(m_ring_buffer, payload_ptr, payload_size, pdMS_TO_TICKS(10));
+          // Stream to speaker ring buffer
+          BufferManager::getInstance().send(m_buf_id, payload_ptr, payload_size,
+                                            pdMS_TO_TICKS(10));
 
         } 
         else if (packet_ssrc == SSRC_MUSIC_PLAYBACK) {
           // ── Music Pipeline (Bypasses State Machine Events) ───────────────────
           
-          // Send to standard buffer or separate music buffer if you have one
-          BaseType_t ok = xRingbufferSend(m_ring_buffer, payload_ptr, payload_size, pdMS_TO_TICKS(10));
-          if (ok != pdTRUE) {
-            // Buffer full warning
-          }
-          
           // NOTE: WakeNet stays fully active! The user can still call out the wake-word
           // to interrupt the music playback seamlessly.
+          BufferManager::getInstance().send(m_buf_id, payload_ptr, payload_size,
+                                            pdMS_TO_TICKS(10));
         } 
         else {
           LOGW_NET("Unknown RTP SSRC encountered: 0x%08X", packet_ssrc);

@@ -1,9 +1,15 @@
 #pragma once
 
+#include "services/BufferManager.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/ringbuf.h"
 #include "freertos/task.h"
 
+/**
+ * @brief Base class for RTP network tasks (Streamer + Receiver).
+ *
+ * Holds a BufferManager::BufferId instead of a raw RingbufHandle_t.
+ * All buffer I/O goes through BufferManager::send/receive/returnItem/flush.
+ */
 class RtpTaskBase {
 public:
   struct CommonConfig {
@@ -13,7 +19,11 @@ public:
     BaseType_t core_id;
   };
 
-  RtpTaskBase(const CommonConfig &config, RingbufHandle_t ring_buffer,
+  /**
+   * @param buf_id   BufferManager ID for the ring buffer this task reads/writes.
+   * @param shared_socket  ≥0 = externally owned UDP socket (not closed on stop).
+   */
+  RtpTaskBase(const CommonConfig &config, BufferManager::BufferId buf_id,
               int shared_socket, const char *log_tag);
 
   virtual ~RtpTaskBase();
@@ -25,16 +35,16 @@ public:
   void setEnabled(bool enabled) { m_is_enabled = enabled; }
 
 protected:
-  CommonConfig m_config;
-  RingbufHandle_t m_ring_buffer;
-  TaskHandle_t m_task_handle;
-  int m_socket;
-  bool m_is_shared_socket;
-  const char *m_tag;
-  volatile bool m_is_running;
-  volatile bool m_is_enabled;
+  CommonConfig           m_config;
+  BufferManager::BufferId m_buf_id;      ///< Replaces raw m_ring_buffer
+  TaskHandle_t           m_task_handle;
+  int                    m_socket;
+  bool                   m_is_shared_socket;
+  const char            *m_tag;
+  volatile bool          m_is_running;
+  volatile bool          m_is_enabled;
 
-  // Pure virtual method: Derived classes implement their specific logic here
+  // Pure virtual: derived classes implement their specific loop
   virtual void processLoop() = 0;
 
   void closeSocket();

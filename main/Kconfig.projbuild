@@ -167,6 +167,26 @@ config WAVESHARE_WIFI_CONNECT_TIMEOUT_MS
     range 1000 60000
     default 15000
 
+config WAVESHARE_SERVER_IP
+    string "Audio relay server IP address"
+    depends on WAVESHARE_WIFI_ENABLE
+    default "192.168.1.18"
+    help
+        IP address of the Go relay / AI server.
+        Used for RTP audio streaming and UDP logging.
+
+config WAVESHARE_RTP_TX_PORT
+    int "RTP transmit port (mic → server)"
+    depends on WAVESHARE_WIFI_ENABLE
+    range 1024 65535
+    default 5005
+
+config WAVESHARE_RTP_RX_PORT
+    int "RTP receive port (server → speaker)"
+    depends on WAVESHARE_WIFI_ENABLE
+    range 1024 65535
+    default 5005
+
 config WAVESHARE_SDCARD_ENABLE
     bool "Enable SD card runtime"
     default y

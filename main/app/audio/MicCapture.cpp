@@ -3,17 +3,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hal/Board.h"
-#include <cmath> // For std::abs
+#include <cmath>
 #include <cstring>
+
+// Defines + registers the MIC_TX_BUF ring buffer with BufferManager
+DEFINE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
+
 void MicCaptureTask::start(const GlobalSystemSettings &settings,
-                           i2s_chan_handle_t handle,
-                           RingbufHandle_t tx_ring_buffer) {
-  // Fix 1: Eliminate static struct race conditions by saving state directly
-  // into the class variables
-  this->m_settings = settings;
-  this->m_handle = handle;
-  this->m_tx_buffer = tx_ring_buffer;
-  this->m_is_running = true; // Added state flag to class definition
+                           i2s_chan_handle_t handle) {
+  this->m_settings    = settings;
+  this->m_handle      = handle;
+  this->m_is_running  = true;
 
   // Pass 'this' as the task parameter
   xTaskCreatePinnedToCore(&MicCaptureTask::worker_bridge, "mic_capture_task",
@@ -68,12 +68,8 @@ void MicCaptureTask::worker() {
         pcm_buffer[i] = raw_buffer[i * FEED_CH + 1]; // Mic1
       }
 
-      // Push mono PCM to the PSRAM streaming ring buffer
-      BaseType_t ret =
-          xRingbufferSend(this->m_tx_buffer, pcm_buffer, CHUNK_BYTE_SIZE, 0);
-      if (ret != pdTRUE) {
-        // Downstream ring buffer full — normal if RTP streamer is busy
-      }
+      // Push mono PCM to the PSRAM streaming ring buffer via BufferManager
+      BufferManager::getInstance().send(Buffers::MIC_TX_BUF, pcm_buffer, CHUNK_BYTE_SIZE);
     } else {
       vTaskDelay(pdMS_TO_TICKS(10));
     }

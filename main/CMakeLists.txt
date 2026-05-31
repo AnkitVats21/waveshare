@@ -27,6 +27,7 @@ idf_component_register(
 
             # Application layer
             "app/AppController.cpp"
+            "app/SystemContext.cpp"
             "app/audio/AudioService.cpp"
             "app/audio/RtpTaskBase.cpp"
             "app/audio/RtpStreamer.cpp"
@@ -44,9 +45,15 @@ idf_component_register(
             "app/event/EventBus.cpp"
             "app/led/LedService.cpp"
 
+            # Services
+            "services/BufferManager.cpp"
+
             # Common utilities
             "common/LogRouter.cpp"
             "common/AsyncNetLogger.cpp"
+
+            # Services
+            "services/BufferManager.cpp"
 
         INCLUDE_DIRS
             "."
@@ -57,6 +64,7 @@ idf_component_register(
             "hal/storage"
             "hal/audio"
             "hal/network"
+            "hal/interfaces"
             # App layers
             "app"
             "app/audio"
@@ -67,4 +75,7 @@ idf_component_register(
             # Services / common
             "services"
             "common"
+            "common/events"
+            # HAL interfaces
+            "hal/interfaces"
 )

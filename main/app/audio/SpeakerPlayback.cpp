@@ -4,17 +4,20 @@
 #include <cstring>
 #include <cstdlib>
 
+// Defines + registers the SPK_RX_BUF ring buffer with BufferManager
+DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 64 * 1024)
+
+
+
 void SpeakerPlaybackTask::start(const GlobalSystemSettings &settings,
-                                esp_codec_dev_handle_t device,
-                                RingbufHandle_t rx_ring_buffer) {
+                                esp_codec_dev_handle_t device) {
   if (m_is_running) return;
   m_is_running = true;
 
   TaskParam *param = new TaskParam();
-  param->self = this;
+  param->self     = this;
   param->settings = settings;
-  param->device = device;
-  param->rx_buffer = rx_ring_buffer;
+  param->device   = device;
 
   xTaskCreatePinnedToCore(&SpeakerPlaybackTask::worker_bridge, "speaker_playback_task",
                           settings.audio_stack_size, param,
@@ -33,14 +36,13 @@ void SpeakerPlaybackTask::worker_bridge(void *pvParameters) {
   SpeakerPlaybackTask *self = param->self;
   GlobalSystemSettings settings = param->settings;
   esp_codec_dev_handle_t device = param->device;
-  RingbufHandle_t rx_buffer = param->rx_buffer;
   delete param;
-  self->worker(settings, device, rx_buffer);
+  self->worker(settings, device);
 }
 
 void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
-                                  esp_codec_dev_handle_t device,
-                                  RingbufHandle_t rx_buffer) {
+                                  esp_codec_dev_handle_t device) {
+  auto &bm = BufferManager::getInstance();
   if (device == nullptr) {
     LOGE_HAL("SpeakerPlaybackTask started without a valid codec device!");
     m_is_running = false;
@@ -71,19 +73,20 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
   const size_t PREBUFFER_THRESHOLD = 8000;
 
   while (m_is_running) {
-    size_t rx_chunk_bytes = 0;
-
     if (is_prebuffering) {
-      vRingbufferGetInfo(rx_buffer, NULL, NULL, NULL, NULL, &rx_chunk_bytes);
-      if (rx_chunk_bytes < PREBUFFER_THRESHOLD) {
+      size_t fill_bytes = 0;
+      vRingbufferGetInfo(bm.handle(Buffers::SPK_RX_BUF),
+                         nullptr, nullptr, nullptr, nullptr, &fill_bytes);
+      if (fill_bytes < PREBUFFER_THRESHOLD) {
         vTaskDelay(pdMS_TO_TICKS(20));
         continue;
       }
       is_prebuffering = false;
     }
 
-    void *rx_data_ptr = xRingbufferReceiveUpTo(
-        rx_buffer, &rx_chunk_bytes, pdMS_TO_TICKS(10), MAX_AUDIO_CHUNK_BYTES);
+    size_t rx_chunk_bytes = 0;
+    void *rx_data_ptr = bm.receive(Buffers::SPK_RX_BUF, &rx_chunk_bytes,
+                                   pdMS_TO_TICKS(10), MAX_AUDIO_CHUNK_BYTES);
 
     if (rx_data_ptr == nullptr || rx_chunk_bytes == 0) {
       esp_codec_dev_write(device, silence_buffer,
@@ -94,7 +97,7 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
 
     size_t num_samples = rx_chunk_bytes / sizeof(int16_t);
     memcpy(dma_safe_buffer, rx_data_ptr, rx_chunk_bytes);
-    vRingbufferReturnItem(rx_buffer, rx_data_ptr);
+    bm.returnItem(Buffers::SPK_RX_BUF, rx_data_ptr);
 
     // Expand 16-bit mono → 32-bit stereo (left-justify in 32-bit word)
     for (size_t i = 0; i < num_samples; i++) {

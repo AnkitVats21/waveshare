@@ -5,6 +5,7 @@
 #include "hal/Board_defs.h"
 #include "hal/HalBase.h"
 #include "hal/audio/AudioHal.h"
+#include "hal/interfaces/IAudioFeedSource.h"
 #include "hal/io/I2CBus.h"
 #include "hal/io/IoExpander.h"
 #include "hal/led/LedStripManager.h"
@@ -28,7 +29,11 @@
  *  - Contain LED or SD card implementation details
  *  - Contain application streaming, RTP, or wake word logic
  */
-class Board : public HalBase {
+/**
+ * Board inherits IAudioFeedSource so WakeWordDetector can receive a
+ * `IAudioFeedSource&` reference without depending on Board directly.
+ */
+class Board : public HalBase, public IAudioFeedSource {
 public:
   static Board &getInstance();
 
@@ -89,6 +94,13 @@ public:
 
   /** @brief Number of interleaved channels returned by getFeedData. */
   int getFeedChannel() const { return m_audio.getFeedChannel(); }
+
+  // -- IAudioFeedSource implementation (used by WakeWordDetector) -----------
+  esp_err_t readFeedData(int16_t *buf, int bytes) override {
+    return m_audio.getFeedData(/*raw=*/true, buf, bytes);
+  }
+  int feedChannelCount() const override { return m_audio.getFeedChannel(); }
+  const char *feedInputFormat() const override { return m_audio.getInputFormat(); }
 
   /** @brief AFE input format string ("RMNM"). */
   const char *getInputFormat() const { return m_audio.getInputFormat(); }

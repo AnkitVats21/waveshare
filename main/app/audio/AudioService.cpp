@@ -1,9 +1,13 @@
 #include "AudioService.h"
 #include "app/audio/AudioPipelineManager.h"
+#include "app/audio/MicCapture.h"     // for Buffers::MIC_TX_BUF
+#include "app/audio/SpeakerPlayback.h" // for Buffers::SPK_RX_BUF
 #include "app/event/EventBus.h"
 #include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
+#include "common/events/app_events.h"
 #include "hal/Board.h"
+#include "services/BufferManager.h"
 
 AudioService &AudioService::getInstance() {
   static AudioService instance;
@@ -11,22 +15,20 @@ AudioService &AudioService::getInstance() {
 }
 
 bool AudioService::begin(GlobalSystemSettings &settings,
-                         GlobalPipelineContext &context,
-                         HardwareAudioHandles &handles, Board *board,
-                         EventBus *event_bus) {
+                         HardwareAudioHandles  &handles,
+                         Board                *board) {
   if (m_initialized)
     return true;
 
   m_settings = &settings;
-  m_context = &context;
-  m_handles = &handles;
-  m_board = board;
-  m_event_bus = event_bus;
+  m_handles  = &handles;
+  m_board    = board;
 
-  if (!m_board || !m_event_bus)
-    return false;
+  return m_board ? onStart() : false;
+}
 
-  // 1. Initialize the Hardware handles from Board
+bool AudioService::onStart() {
+  // 1. Ensure board hardware is ready
   if (!m_board->isInitialized()) {
     if (!m_board->begin()) {
       LOGE_HAL("Failed to initialize physical board for AudioService.");
@@ -34,43 +36,38 @@ bool AudioService::begin(GlobalSystemSettings &settings,
     }
   }
 
-  // Map low-level driver handles to our system context
+  // 2. Map hardware handles from Board
   m_handles->speaker_tx_handle = m_board->getTxHandle();
-  m_handles->mic_rx_handle = m_board->getRxHandle();
-  m_handles->play_dev = m_board->getPlayDev();
-  m_handles->record_dev = m_board->getRecordDev();
+  m_handles->mic_rx_handle     = m_board->getRxHandle();
+  m_handles->play_dev          = m_board->getPlayDev();
+  m_handles->record_dev        = m_board->getRecordDev();
+  LOGI_HAL("Audio hardware handles mapped from Board.");
 
-  LOGI_HAL("Audio hardware handles mapped directly from Board.");
-
-  // 2. Build the Audio Pipeline (Pipes and RTP tasks)
-  if (!AudioPipelineManager::initialize(*m_settings, *m_handles, *m_context)) {
-    LOGE_AUDIO("Failed to build Audio Pipeline for AudioService.");
+  // 3. Build audio pipeline (ring buffers come from BufferManager)
+  if (!AudioPipelineManager::initialize(*m_settings, *m_handles)) {
+    LOGE_AUDIO("Failed to build Audio Pipeline.");
     return false;
   }
 
-  // 3. Subscribe to relevant events
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::WAKE_WORD_DETECTED,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::STOP_STREAMING,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::MIC_GAIN_UPDATE,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::ASSISTANT_TALKING,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::ASSISTANT_SILENT,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::ASSISTANT_TURN_COMPLETE,
-                         onSystemEvent, this);
-  m_event_bus->subscribe(APP_EVENTS, (int32_t)AppEvent::USER_INTERRUPTED,
-                         onSystemEvent, this);
+  // 4. Wire WakeWordDetector — inject Board as feed source, self as listener
+  auto &ww = WakeWordDetector::getInstance();
+  ww.setFeedSource(m_board);  // Board implements IAudioFeedSource
+  ww.setListener(this);       // AudioService implements IWakeWordListener
 
-  // 4. Start the background supervisor task
-  if (!this->start()) {
+  // 5. Subscribe to EventBus events (MQTT-driven or server-driven state changes)
+  subscribeEvent(APP_EVENTS, AppEvent::MIC_GAIN_UPDATE);
+  subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_TALKING);
+  subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_SILENT);
+  subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_TURN_COMPLETE);
+  // Note: WAKE_WORD_DETECTED, STOP_STREAMING, USER_INTERRUPTED are now
+  // handled via IWakeWordListener callbacks — no EventBus round-trip needed.
+
+  // 6. Start background supervisor task
+  if (!this->start())
     return false;
-  }
 
   m_initialized = true;
-  LOGI_AUDIO("AudioService operational (Unified Mic/Speaker Controller).");
+  LOGI_AUDIO("AudioService operational.");
   return true;
 }
 
@@ -78,158 +75,147 @@ bool AudioService::reinit(uint32_t sample_rate) {
   if (!m_initialized)
     return false;
 
-  LOGI_AUDIO("AudioService: Reinitializing for sample rate %lu Hz",
-             sample_rate);
+  LOGI_AUDIO("AudioService: Reinitializing for sample rate %lu Hz", sample_rate);
 
-  // 1. Pause WakeWordDetector feedTask so it stops calling esp_codec_dev_read
-  //    before we destroy the hardware handles (prevents UAF / semaphore crash)
-  auto &ww = WakeWordDetector::getInstance();
-  bool ww_was_running = ww.isRunning();
+  auto &ww            = WakeWordDetector::getInstance();
+  bool  ww_was_running = ww.isRunning();
   if (ww_was_running) {
-    ww.pauseHardware();
-    vTaskDelay(pdMS_TO_TICKS(30)); // let feedTask exit current read
+    ww.stop(); // semaphore-based — blocks until both tasks exit safely
   }
 
-  // 2. Stop high-level pipeline tasks and clear ring buffer reference
-  AudioPipelineManager::teardown(*m_context);
-
-  // 3. Reinit hardware via Board
+  AudioPipelineManager::teardown();
   m_board->reinitAudio(sample_rate);
 
-  // 4. Update settings + handles
-  m_settings->sample_rate = sample_rate;
+  m_settings->sample_rate      = sample_rate;
   m_handles->speaker_tx_handle = m_board->getTxHandle();
-  m_handles->mic_rx_handle = m_board->getRxHandle();
-  m_handles->play_dev = m_board->getPlayDev();
-  m_handles->record_dev = m_board->getRecordDev();
+  m_handles->mic_rx_handle     = m_board->getRxHandle();
+  m_handles->play_dev          = m_board->getPlayDev();
+  m_handles->record_dev        = m_board->getRecordDev();
 
-  // 5. Resume WakeWordDetector (new handles are ready)
-  if (ww_was_running) {
-    ww.resumeHardware();
-  }
+  // Reallocate PSRAM buffers
+  auto &bm = BufferManager::getInstance();
+  bm.destroy(Buffers::MIC_TX_BUF);
+  bm.destroy(Buffers::SPK_RX_BUF);
+  bm.initAll();
 
-  // 6. Restart pipeline (will re-wire WW ring buffer if running)
-  return AudioPipelineManager::initialize(*m_settings, *m_handles, *m_context);
+  if (ww_was_running)
+    ww.begin(); // re-inject feed source + listener already set
+
+  return AudioPipelineManager::initialize(*m_settings, *m_handles);
 }
 
 void AudioService::setMicEnabled(bool enabled) {
   if (m_settings)
     m_settings->mic_enabled = enabled;
 
-  // When WakeWordDetector is running, it owns the hardware and is the sole
-  // I2S reader. MicCapture must stay disabled. Instead we toggle streaming
-  // by wiring/clearing the ring buffer on the WakeWordDetector.
   auto &ww = WakeWordDetector::getInstance();
   if (ww.isRunning()) {
-    ww.setStreamRingbuf(enabled ? m_context->tx_ring_buffer : nullptr);
-    // Also gate the RTP streamer (controls network output)
     AudioPipelineManager::setRtpEnabled(enabled);
-    LOGI_AUDIO("Mic toggle (WW mode): streaming %s",
-               enabled ? "ENABLED" : "DISABLED");
   } else {
     AudioPipelineManager::setMicEnabled(enabled);
   }
 }
 
-void AudioService::onSystemEvent(void *handler_arg, esp_event_base_t base,
-                                 int32_t id, void *event_data) {
-  AudioService *self = static_cast<AudioService *>(handler_arg);
-  if (!self)
-    return;
+// ============================================================================
+// IWakeWordListener callbacks — called from WakeWordDetector detectTask
+// ============================================================================
 
-  if (base == APP_EVENTS) {
-    auto &ww = WakeWordDetector::getInstance();
+void AudioService::onWakeWord(uint8_t channel) {
+  LOGI_AUDIO("Wake word (ch %d): enabling RTP, setting mic gain", channel);
 
-    if (id == (int32_t)AppEvent::WAKE_WORD_DETECTED) {
-      LOGI_AUDIO("Wake word: enabling RTP stream + setting optimal mic gain");
-      ww.setAssistantActive(false);
-      ww.setVadDeferred(false);
-      AudioPipelineManager::setRtpRxInterrupted(false);
-      // Enable RTP streamer so the receiver starts getting audio
-      AudioPipelineManager::setRtpEnabled(true);
-      self->m_board->setRecordGain(self->m_mic_gain);
+  auto &ww = WakeWordDetector::getInstance();
+  ww.setAssistantActive(false);
+  ww.setVadDeferred(false);
+  AudioPipelineManager::setRtpRxInterrupted(false);
+  AudioPipelineManager::setRtpEnabled(true);
+  m_board->setRecordGain(m_mic_gain);
 
-    } else if (id == (int32_t)AppEvent::STOP_STREAMING) {
-      LOGI_AUDIO("VAD timeout: disabling RTP stream + turning off LEDs");
-      ww.setAssistantActive(false);
-      ww.setVadDeferred(false);
-      // Disable RTP streamer — receiver will see clean silence, no stale frames
-      AudioPipelineManager::setRtpEnabled(false);
+  // Publish to EventBus so LedService and others can react
+  WakeWordData wd = {channel};
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED, wd);
+}
 
-      // Turn off LEDs
-      LedEventData led_cmd = {LedMode::OFF, {0, 0, 0}, 0, 0};
-      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+void AudioService::onVadTimeout() {
+  LOGI_AUDIO("VAD timeout: disabling RTP stream");
 
-    } else if (id == (int32_t)AppEvent::MIC_GAIN_UPDATE) {
-      if (event_data) {
-        float gain = *static_cast<float *>(event_data);
-        self->m_mic_gain = gain;
-        LOGI_AUDIO("AudioService stored optimal mic gain: %.1f dB", gain);
-      }
-    } else if (id == (int32_t)AppEvent::ASSISTANT_TALKING) {
-      LOGI_AUDIO("Assistant talking: deferring VAD + setting LED to solid green");
-      ww.setAssistantActive(true);
-      ww.setVadDeferred(true);
+  auto &ww = WakeWordDetector::getInstance();
+  ww.setAssistantActive(false);
+  ww.setVadDeferred(false);
+  AudioPipelineManager::setRtpEnabled(false);
 
-      // Set LED to solid green (GRB color: G=0, R=80, B=0 => green in our system)
-      LedEventData led_cmd = {LedMode::SOLID, {0, 80, 0}, 0, 0};
-      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+  uint32_t zero = 0;
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::STOP_STREAMING, zero);
+}
 
-    } else if (id == (int32_t)AppEvent::ASSISTANT_SILENT) {
-      LOGI_AUDIO("Assistant silent: deferring VAD + setting LED to breathe pink");
-      ww.setAssistantActive(true);
-      ww.setVadDeferred(true);
+void AudioService::onUserSpeechDetected() {
+  LOGI_AUDIO("Barge-in: flushing RX buffer");
 
-      // Set LED to breathe pink (GRB color: G=0, R=80, B=80 => pink/magenta)
-      LedEventData led_cmd = {LedMode::BREATH, {0, 80, 80}, 1500, 0};
-      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+  auto &ww = WakeWordDetector::getInstance();
+  ww.setAssistantActive(false);
+  ww.setVadDeferred(false);
+  AudioPipelineManager::setRtpRxInterrupted(true);
 
-    } else if (id == (int32_t)AppEvent::ASSISTANT_TURN_COMPLETE) {
-      LOGI_AUDIO("Assistant turn complete: activating VAD + turning off LEDs");
-      ww.setAssistantActive(false);
-      ww.setVadDeferred(false);
-      AudioPipelineManager::setRtpRxInterrupted(false);
+  // One-liner drain — no manual while-loop
+  BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+  LOGI_AUDIO("Playback queue flushed.");
 
-      // Turn off LEDs
-      LedEventData led_cmd = {LedMode::OFF, {0, 0, 0}, 0, 0};
-      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+  uint32_t zero = 0;
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::USER_INTERRUPTED, zero);
+}
 
-    } else if (id == (int32_t)AppEvent::USER_INTERRUPTED) {
-      LOGI_AUDIO("User interrupted: flushing rx playback queue + setting LED to breathe pink");
-      ww.setAssistantActive(false);
-      ww.setVadDeferred(false);
-      AudioPipelineManager::setRtpRxInterrupted(true);
+// ============================================================================
+// IService::onEvent — handles MQTT-driven / server-driven state changes
+// ============================================================================
 
-      // Flush the playback queue (rx_ring_buffer)
-      if (self->m_context && self->m_context->rx_ring_buffer) {
-        size_t clear_size = 0;
-        while (true) {
-          uint8_t *stale = static_cast<uint8_t *>(
-              xRingbufferReceive(self->m_context->rx_ring_buffer, &clear_size, 0));
-          if (!stale)
-            break;
-          vRingbufferReturnItem(self->m_context->rx_ring_buffer, stale);
-        }
-        LOGI_AUDIO("Playback queue flushed on barge-in.");
-      }
+void AudioService::onEvent(esp_event_base_t /*base*/, int32_t id, void *data) {
+  auto &ww = WakeWordDetector::getInstance();
 
-      // Set LED to breathe pink
-      LedEventData led_cmd = {LedMode::BREATH, {0, 80, 80}, 1500, 0};
-      self->m_event_bus->publish(APP_EVENTS, AppEvent::LED_COMMAND, led_cmd);
+  switch (static_cast<AppEvent>(id)) {
+
+  case AppEvent::MIC_GAIN_UPDATE:
+    if (data) {
+      m_mic_gain = *static_cast<float *>(data);
+      LOGI_AUDIO("Stored optimal mic gain: %.1f dB", m_mic_gain);
     }
+    break;
+
+  case AppEvent::ASSISTANT_TALKING:
+    LOGI_AUDIO("Assistant talking: deferring VAD");
+    ww.setAssistantActive(true);
+    ww.setVadDeferred(true);
+    break;
+
+  case AppEvent::ASSISTANT_SILENT:
+    LOGI_AUDIO("Assistant silent: holding VAD defer");
+    ww.setAssistantActive(true);
+    ww.setVadDeferred(true);
+    break;
+
+  case AppEvent::ASSISTANT_TURN_COMPLETE:
+    LOGI_AUDIO("Turn complete: re-arming VAD");
+    ww.setAssistantActive(false);
+    ww.setVadDeferred(false);
+    AudioPipelineManager::setRtpRxInterrupted(false);
+    break;
+
+  default:
+    break;
   }
 }
 
+// ============================================================================
+// Background supervisor task
+// ============================================================================
+
 void AudioService::run() {
   LOGI_AUDIO("AudioService background task active.");
-
+  uint32_t ticks = 0;
   while (m_running) {
-    // Here we can implement:
-    // 1. Peak level monitoring
-    // 2. Slow volume fading
-    // 3. Silence detection
-    // 4. Resource monitoring
-
-    vTaskDelay(pdMS_TO_TICKS(100)); // Low frequency monitoring
+    vTaskDelay(pdMS_TO_TICKS(500));
+    // Log PSRAM buffer health every 30 s
+    if (++ticks >= 60) {
+      BufferManager::getInstance().dumpStats();
+      ticks = 0;
+    }
   }
 }

@@ -3,8 +3,9 @@
 #include "lwip/sockets.h"
 
 RtpTaskBase::RtpTaskBase(const CommonConfig &config,
-                         RingbufHandle_t ring_buffer, int shared_socket, const char *log_tag)
-    : m_config(config), m_ring_buffer(ring_buffer), m_task_handle(nullptr),
+                         BufferManager::BufferId buf_id, int shared_socket,
+                         const char *log_tag)
+    : m_config(config), m_buf_id(buf_id), m_task_handle(nullptr),
       m_socket(shared_socket), m_is_shared_socket(shared_socket >= 0), m_tag(log_tag),
       m_is_running(false), m_is_enabled(true) {}
 

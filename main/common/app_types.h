@@ -1,122 +1,32 @@
 #pragma once
 
-#include "driver/i2s_std.h"
-#include "esp_codec_dev.h"
-#include "esp_event.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/ringbuf.h"
-#include <string>
-
 /**
- * @brief Handles for physical audio hardware channels
+ * @file app_types.h
+ * @brief DEPRECATED umbrella header — do not add new content here.
+ *
+ * This file exists only for backward compatibility during the refactor.
+ * All types have been moved to focused headers:
+ *
+ *   Hardware handles  → common/hw_types.h
+ *   System settings   → common/system_settings.h
+ *   LED types/colors  → common/led_types.h
+ *   Event bases       → common/events/event_bases.h
+ *   App events        → common/events/app_events.h
+ *   Wi-Fi events      → common/events/wifi_events.h
+ *   MQTT events       → common/events/mqtt_events.h
+ *
+ * GlobalPipelineContext has been removed — ring buffers are now owned by
+ * BufferManager. Use BufferManager::getInstance().handle(Buffers::MIC_TX_BUF)
+ * and BufferManager::getInstance().handle(Buffers::SPK_RX_BUF) instead.
+ *
+ * Migrate each consumer to include only what it needs, then delete this file.
  */
-struct HardwareAudioHandles {
-  i2s_chan_handle_t mic_rx_handle = nullptr;
-  i2s_chan_handle_t speaker_tx_handle = nullptr;
-  esp_codec_dev_handle_t play_dev = nullptr;
-  esp_codec_dev_handle_t record_dev = nullptr;
-};
 
-enum class AudioStreamFormat {
-  PCM_S16LE, // Raw 16-bit PCM
-  G711_ULAW  // 8-bit u-law compression
-};
+#include "common/hw_types.h"
+#include "common/system_settings.h"
+#include "common/led_types.h"
+#include "common/events/event_bases.h"
+#include "common/events/app_events.h"
+#include "common/events/wifi_events.h"
+#include "common/events/mqtt_events.h"
 
-struct RgbColor {
-  uint8_t r;
-  uint8_t g;
-  uint8_t b;
-};
-
-enum class LedMode : uint8_t { OFF, SOLID, BLINK, BREATH, RAINBOW };
-
-//TODO: define some predefined rgb color that is used in the system
-#define RED_LED {0, 80, 0} // #800000
-#define GREEN_LED {80, 0, 0} // #008000
-#define BLUE_LED {0, 0, 80} // #000080
-#define YELLOW_LED {80, 80, 0} // #808000
-#define PURPLE_LED {160, 88, 0} // #88ff00
-#define ORANGE_LED {80, 40, 0} // #804000
-#define PINK_LED {80, 0, 40} // #800040
-#define BROWN_LED {80, 60, 0} // #806000
-#define WHITE_LED {80, 80, 80} // #C0C0C0
-#define OFF_LED {0, 0, 0}
-
-
-
-struct LedEventData {
-  LedMode mode;
-  RgbColor color;
-  uint32_t speed_ms;
-  uint8_t repeat_count; // 0 for infinite/not applicable
-};
-
-/**
- * @brief Unified Configuration Data Object
- */
-struct GlobalSystemSettings {
-  // WiFi Settings
-  std::string wifi_ssid;
-  std::string wifi_password;
-  int wifi_max_retries = 5;
-
-  // Stream Configuration
-  AudioStreamFormat stream_format = AudioStreamFormat::PCM_S16LE;
-  uint32_t sample_rate = 16000;
-  bool mic_enabled = true;
-
-  // Network Settings
-  std::string server_ip = "192.168.1.18";
-  uint16_t tx_rtp_port = 5005;
-  uint16_t rx_rtp_port = 5005;
-
-  // Task/Resource Settings
-  BaseType_t network_core_id = 0;
-  uint8_t tx_priority = 5;
-  uint8_t rx_priority = 6;
-  uint32_t buffer_size = 131072; // 128KB PSRAM buffer enabled
-
-  uint8_t audio_task_priority = 22;
-  uint32_t audio_stack_size = 8192;
-  BaseType_t audio_core_id = 1;
-};
-
-/**
- * @brief Unified Memory Handle Context Object
- */
-struct GlobalPipelineContext {
-  RingbufHandle_t tx_ring_buffer = nullptr;
-  RingbufHandle_t rx_ring_buffer = nullptr;
-};
-
-/**
- * @brief System Event Bases
- */
-ESP_EVENT_DECLARE_BASE(AUDIO_SYSTEM_EVENTS);
-ESP_EVENT_DECLARE_BASE(APP_EVENTS);
-ESP_EVENT_DECLARE_BASE(WIFI_SYSTEM_EVENTS);
-ESP_EVENT_DECLARE_BASE(MQTT_SYSTEM_EVENTS);
-
-/**
- * @brief Audio/Application Events
- */
-enum class AppEvent : uint32_t {
-  WAKE_WORD_DETECTED,
-  STREAMING_STOP_REQUESTED,
-  STOP_STREAMING,
-  LED_COLOR_UPDATE,
-  MIC_GAIN_UPDATE,
-  LED_COMMAND,
-  ASSISTANT_TALKING,
-  ASSISTANT_SILENT,
-  ASSISTANT_TURN_COMPLETE,
-  USER_INTERRUPTED
-};
-
-/**
- * @brief WiFi System Events
- */
-enum class WifiEvent : uint32_t {
-  CONNECTED,
-  DISCONNECTED,
-};

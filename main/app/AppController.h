@@ -1,39 +1,41 @@
 #pragma once
 
-#include "common/app_types.h"
-#include "esp_event.h"
+#include "common/IService.h"
 
 /**
- * @brief System Orchestrator that coordinates between different modules
- * (WiFi, Audio, Logging) based on system events.
+ * @brief System orchestrator that reacts to network lifecycle events.
+ *
+ * Subscribes to WifiEvent::CONNECTED / DISCONNECTED and bootstraps or
+ * tears down the audio and MQTT subsystems accordingly.
+ *
+ * Extends IService: subscriptions and dispatch are handled via the base class.
+ * No raw pointers, settings refs, or handle refs are passed in — all come
+ * from SystemContext::get().
  */
-class AppController {
+class AppController : public IService {
 public:
   static AppController &getInstance();
 
   /**
-   * @brief Start the controller and subscribe to system events.
+   * @brief Subscribe to system events and start subsystems that don't
+   *        need the network (e.g. LedService, WakeWordDetector).
    */
-  void begin(GlobalSystemSettings &settings, GlobalPipelineContext &context,
-             HardwareAudioHandles &handles);
+  bool onStart() override;
+
+  /** @brief Convenience alias kept for backward compatibility with main.cpp. */
+  void begin() { onStart(); }
+
+  void onStop() override;
+
+  void onEvent(esp_event_base_t base, int32_t id, void *data) override;
 
 private:
-  AppController() = default;
+  AppController() : IService("AppCtrl") {}
   ~AppController() = default;
 
-  // Event Handlers
-  static void onNetworkReady(void *handler_arg, esp_event_base_t base,
-                             int32_t id, void *event_data);
-  static void onNetworkLost(void *handler_arg, esp_event_base_t base,
-                            int32_t id, void *event_data);
-
-  // Internal Bootstrapping
   void bootstrapAudio();
   void teardownNetworkServices();
   void initMqtt();
 
-  GlobalSystemSettings *m_settings = nullptr;
-  GlobalPipelineContext *m_context = nullptr;
-  HardwareAudioHandles *m_handles = nullptr;
   static constexpr const char *TAG = "AppCtrl";
 };
