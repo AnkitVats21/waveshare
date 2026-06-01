@@ -40,6 +40,10 @@ public:
     /** @brief Signal that the current turn is interrupted by a user barge-in. */
     static void setRtpRxInterrupted(bool interrupted);
 
+    /** @brief Pause/resume the speaker playback task safely during clock switches. */
+    static void pauseSpeaker();
+    static void resumeSpeaker();
+
 private:
     static MicCaptureTask     *m_mic_task;
     static SpeakerPlaybackTask *m_speaker_task;

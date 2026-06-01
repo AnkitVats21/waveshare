@@ -68,6 +68,13 @@ public:
    */
   esp_err_t reinit(uint32_t sample_rate);
 
+  /**
+   * @brief Dynamically reconfigure physical standard I2S clock without heap re-allocations.
+   * @param sample_rate New sample rate in Hz (e.g. 16000 or 24000)
+   * @return ESP_OK on success
+   */
+  esp_err_t setHardwareSampleRate(uint32_t sample_rate);
+
   // --- Audio frame retrieval ------------------------------------------------
 
   /**

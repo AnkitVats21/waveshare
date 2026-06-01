@@ -129,6 +129,11 @@ public:
    */
   esp_err_t reinitAudio(uint32_t sample_rate);
 
+  /**
+   * @brief Dynamically reconfigure I2S clocks without heap re-allocations, muting the Power Amplifier to prevent pops.
+   */
+  esp_err_t setHardwareSampleRate(uint32_t sample_rate);
+
   // -- Storage (delegates to SdCardManager) ----------------------------------
   esp_err_t initSdCard(const char *mount_point, size_t max_files) {
     return m_storage.mount(mount_point, max_files);

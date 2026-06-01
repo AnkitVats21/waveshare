@@ -73,6 +73,12 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
   const size_t PREBUFFER_THRESHOLD = 8000;
 
   while (m_is_running) {
+    if (!m_hw_valid) {
+      is_prebuffering = true;
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+
     if (is_prebuffering) {
       size_t fill_bytes = bm.getUsedBytes(Buffers::SPK_RX_BUF);
       if (fill_bytes < PREBUFFER_THRESHOLD) {
