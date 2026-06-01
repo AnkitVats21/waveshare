@@ -136,10 +136,7 @@ void BufferManager::dumpStats() const {
             ESP_LOGI(TAG, "  [%d] %-16s  NOT ALLOCATED", i, e.name);
             continue;
         }
-        size_t free_bytes = 0;
-        vRingbufferGetInfo(e.rbuf, nullptr, nullptr, nullptr, nullptr,
-                           &free_bytes);
-        size_t used = e.size_bytes - free_bytes;
+        size_t used = getUsedBytes(i);
         ESP_LOGI(TAG, "  [%d] %-16s  %5u KB total  %5u B used  %4u drops",
                  i, e.name,
                  (unsigned)(e.size_bytes / 1024),

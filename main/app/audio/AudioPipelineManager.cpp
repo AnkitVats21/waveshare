@@ -38,6 +38,7 @@ bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
     m_speaker_task = new SpeakerPlaybackTask();
     m_speaker_task->start(settings, hw_handles.play_dev);
 
+#if defined(CONFIG_VOICE_BACKEND_RTP)
     // 2. Create Shared Bidirectional UDP Socket
     m_shared_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (m_shared_socket < 0) {
@@ -92,6 +93,7 @@ bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
     if (!m_rtp_rx->begin()) {
         LOGE_AUDIO("Failed to start RTP Receiver");
     }
+#endif
 
     return true;
 }
@@ -99,6 +101,7 @@ bool AudioPipelineManager::initialize(const GlobalSystemSettings &settings,
 void AudioPipelineManager::teardown() {
     LOGI_AUDIO("Tearing down Audio Pipeline...");
 
+#if defined(CONFIG_VOICE_BACKEND_RTP)
     // 1. Stop network tasks first
     if (m_rtp_tx) { m_rtp_tx->stop(); delete m_rtp_tx; m_rtp_tx = nullptr; }
     if (m_rtp_rx) { m_rtp_rx->stop(); delete m_rtp_rx; m_rtp_rx = nullptr; }
@@ -109,6 +112,7 @@ void AudioPipelineManager::teardown() {
         m_shared_socket = -1;
         LOGI_AUDIO("Shared UDP socket closed.");
     }
+#endif
 
     // 3. Stop hardware tasks
     if (m_mic_task) {
@@ -133,15 +137,21 @@ void AudioPipelineManager::teardown() {
 
 void AudioPipelineManager::setMicEnabled(bool enabled) {
     if (m_mic_task) m_mic_task->setEnabled(enabled);
+#if defined(CONFIG_VOICE_BACKEND_RTP)
     if (m_rtp_tx)   m_rtp_tx->setEnabled(enabled);
+#endif
     LOGI_AUDIO("Mic pipeline %s (Task + RTP)", enabled ? "ENABLED" : "SOFT-DISABLED");
 }
 
 void AudioPipelineManager::setRtpEnabled(bool enabled) {
+#if defined(CONFIG_VOICE_BACKEND_RTP)
     if (m_rtp_tx) m_rtp_tx->setEnabled(enabled);
     LOGI_AUDIO("RTP streamer %s", enabled ? "ENABLED" : "DISABLED");
+#endif
 }
 
 void AudioPipelineManager::setRtpRxInterrupted(bool interrupted) {
+#if defined(CONFIG_VOICE_BACKEND_RTP)
     if (m_rtp_rx) m_rtp_rx->setInterrupted(interrupted);
+#endif
 }

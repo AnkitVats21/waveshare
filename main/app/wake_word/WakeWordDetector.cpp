@@ -10,8 +10,10 @@
 #include "model_path.h"
 
 #include "app/audio/MicCapture.h"  // for Buffers::MIC_TX_BUF
+#include "app/audio/SpeakerPlayback.h"  // for Buffers::SPK_RX_BUF
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
+#include "app/audio/AudioService.h"
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -204,7 +206,7 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
 // ============================================================================
 
 void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
-    int silence_frames   = 0;
+    m_afe_data = afe_data;
     int fetch_chunksize  = m_afe_handle->get_fetch_chunksize(afe_data);
 
     const int SILENCE_TIMEOUT_FRAMES =
@@ -227,8 +229,12 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
 
         // ── Stream AFE-processed audio into MIC_TX_BUF ───────────────────────
         // res->data is the beamformed + AEC mono output (cleaner than raw Mic1).
-        // Only write while streaming is active (wake word confirmed).
-        if (m_streaming_active && res->data && res->data_size > 0) {
+        // Only write while streaming is active (wake word confirmed) and assistant is quiet.
+        bool assistant_talking = m_assistant_active;
+        size_t buffered_spk_bytes = bm.getUsedBytes(Buffers::SPK_RX_BUF);
+        bool block_mic_capture = assistant_talking || (buffered_spk_bytes > 0);
+
+        if (m_streaming_active && !block_mic_capture && res->data && res->data_size > 0) {
             bm.send(Buffers::MIC_TX_BUF, res->data, res->data_size);
         }
 
@@ -250,38 +256,19 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
 
         if (detected) {
             m_streaming_active = true;
-            silence_frames     = 0;
+            // Disable WakeNet dynamically to save huge CPU cycles during active conversation
+            m_afe_handle->disable_wakenet(afe_data);
+            ESP_LOGI(TAG, "AFE WakeNet suspended (CPU cycles saved!)");
+
             // Listener (AudioService) handles EventBus, LEDs, mic gain
             m_listener->onWakeWord(channel);
         }
 
-        // ── VAD-based streaming timeout ───────────────────────────────────────
-        if (m_streaming_active) {
+        // ── VAD-based inactivity supervisor ──────────────────────────────────
+        if (m_streaming_active && !m_assistant_active) {
             if (res->vad_state == VAD_SPEECH) {
-                silence_frames = 0;
-
-                // Barge-in: fire onUserSpeechDetected() exactly once per turn
-                if (m_assistant_active && !m_interruption_triggered) {
-                    m_interruption_triggered = true;
-                    ESP_LOGI(TAG, "Barge-in detected");
-                    m_listener->onUserSpeechDetected();
-                }
-            } else {
-                if (m_vad_deferred) {
-                    silence_frames = 0; // Pause timeout while assistant is talking
-                } else {
-                    ++silence_frames;
-                }
-
-                if (silence_frames >= SILENCE_TIMEOUT_FRAMES) {
-                    m_streaming_active = false;
-                    silence_frames     = 0;
-                    // Re-arm WakeNet for the next interaction
-                    m_afe_handle->enable_wakenet(afe_data);
-                    LOGI_SYSTEM("VAD timeout (%d ms) — re-arming wake word",
-                                VAD_SILENCE_TIMEOUT_MS);
-                    m_listener->onVadTimeout();
-                }
+                // Update inactivity timer on active user speech (completely immune to speaker echo)
+                AudioService::getInstance().updateActivity();
             }
         }
 
@@ -291,4 +278,15 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     ESP_LOGI(TAG, "detectTask exiting");
     xSemaphoreGive(m_detect_done);
     vTaskDelete(nullptr);
+}
+
+void WakeWordDetector::stopStreaming() {
+    m_streaming_active = false;
+    m_interruption_triggered = false;
+    m_assistant_active = false;
+    m_vad_deferred = false;
+    if (m_afe_handle && m_afe_data) {
+        m_afe_handle->enable_wakenet(m_afe_data);
+        ESP_LOGI(TAG, "stopStreaming(): AFE WakeNet re-armed successfully");
+    }
 }

@@ -37,6 +37,9 @@ public:
   void onVadTimeout() override;
   void onUserSpeechDetected() override;
 
+  void updateActivity();
+  void checkInactivityTimeout();
+
 protected:
   void run() override;
 
@@ -47,8 +50,10 @@ private:
   HardwareAudioHandles *m_handles  = nullptr;
   Board                *m_board    = nullptr;
 
-  bool  m_initialized = false;
-  float m_mic_gain    = 80.0f;
+  bool     m_initialized      = false;
+  float    m_mic_gain         = 80.0f;
+  uint64_t m_last_activity_ms = 0;
+  bool     m_session_active   = false;
 
   static constexpr const char *TAG = "AudioSvc";
 };

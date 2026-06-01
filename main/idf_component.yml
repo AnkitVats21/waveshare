@@ -21,4 +21,5 @@ dependencies:
   espressif/led_strip: ^2.4.1
   espressif/mqtt: '*'
   espressif/esp-sr: '*'
+  espressif/esp_websocket_client: '*'
   

@@ -1,5 +1,4 @@
-idf_component_register(
-        SRCS
+set(srcs
             # Entry point
             "main.cpp"
 
@@ -29,9 +28,6 @@ idf_component_register(
             "app/AppController.cpp"
             "app/SystemContext.cpp"
             "app/audio/AudioService.cpp"
-            "app/audio/RtpTaskBase.cpp"
-            "app/audio/RtpStreamer.cpp"
-            "app/audio/RtpReceiver.cpp"
             "app/audio/AudioPipelineManager.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
@@ -54,7 +50,39 @@ idf_component_register(
 
             # Services
             "services/BufferManager.cpp"
+)
 
+if(CONFIG_VOICE_BACKEND_RTP)
+    list(APPEND srcs
+        "app/audio/RtpTaskBase.cpp"
+        "app/audio/RtpStreamer.cpp"
+        "app/audio/RtpReceiver.cpp"
+    )
+endif()
+
+if(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/gemini_skills_generated.cpp
+               ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/gemini_skills_generated.h
+        COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/generate_gemini_skills.py 
+                       ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/gemini_skills_schema.json 
+                       ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/gemini_skills_generated.h 
+                       ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/gemini_skills_generated.cpp
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/gemini_skills_schema.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/app/gemini_live/generate_gemini_skills.py
+        COMMENT "Generating Gemini Skills C++ framework from JSON schema"
+    )
+
+    list(APPEND srcs
+        "app/gemini_live/GeminiLiveService.cpp"
+        "app/gemini_live/GeminiAudioPumpTask.cpp"
+        "app/gemini_live/GeminiProtocolTask.cpp"
+        "app/gemini_live/gemini_skills_generated.cpp"
+    )
+endif()
+
+idf_component_register(
+        SRCS "${srcs}"
         INCLUDE_DIRS
             "."
             # HAL roots
@@ -78,4 +106,6 @@ idf_component_register(
             "common/events"
             # HAL interfaces
             "hal/interfaces"
+            # Gemini Integration
+            "app/gemini_live"
 )
