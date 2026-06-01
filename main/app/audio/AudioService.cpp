@@ -8,6 +8,11 @@
 #include "common/events/app_events.h"
 #include "hal/Board.h"
 #include "services/BufferManager.h"
+#include "esp_timer.h"
+
+#if defined(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
+#include "app/gemini_live/GeminiLiveService.h"
+#endif
 
 AudioService &AudioService::getInstance() {
   static AudioService instance;
@@ -123,6 +128,9 @@ void AudioService::setMicEnabled(bool enabled) {
 void AudioService::onWakeWord(uint8_t channel) {
   LOGI_AUDIO("Wake word (ch %d): enabling RTP, setting mic gain", channel);
 
+  m_session_active = true;
+  updateActivity();
+
   auto &ww = WakeWordDetector::getInstance();
   ww.setAssistantActive(false);
   ww.setVadDeferred(false);
@@ -148,19 +156,24 @@ void AudioService::onVadTimeout() {
 }
 
 void AudioService::onUserSpeechDetected() {
-  LOGI_AUDIO("Barge-in: flushing RX buffer");
+  LOGW_AUDIO("Barge-In Confirmed! Flushing playback channels and cutting cloud stream...");
 
   auto &ww = WakeWordDetector::getInstance();
   ww.setAssistantActive(false);
   ww.setVadDeferred(false);
   AudioPipelineManager::setRtpRxInterrupted(true);
 
-  // One-liner drain — no manual while-loop
+  // 1. Immediately drop physical hardware playback to prevent echo loop pollution
   BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-  LOGI_AUDIO("Playback queue flushed.");
 
-  uint32_t zero = 0;
-  EventBus::getInstance().publish(APP_EVENTS, AppEvent::USER_INTERRUPTED, zero);
+#if defined(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
+  // 2. Transmit structural cancellation state up the active WebSocket channel
+  GeminiLiveService::getInstance().sendInterruptionSignal();
+#endif
+
+  // 3. Inform peripheral controllers (e.g. reset LED strip pattern to listening state)
+  uint32_t payload_dummy = 0;
+  EventBus::getInstance().publish(APP_EVENTS, AppEvent::USER_INTERRUPTED, payload_dummy);
 }
 
 // ============================================================================
@@ -207,11 +220,52 @@ void AudioService::onEvent(esp_event_base_t /*base*/, int32_t id, void *data) {
 // Background supervisor task
 // ============================================================================
 
+void AudioService::updateActivity() {
+  m_last_activity_ms = esp_timer_get_time() / 1000;
+}
+
+void AudioService::checkInactivityTimeout() {
+  if (!m_session_active) {
+    return;
+  }
+
+  // If the speaker buffer still contains active audio samples being played back,
+  // the assistant is actively talking. We update activity to prevent premature timeouts.
+  if (BufferManager::getInstance().getUsedBytes(Buffers::SPK_RX_BUF) > 0) {
+    updateActivity();
+    return;
+  }
+
+  // Calculate silent elapsed duration
+  uint64_t now_ms = esp_timer_get_time() / 1000;
+  uint64_t inactive_ms = now_ms - m_last_activity_ms;
+
+  if (inactive_ms >= 20000) { // 20-second silence timeout threshold for comfortable conversational pacing
+    LOGW_AUDIO("Inactivity Timeout: 20 seconds of silence detected. Stopping session...");
+    m_session_active = false;
+    
+    // Disable active audio streaming and re-arm WakeNet
+    WakeWordDetector::getInstance().stopStreaming();
+
+    // Reset speaker buffer and playback pipeline
+    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+
+    // Stop streaming event publishes to restore idle peripheral modes (LEDs, etc)
+    uint32_t zero = 0;
+    EventBus::getInstance().publish(APP_EVENTS, AppEvent::STOP_STREAMING, zero);
+  }
+}
+
 void AudioService::run() {
   LOGI_AUDIO("AudioService background task active.");
+  m_last_activity_ms = esp_timer_get_time() / 1000;
   uint32_t ticks = 0;
   while (m_running) {
     vTaskDelay(pdMS_TO_TICKS(500));
+    
+    // Evaluate session timeout every 500ms
+    checkInactivityTimeout();
+
     // Log PSRAM buffer health every 30 s
     if (++ticks >= 60) {
       BufferManager::getInstance().dumpStats();

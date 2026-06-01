@@ -24,6 +24,7 @@ enum class AppEvent : int32_t {
   USER_INTERRUPTED,        ///< User barge-in detected; payload: none
   MIC_GAIN_UPDATE,         ///< Calibrated mic gain available; payload: MicGainData
   STREAMING_STOP_REQUESTED,///< External stop request; payload: none
+  GEMINI_TOOL_CALL,        ///< Gemini Live skill request; payload: GeminiSkillPayload
 };
 
 // ---------------------------------------------------------------------------
@@ -42,3 +43,8 @@ struct MicGainData {
 
 // AppEvent::LED_COMMAND uses LedEventData from led_types.h
 // All other listed events carry no payload (publish a uint32_t zero).
+
+namespace GeminiSkills { struct DecodedSkillCall; }
+
+/** Payload for AppEvent::GEMINI_TOOL_CALL */
+typedef GeminiSkills::DecodedSkillCall* GeminiSkillPayload;

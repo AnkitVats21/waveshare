@@ -1,0 +1,28 @@
+{
+  "skills": {
+    "get_current_weather": {
+      "description": "Fetch real-time weather conditions for a location string.",
+      "parameters": {
+        "location": {
+          "type": "string",
+          "description": "Banglore"
+        }
+      },
+      "required": [
+        "location"
+      ]
+    },
+    "adjust_hardware_volume": {
+      "description": "Modifies physical speaker gain.",
+      "parameters": {
+        "volume_level": {
+          "type": "int",
+          "description": "0 to 100"
+        }
+      },
+      "required": [
+        "volume_level"
+      ]
+    }
+  }
+}

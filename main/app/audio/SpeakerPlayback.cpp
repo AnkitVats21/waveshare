@@ -5,7 +5,7 @@
 #include <cstdlib>
 
 // Defines + registers the SPK_RX_BUF ring buffer with BufferManager
-DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 64 * 1024)
+DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 512 * 1024)
 
 
 
@@ -74,9 +74,7 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
 
   while (m_is_running) {
     if (is_prebuffering) {
-      size_t fill_bytes = 0;
-      vRingbufferGetInfo(bm.handle(Buffers::SPK_RX_BUF),
-                         nullptr, nullptr, nullptr, nullptr, &fill_bytes);
+      size_t fill_bytes = bm.getUsedBytes(Buffers::SPK_RX_BUF);
       if (fill_bytes < PREBUFFER_THRESHOLD) {
         vTaskDelay(pdMS_TO_TICKS(20));
         continue;

@@ -278,5 +278,35 @@ config WAVESHARE_WAKEWORD_THRESHOLD
 
 endmenu
 
+menu "Voice Assistant Backend Configuration"
+
+    choice VOICE_BACKEND_SELECTION
+        prompt "Active Voice Backend"
+        default VOICE_BACKEND_RTP
+        help
+            Select the underlying voice transmission framework.
+            Selecting Gemini Live will compile direct edge-to-cloud connections, 
+            while RTP compiles the legacy proxy-based streamer and receiver.
+
+        config VOICE_BACKEND_RTP
+            bool "Legacy RTP Streamer/Receiver Proxy"
+            help
+                Streams audio to an intermediate local relay proxy server using raw UDP.
+
+        config VOICE_BACKEND_GEMINI_LIVE
+            bool "Standalone Gemini Live Direct Integration"
+            select ESP_WEBSOCKET_CLIENT
+            help
+                Establishes direct secure WebSockets connection to Google AI Studio.
+    endchoice
+
+    config GEMINI_API_KEY
+        string "Gemini API Key"
+        depends on VOICE_BACKEND_GEMINI_LIVE
+        default ""
+        help
+            Enter your Google AI Studio Gemini API Key.
+
 endmenu
 
+endmenu

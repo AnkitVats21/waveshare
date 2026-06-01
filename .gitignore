@@ -79,3 +79,7 @@ Desktop.ini
 
 recordings/
 playback_audio/
+
+# Generated files
+gemini_skills_generated.h
+gemini_skills_generated.cpp

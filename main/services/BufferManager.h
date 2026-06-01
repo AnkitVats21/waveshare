@@ -78,6 +78,22 @@ public:
     /** Release a single buffer and set id to INVALID. */
     void destroy(BufferId id);
 
+    /** Get total size of a buffer in bytes. */
+    size_t size(BufferId id) const {
+        if (id == INVALID || id >= MAX_BUFFERS) return 0;
+        return m_entries[id].size_bytes;
+    }
+
+    /** Get the exact number of filled/used bytes inside the ring buffer. */
+    size_t getUsedBytes(BufferId id) const {
+        RingbufHandle_t rb = handle(id);
+        if (!rb) return 0;
+        size_t free_bytes = xRingbufferGetCurFreeSize(rb);
+        size_t total = size(id);
+        if (free_bytes > total) return 0;
+        return total - free_bytes;
+    }
+
     /** Log name / size / free bytes / drop count for all live buffers. */
     void dumpStats() const;
 

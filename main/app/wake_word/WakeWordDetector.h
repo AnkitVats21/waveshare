@@ -62,6 +62,8 @@ public:
     bool isVadDeferred()     const { return m_vad_deferred; }
     void setAssistantActive(bool a);
     bool isAssistantActive() const { return m_assistant_active; }
+    bool isStreamingActive() const { return m_streaming_active; }
+    void stopStreaming();
 
     /** Pause hardware reads in feedTask (call before AudioHal::reinit). */
     void pauseHardware()  { m_hw_valid = false; }
@@ -86,6 +88,7 @@ private:
 
     // ---- AFE engine ----
     const esp_afe_sr_iface_t *m_afe_handle = nullptr;
+    esp_afe_sr_data_t        *m_afe_data   = nullptr;
 
     // ---- Lifecycle ----
     volatile int  m_task_flag     = 0; ///< 1 = tasks should run, 0 = stop
