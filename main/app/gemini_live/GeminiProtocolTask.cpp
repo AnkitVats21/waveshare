@@ -274,12 +274,16 @@ void GeminiProtocolTask::sendTextDirect(const char* text) {
 }
 
 void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
-    LOGI_NET("processIncomingFrame: received %d bytes", (int)length);
-    
     // IN-PLACE OPTIMIZATION: Temporarily terminate the payload string container 
     // to avoid an internal duplicate string allocation loop.
     char old_char = payload[length];
     payload[length] = '\0';
+
+    if (length < 500) {
+        LOGI_NET("processIncomingFrame: received %d bytes: %s", (int)length, payload);
+    } else {
+        LOGI_NET("processIncomingFrame: received %d bytes", (int)length);
+    }
 
     cJSON* root = cJSON_Parse(payload);
     if (!root) {
