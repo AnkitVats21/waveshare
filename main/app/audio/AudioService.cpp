@@ -64,6 +64,7 @@ bool AudioService::onStart() {
   subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_TALKING);
   subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_SILENT);
   subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_TURN_COMPLETE);
+  subscribeEvent(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED);
   // Note: WAKE_WORD_DETECTED, STOP_STREAMING, USER_INTERRUPTED are now
   // handled via IWakeWordListener callbacks — no EventBus round-trip needed.
 
@@ -193,9 +194,19 @@ void AudioService::onEvent(esp_event_base_t /*base*/, int32_t id, void *data) {
     break;
 
   case AppEvent::ASSISTANT_TALKING:
-    LOGI_AUDIO("Assistant talking: deferring VAD");
+    LOGI_AUDIO("Assistant talking: deferring VAD & switching clocks to 24kHz");
     ww.setAssistantActive(true);
     ww.setVadDeferred(true);
+    
+    // Pause both speaker playback task and wake word detector before switching clocks
+    AudioPipelineManager::pauseSpeaker();
+    ww.pauseHardware();
+
+    // Reconfigure the clock speed
+    Board::getInstance().setHardwareSampleRate(24000);
+
+    // Resume speaker task safely at the new frequency
+    AudioPipelineManager::resumeSpeaker();
     break;
 
   case AppEvent::ASSISTANT_SILENT:
@@ -205,10 +216,35 @@ void AudioService::onEvent(esp_event_base_t /*base*/, int32_t id, void *data) {
     break;
 
   case AppEvent::ASSISTANT_TURN_COMPLETE:
-    LOGI_AUDIO("Turn complete: re-arming VAD");
+    LOGI_AUDIO("Turn complete received from server; pending final speaker drainage...");
+    m_turn_complete_pending = true;
+    break;
+
+  case AppEvent::STREAMING_STOP_REQUESTED:
+    LOGW_AUDIO("Streaming stop requested (disconnection/error)! Restoring safe idle 16kHz state...");
+    m_session_active = false;
+    m_turn_complete_pending = false;
+
+    // 1. Terminate active streaming and re-arm WakeNet
+    ww.stopStreaming();
+
+    // 2. Reset physical I2S clock back to 16kHz safely
+    AudioPipelineManager::pauseSpeaker();
+    Board::getInstance().setHardwareSampleRate(16000);
     ww.setAssistantActive(false);
     ww.setVadDeferred(false);
+    ww.resumeHardware();
+    AudioPipelineManager::resumeSpeaker();
     AudioPipelineManager::setRtpRxInterrupted(false);
+
+    // 3. Reset buffer states
+    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+
+    // 4. Propagate stop streaming to LedService and others
+    {
+      uint32_t zero = 0;
+      EventBus::getInstance().publish(APP_EVENTS, AppEvent::STOP_STREAMING, zero);
+    }
     break;
 
   default:
@@ -261,13 +297,30 @@ void AudioService::run() {
   m_last_activity_ms = esp_timer_get_time() / 1000;
   uint32_t ticks = 0;
   while (m_running) {
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(50)); // Responsive 50ms supervisor interval
     
-    // Evaluate session timeout every 500ms
+    if (m_turn_complete_pending) {
+      size_t remaining_bytes = BufferManager::getInstance().getUsedBytes(Buffers::SPK_RX_BUF);
+      if (remaining_bytes == 0) {
+        LOGI_AUDIO("Speaker buffer fully drained. Safely switching clocks back to 16kHz...");
+        m_turn_complete_pending = false;
+
+        auto &ww = WakeWordDetector::getInstance();
+        AudioPipelineManager::pauseSpeaker();
+        Board::getInstance().setHardwareSampleRate(16000);
+        ww.setAssistantActive(false);
+        ww.setVadDeferred(false);
+        ww.resumeHardware();
+        AudioPipelineManager::resumeSpeaker();
+        AudioPipelineManager::setRtpRxInterrupted(false);
+      }
+    }
+
+    // Evaluate session timeout every 50ms
     checkInactivityTimeout();
 
-    // Log PSRAM buffer health every 30 s
-    if (++ticks >= 60) {
+    // Log PSRAM buffer health every 30 s (600 * 50ms = 30000ms)
+    if (++ticks >= 600) {
       BufferManager::getInstance().dumpStats();
       ticks = 0;
     }

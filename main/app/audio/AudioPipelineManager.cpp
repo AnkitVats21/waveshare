@@ -155,3 +155,15 @@ void AudioPipelineManager::setRtpRxInterrupted(bool interrupted) {
     if (m_rtp_rx) m_rtp_rx->setInterrupted(interrupted);
 #endif
 }
+
+void AudioPipelineManager::pauseSpeaker() {
+    if (m_speaker_task) {
+        m_speaker_task->pauseHardware();
+    }
+}
+
+void AudioPipelineManager::resumeSpeaker() {
+    if (m_speaker_task) {
+        m_speaker_task->resumeHardware();
+    }
+}

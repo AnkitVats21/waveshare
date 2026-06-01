@@ -195,6 +195,7 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
     }
 
     heap_caps_free(i2s_buff);
+    esp_task_wdt_delete(nullptr);
     xSemaphoreGive(m_feed_done);
     vTaskDelete(nullptr);
 }
@@ -221,8 +222,20 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     auto &bm = BufferManager::getInstance();
 
     while (m_task_flag) {
+        if (!m_hw_valid) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            esp_task_wdt_reset();
+            continue;
+        }
+
         afe_fetch_result_t *res = m_afe_handle->fetch(afe_data);
         if (!res || res->ret_value == ESP_FAIL) {
+            if (!m_hw_valid) {
+                // If hardware is paused, this is a transient starvation. Skip and retry.
+                vTaskDelay(pdMS_TO_TICKS(10));
+                esp_task_wdt_reset();
+                continue;
+            }
             ESP_LOGE(TAG, "AFE fetch error");
             break;
         }
@@ -276,6 +289,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     }
 
     ESP_LOGI(TAG, "detectTask exiting");
+    esp_task_wdt_delete(nullptr);
     xSemaphoreGive(m_detect_done);
     vTaskDelete(nullptr);
 }

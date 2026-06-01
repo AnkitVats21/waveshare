@@ -132,10 +132,14 @@ void GeminiProtocolTask::websocketEventHandler(void *handler_args, esp_event_bas
             
         case WEBSOCKET_EVENT_DISCONNECTED:
             LOGW_NET("Gemini Live Engine: Connection lost.");
+            // Publish emergency recovery event to restore 16kHz VAD listening state instantly
+            EventBus::getInstance().publish(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED, 0);
             break;
             
         case WEBSOCKET_EVENT_ERROR:
             LOGE_NET("Gemini Live Engine: Hardware Socket Error encountered.");
+            // Publish emergency recovery event to restore 16kHz VAD listening state instantly
+            EventBus::getInstance().publish(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED, 0);
             break;
     }
 }
@@ -284,6 +288,32 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
         return;
     }
 
+    cJSON* errorObj = cJSON_GetObjectItem(root, "error");
+    if (errorObj) {
+        cJSON* codeObj = cJSON_GetObjectItem(errorObj, "code");
+        cJSON* messageObj = cJSON_GetObjectItem(errorObj, "message");
+        cJSON* statusObj = cJSON_GetObjectItem(errorObj, "status");
+
+        int code = codeObj ? codeObj->valueint : 0;
+        const char* message = messageObj ? messageObj->valuestring : "Unknown error";
+        const char* status = statusObj ? statusObj->valuestring : "UNKNOWN";
+
+        ESP_LOGE("GeminiError", "==================================================");
+        ESP_LOGE("GeminiError", "!!! GEMINI API SERVER ERROR !!!");
+        ESP_LOGE("GeminiError", "Status:  %s", status);
+        ESP_LOGE("GeminiError", "Code:    %d", code);
+        ESP_LOGE("GeminiError", "Message: %s", message);
+        if (code == 429) {
+            ESP_LOGE("GeminiError", "--------------------------------------------------");
+            ESP_LOGE("GeminiError", "--> WARNING: You are being rate-limited by Google AI Studio!");
+            ESP_LOGE("GeminiError", "--> Please wait a moment before resuming conversation.");
+        }
+        ESP_LOGE("GeminiError", "==================================================");
+
+        // Failsafe recovery: instantly reset hardware out of 24kHz mode and restore VAD listening
+        EventBus::getInstance().publish(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED, 0);
+    }
+
     cJSON* serverContent = cJSON_GetObjectItem(root, "serverContent");
     if (serverContent) {
         
@@ -332,24 +362,10 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
                                 size_t written = 0;
                                 if (mbedtls_base64_decode(m_static_pcm_scratch_arena, pcm_out_len, &written, 
                                                          reinterpret_cast<const unsigned char*>(base64_pcm), b64_len) == 0) {
-                                    // Gemini outputs 24kHz mono PCM. Resample to 16kHz before pushing to SPK_RX_BUF.
-                                    int src_samples = written / sizeof(int16_t);
-                                    const int16_t* src_buf = reinterpret_cast<const int16_t*>(m_static_pcm_scratch_arena);
-                                    
-                                    int max_dest_samples = STATIC_PCM_ARENA_MAX_SIZE / sizeof(int16_t);
-                                    int16_t* dest_buf = reinterpret_cast<int16_t*>(m_static_pcm_downsampled_arena);
-                                    int out_idx = 0;
-                                    
-                                    for (int i = 0; i < src_samples - 2; i += 3) {
-                                        if (out_idx + 1 < max_dest_samples) {
-                                            dest_buf[out_idx++] = src_buf[i];
-                                            dest_buf[out_idx++] = (int16_t)(((int32_t)src_buf[i+1] + (int32_t)src_buf[i+2]) >> 1);
-                                        }
-                                    }
-                                    
-                                    size_t dest_bytes = out_idx * sizeof(int16_t);
-                                    if (dest_bytes > 0) {
-                                        BufferManager::getInstance().send(Buffers::SPK_RX_BUF, dest_buf, dest_bytes, pdMS_TO_TICKS(20));
+                                    // Native 24kHz Playback (Zero Downsampling Overhead!):
+                                    // We push the decoded 24kHz PCM directly to the speaker queue.
+                                    if (written > 0) {
+                                        BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20));
                                         
                                         // Update activity timeout supervisor
                                         AudioService::getInstance().updateActivity();

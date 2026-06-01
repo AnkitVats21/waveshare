@@ -129,6 +129,53 @@ esp_err_t AudioHal::reinit(uint32_t sample_rate) {
   return res;
 }
 
+esp_err_t AudioHal::setHardwareSampleRate(uint32_t sample_rate) {
+  if (!m_initialized) return ESP_FAIL;
+
+  // 1. Digitally mute playback to prevent any pops/clicks during clock switch
+  esp_codec_dev_set_out_mute(m_play_dev, true);
+  vTaskDelay(pdMS_TO_TICKS(15)); // PA discharges
+
+  // 2. Close codec streams to cleanly release I2S locks & stop active DMA (automatically disables I2S channels!)
+  esp_codec_dev_close(m_record_dev);
+  esp_codec_dev_close(m_play_dev);
+
+  // 3. Reconfigure physical clock registers (zero heap allocations!)
+  i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
+  esp_err_t ret = i2s_channel_reconfig_std_clock(m_tx_handle, &clk_cfg);
+  ret |= i2s_channel_reconfig_std_clock(m_rx_handle, &clk_cfg);
+
+  // 4. Re-open codec streams with the new sample rate (automatically re-enables I2S channels!)
+  // Crucial: play_fs must match the hardware's 2-channel 32-bit slot width configured on boot.
+  // Mismatches slow down physical I2S clocks, causing slow, low-pitch audio and watchdog triggers.
+  esp_codec_dev_sample_info_t record_fs = {};
+  record_fs.sample_rate = sample_rate;
+  record_fs.channel = 2; // Verified ES7210 32-bit stereo dual-interleaved configuration
+  record_fs.bits_per_sample = 32;
+  esp_codec_dev_open(m_record_dev, &record_fs);
+
+  esp_codec_dev_sample_info_t play_fs = {};
+  play_fs.sample_rate = sample_rate;
+  play_fs.channel = 2; // Keep verified stereo configuration
+  play_fs.bits_per_sample = 32; // Keep verified 32-bit width
+  esp_codec_dev_open(m_play_dev, &play_fs);
+
+  // Re-apply record volume and play volume
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3), (float)m_record_volume);
+  esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
+
+  // 5. Unmute playback (clocks are locked stably now!)
+  vTaskDelay(pdMS_TO_TICKS(35));
+  esp_codec_dev_set_out_mute(m_play_dev, false);
+
+  m_sample_rate = sample_rate;
+  ESP_LOGI(TAG, "I2S hardware clock and codec states successfully switched to %lu Hz", (unsigned long)sample_rate);
+  return ret;
+}
+
 // ============================================================================
 // Private: I2S STD initialization (matches verified Waveshare demo BSP)
 //

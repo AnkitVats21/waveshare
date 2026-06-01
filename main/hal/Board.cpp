@@ -91,6 +91,24 @@ esp_err_t Board::reinitAudio(uint32_t sample_rate) {
   return m_audio.reinit(sample_rate);
 }
 
+esp_err_t Board::setHardwareSampleRate(uint32_t sample_rate) {
+  if (!m_initialized) {
+    ESP_LOGE(TAG, "Cannot setHardwareSampleRate: Board not initialized");
+    return ESP_FAIL;
+  }
+
+  if (m_sample_rate == sample_rate) {
+    return ESP_OK;
+  }
+
+  ESP_LOGI(TAG, "Dynamic Clock Switch: Changing rate to %lu Hz...", (unsigned long)sample_rate);
+  esp_err_t ret = m_audio.setHardwareSampleRate(sample_rate);
+  if (ret == ESP_OK) {
+    m_sample_rate = sample_rate;
+  }
+  return ret;
+}
+
 esp_err_t Board::setRecordGain(float db_value, bool force) {
   if (!m_initialized) {
     ESP_LOGE(TAG, "Cannot setRecordGain: Board not initialized");

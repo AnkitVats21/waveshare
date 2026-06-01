@@ -54,6 +54,7 @@ private:
   float    m_mic_gain         = 80.0f;
   uint64_t m_last_activity_ms = 0;
   bool     m_session_active   = false;
+  volatile bool m_turn_complete_pending = false;
 
   static constexpr const char *TAG = "AudioSvc";
 };

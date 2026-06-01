@@ -34,9 +34,16 @@ public:
    */
   void stop();
 
+  /**
+   * @brief Pause/resume physical speaker playback calls during clock switches
+   */
+  void pauseHardware()  { m_hw_valid = false; }
+  void resumeHardware() { m_hw_valid = true;  }
+
 private:
   TaskHandle_t m_task_handle;
   volatile bool m_is_running;
+  volatile bool m_hw_valid = true;
 
   struct TaskParam {
     SpeakerPlaybackTask* self;
