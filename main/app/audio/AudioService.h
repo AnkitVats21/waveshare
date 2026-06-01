@@ -51,7 +51,7 @@ private:
   Board                *m_board    = nullptr;
 
   bool     m_initialized      = false;
-  float    m_mic_gain         = 80.0f;
+  float    m_mic_gain         = 60.0f;
   uint64_t m_last_activity_ms = 0;
   bool     m_session_active   = false;
   volatile bool m_turn_complete_pending = false;

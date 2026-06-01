@@ -81,7 +81,7 @@ bool WakeWordDetector::begin() {
     const char  *input_format = m_feed_source->feedInputFormat();
     afe_config_t *afe_config  = afe_config_init(input_format, models,
                                                  AFE_TYPE_SR, AFE_MODE_LOW_COST);
-    afe_config->ns_init  = false;
+    afe_config->ns_init  = true;
     afe_config->vad_init = true; // needed for VAD-based streaming timeout
 
     // 3. Create AFE handle + data
