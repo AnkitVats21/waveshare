@@ -4,7 +4,9 @@
 #include "common/AppLogger.h"
 #include "app/event/EventBus.h"
 #include "common/events/app_events.h"
+#include "app/assistant/AssistantEvents.h"
 #include "sdkconfig.h"
+
 #include "cJSON.h"
 #include "mbedtls/base64.h"
 #include "services/BufferManager.h"
@@ -99,11 +101,14 @@ GeminiProtocolTask& GeminiProtocolTask::getInstance() {
 void GeminiProtocolTask::websocketEventHandler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_websocket_event_data_t *data = (esp_websocket_event_data_t *)event_data;
     auto* self = static_cast<GeminiProtocolTask*>(handler_args);
+    ConnectionState previous_state = self->m_state.load(std::memory_order_relaxed);
 
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED:
             LOGI_NET("Gemini Live Engine: Handshake established.");
+            self->m_state.store(ConnectionState::CONNECTED, std::memory_order_relaxed);
             self->transmitSetupHandshake();
+            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WS_CONNECTED, 0);
             break;
             
         case WEBSOCKET_EVENT_DATA:
@@ -132,56 +137,41 @@ void GeminiProtocolTask::websocketEventHandler(void *handler_args, esp_event_bas
             
         case WEBSOCKET_EVENT_DISCONNECTED:
             LOGW_NET("Gemini Live Engine: Connection lost.");
-            // Publish emergency recovery event to restore 16kHz VAD listening state instantly
-            EventBus::getInstance().publish(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED, 0);
+            self->m_state.store(ConnectionState::DISCONNECTED, std::memory_order_relaxed);
+            if (previous_state == ConnectionState::CONNECTING) {
+                LOGW_NET("Gemini Live Engine: WebSocket disconnected before handshake finished.");
+                EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WS_CONNECT_FAILED, 0);
+            } else {
+                EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WS_CLOSED, 0);
+            }
             break;
             
         case WEBSOCKET_EVENT_ERROR:
             LOGE_NET("Gemini Live Engine: Hardware Socket Error encountered.");
-            // Publish emergency recovery event to restore 16kHz VAD listening state instantly
-            EventBus::getInstance().publish(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED, 0);
+            self->m_state.store(ConnectionState::ERROR_STATE, std::memory_order_relaxed);
+            if (previous_state == ConnectionState::CONNECTING) {
+                EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WS_CONNECT_FAILED, 0);
+            } else {
+                EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::TRANSPORT_ERROR, 0);
+            }
             break;
     }
 }
 
 void GeminiProtocolTask::run() {
     LOGI_NET("GeminiProtocolTask active on Core %d", xPortGetCoreID());
-
-    std::string ws_uri = GEMINI_LIVE_BASE_URL;
-#ifdef CONFIG_GEMINI_API_KEY
-    ws_uri += CONFIG_GEMINI_API_KEY;
-#else
-    LOGE_NET("API Key missing! Define CONFIG_GEMINI_API_KEY in Kconfig.");
-    vTaskDelete(nullptr);
-    return;
-#endif
-
-    esp_websocket_client_config_t ws_cfg = {};
-    ws_cfg.uri = ws_uri.c_str();
-    ws_cfg.buffer_size = 4096; // Transient chunk fragmentation framing buffer size to prevent DRAM exhaustion
-    ws_cfg.reconnect_timeout_ms = 10000; // Silence reconnection timeout warnings
-    ws_cfg.network_timeout_ms = 10000;   // Silence network timeout warnings
-    ws_cfg.task_stack = 10240; // Allocate 10KB stack for websocket_task to prevent stack overflow from callbacks
-    
-    // Toggleable Secure TLS Verification (Production) vs Direct-Trust Testing (No Verification)
-#ifdef USE_PRODUCTION_SECURE_TLS
-    ws_cfg.cert_pem = GLOBAL_SIGN_R3_CA_PEM;
-    ws_cfg.crt_bundle_attach = nullptr;
-#else
-    // Skip server certificate verification (requires CONFIG_ESP_TLS_INSECURE=y 
-    // and CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y in sdkconfig)
-    ws_cfg.cert_pem = nullptr;
-    ws_cfg.crt_bundle_attach = nullptr;
-#endif
-
-    m_client = esp_websocket_client_init(&ws_cfg);
-    esp_websocket_register_events(m_client, WEBSOCKET_EVENT_ANY, websocketEventHandler, this);
     time_t now;
     time(&now);
     LOGI_NET("Current epoch=%lld", (long long)now);
-    esp_websocket_client_start(m_client);
+    m_state.store(ConnectionState::DISCONNECTED, std::memory_order_relaxed);
+
 
     while (m_running) {
+        if (m_connect_requested.load(std::memory_order_relaxed) &&
+            m_state.load(std::memory_order_relaxed) != ConnectionState::CONNECTED &&
+            m_state.load(std::memory_order_relaxed) != ConnectionState::CONNECTING) {
+            startClientConnection();
+        }
         vTaskDelay(pdMS_TO_TICKS(100)); // Relinquish CPU context slice
     }
 
@@ -234,7 +224,10 @@ void GeminiProtocolTask::transmitToolResponse(const char* call_id, const char* j
 
 void GeminiProtocolTask::transmitAudioUplink(const char* base64_pcm) {
     if (!m_client) {
-        LOGW_NET("transmitAudioUplink: m_client is null");
+        static int client_not_ready_count = 0;
+        if (++client_not_ready_count % 25 == 1) {
+            LOGW_NET("transmitAudioUplink: websocket client handle not ready yet (count=%d)", client_not_ready_count);
+        }
         return;
     }
     if (!esp_websocket_client_is_connected(m_client)) {
@@ -314,8 +307,29 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
         }
         ESP_LOGE("GeminiError", "==================================================");
 
-        // Failsafe recovery: instantly reset hardware out of 24kHz mode and restore VAD listening
-        EventBus::getInstance().publish(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED, 0);
+        if (code == 429) {
+            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::QUOTA_EXCEEDED, code);
+        } else {
+            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::SERVER_ERROR, code);
+        }
+    }
+
+    cJSON* goAwayObj = cJSON_GetObjectItem(root, "goAway");
+    if (goAwayObj) {
+        cJSON* timeLeftObj = cJSON_GetObjectItem(goAwayObj, "timeLeft");
+        const char* time_left = timeLeftObj ? timeLeftObj->valuestring : "unknown";
+
+        LOGW_NET("Gemini Live Engine: Received 'goAway' signal from server (timeLeft: %s).", time_left);
+        LOGW_NET("Gemini Live Engine: Initiating graceful socket closure from our end...");
+
+        m_state.store(ConnectionState::GOING_AWAY, std::memory_order_relaxed);
+
+        EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::GEMINI_GO_AWAY, 0);
+
+        // 2. Send standard WebSocket Close Frame (opcode 0x08) to the server
+        if (m_client) {
+            esp_websocket_client_close(m_client, pdMS_TO_TICKS(1500));
+        }
     }
 
     cJSON* serverContent = cJSON_GetObjectItem(root, "serverContent");
@@ -348,8 +362,7 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
                         // Fire ASSISTANT_TALKING event on the absolute first audio packet
                         if (!assistant_currently_talking) {
                             assistant_currently_talking = true;
-                            // Defer VAD silence counters locally; turn on Speaking LEDs
-                            EventBus::getInstance().publish(APP_EVENTS, AppEvent::ASSISTANT_TALKING, 0);
+                            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_AUDIO_STARTED, 0);
                         }
 
                         cJSON* data = cJSON_GetObjectItem(inlineData, "data");
@@ -387,7 +400,7 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
         if (turnComplete && cJSON_IsTrue(turnComplete)) {
             assistant_currently_talking = false;
             LOGI_NET("Assistant turn complete");
-            EventBus::getInstance().publish(APP_EVENTS, AppEvent::ASSISTANT_TURN_COMPLETE, 0);
+            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE, 0);
         }
 
         // C. Parse Interruption Signal (Barge-In detected by server-side VAD)
@@ -396,7 +409,7 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
             assistant_currently_talking = false;
             LOGI_NET("Server detected barge-in — flushing speaker buffer");
             BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-            EventBus::getInstance().publish(APP_EVENTS, AppEvent::ASSISTANT_TURN_COMPLETE, 0);
+            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE, 0);
         }
         
         // --- 2. Asynchronous Hardware Tool Call Processing ---
@@ -427,4 +440,109 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
     
     cJSON_Delete(root);
     payload[length] = old_char; // Restore standard string profile state
+}
+
+void GeminiProtocolTask::connect() {
+    ConnectionState current_state = m_state.load(std::memory_order_relaxed);
+
+    if (current_state == ConnectionState::CONNECTED ||
+        current_state == ConnectionState::CONNECTING) {
+        LOGI_NET("Gemini Live Engine: Bypassing connect, already state %d", (int)current_state);
+        return;
+    }
+
+    m_connect_requested.store(true, std::memory_order_relaxed);
+    if (!ensureClientInitialized()) {
+        LOGE_NET("Gemini Live Engine: WebSocket client initialization failed. Connect request cannot proceed.");
+        EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WS_CONNECT_FAILED, 0);
+        return;
+    }
+
+    if (!m_client) {
+        LOGW_NET("Gemini Live Engine: Connect requested before websocket client initialization completed. Queuing request...");
+        return;
+    }
+
+    if (!startClientConnection()) {
+        EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WS_CONNECT_FAILED, 0);
+    }
+}
+
+void GeminiProtocolTask::closeConnection() {
+    ConnectionState current_state = m_state.load(std::memory_order_relaxed);
+    m_connect_requested.store(false, std::memory_order_relaxed);
+
+    if (current_state != ConnectionState::DISCONNECTED) {
+        LOGI_NET("Gemini Live Engine: Closing connection...");
+
+        if (m_client) {
+            m_state.store(ConnectionState::DISCONNECTED, std::memory_order_relaxed);
+            esp_websocket_client_close(m_client, pdMS_TO_TICKS(1000));
+            esp_websocket_client_stop(m_client);
+        }
+    }
+}
+
+bool GeminiProtocolTask::startClientConnection() {
+    if (!m_client) {
+        LOGE_NET("Cannot start Gemini websocket connection because the client handle is null.");
+        return false;
+    }
+
+    LOGI_NET("Gemini Live Engine: Connecting to WebSocket...");
+    m_state.store(ConnectionState::CONNECTING, std::memory_order_relaxed);
+    esp_websocket_client_stop(m_client);
+    esp_err_t start_err = esp_websocket_client_start(m_client);
+    if (start_err != ESP_OK) {
+        LOGE_NET("esp_websocket_client_start failed with err=0x%x", (unsigned)start_err);
+        m_state.store(ConnectionState::ERROR_STATE, std::memory_order_relaxed);
+        return false;
+    }
+
+    m_connect_requested.store(false, std::memory_order_relaxed);
+    return true;
+}
+
+bool GeminiProtocolTask::ensureClientInitialized() {
+    std::lock_guard<std::mutex> lock(m_client_mutex);
+    if (m_client) {
+        return true;
+    }
+
+    m_ws_uri = GEMINI_LIVE_BASE_URL;
+#ifdef CONFIG_GEMINI_API_KEY
+    if (std::strlen(CONFIG_GEMINI_API_KEY) == 0) {
+        LOGE_NET("CONFIG_GEMINI_API_KEY is defined but empty. Gemini websocket cannot be started.");
+        return false;
+    }
+    m_ws_uri += CONFIG_GEMINI_API_KEY;
+#else
+    LOGE_NET("CONFIG_GEMINI_API_KEY is missing. Define it in menuconfig/Kconfig before using Gemini Live.");
+    return false;
+#endif
+
+    esp_websocket_client_config_t ws_cfg = {};
+    ws_cfg.uri = m_ws_uri.c_str();
+    ws_cfg.buffer_size = 4096;
+    ws_cfg.reconnect_timeout_ms = 10000;
+    ws_cfg.network_timeout_ms = 10000;
+    ws_cfg.task_stack = 10240;
+
+#ifdef USE_PRODUCTION_SECURE_TLS
+    ws_cfg.cert_pem = GLOBAL_SIGN_R3_CA_PEM;
+    ws_cfg.crt_bundle_attach = nullptr;
+#else
+    ws_cfg.cert_pem = nullptr;
+    ws_cfg.crt_bundle_attach = nullptr;
+#endif
+
+    m_client = esp_websocket_client_init(&ws_cfg);
+    if (!m_client) {
+        LOGE_NET("Failed to initialize Gemini websocket client handle.");
+        return false;
+    }
+
+    esp_websocket_register_events(m_client, WEBSOCKET_EVENT_ANY, websocketEventHandler, this);
+    LOGI_NET("Gemini websocket client initialized successfully.");
+    return true;
 }

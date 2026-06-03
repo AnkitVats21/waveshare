@@ -31,6 +31,7 @@ set(srcs
             "app/audio/AudioPipelineManager.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
+            "app/audio/AudioAlertPlayer.cpp"
             "app/mqtt/MqttTask.cpp"
             "app/input/KeyService.cpp"
 
@@ -40,6 +41,10 @@ set(srcs
             # Event and LED Services
             "app/event/EventBus.cpp"
             "app/led/LedService.cpp"
+
+            # Assistant Session Control
+            "app/assistant/AssistantSessionService.cpp"
+
 
             # Services
             "services/BufferManager.cpp"
@@ -100,10 +105,12 @@ idf_component_register(
             "app/wake_word"
             "app/led"
             "app/event"
+            "app/assistant"
             # Services / common
             "services"
             "common"
             "common/events"
+
             # HAL interfaces
             "hal/interfaces"
             # Gemini Integration

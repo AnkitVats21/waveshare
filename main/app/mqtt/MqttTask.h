@@ -58,6 +58,7 @@ private:
     float    mic_volume;
     uint32_t sample_rate;
     bool     mic_enabled;
+    bool     dynamic_sample_rate_enabled;
     struct { uint8_t r, g, b; } led_color;
   } m_cache{};
 };

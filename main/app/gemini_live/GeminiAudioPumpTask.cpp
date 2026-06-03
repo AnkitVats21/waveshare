@@ -1,5 +1,6 @@
 #include "GeminiAudioPumpTask.h"
 #include "GeminiProtocolTask.h"
+#include "GeminiLiveService.h"
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
 #include "app/audio/MicCapture.h"
@@ -42,34 +43,39 @@ void GeminiAudioPumpTask::run() {
 bool GeminiAudioPumpTask::processUplink() {
     auto& bm = BufferManager::getInstance();
     size_t chunk_size = 0;
-    
+
     // Non-blocking read from Mic capture buffer (returns 1024 bytes usually)
     uint8_t* pcm_data = static_cast<uint8_t*>(
         bm.receive(Buffers::MIC_TX_BUF, &chunk_size, 0, 1024));
 
     if (pcm_data != nullptr) {
         static int pump_read_count = 0;
-        bool streaming = WakeWordDetector::getInstance().isStreamingActive();
-        
-        if (++pump_read_count % 100 == 1) {
-            LOGI_AUDIO("PumpTask: read #%d, chunk=%d bytes, streaming=%d", 
-                       pump_read_count, (int)chunk_size, streaming ? 1 : 0);
+        bool streaming    = WakeWordDetector::getInstance().isStreamingActive();
+        // ── KEY GATE ──────────────────────────────────────────────────────────
+        // Only transmit when the WebSocket is fully connected.
+        // While the socket is still handshaking (Connecting state) we drain the
+        // ring buffer silently so it never overflows, but we do NOT attempt to
+        // send anything — this eliminates the "m_client is null" warning storm.
+        bool ws_connected = GeminiProtocolTask::getInstance().isConnected();
+
+        if (++pump_read_count % 200 == 1) {
+            LOGI_AUDIO("PumpTask: read #%d, chunk=%d bytes, streaming=%d, ws=%d",
+                       pump_read_count, (int)chunk_size,
+                       streaming ? 1 : 0, ws_connected ? 1 : 0);
         }
-        
-        // Only transmit if the local wake word session is active and streaming (user is speaking)
-        if (streaming) {
+
+        // Transmit only when wake-word session is active AND WebSocket is live
+        if (streaming && ws_connected) {
             size_t written = 0;
             // Transcode directly into persistent external PSRAM arena (zero heap allocation!)
-            if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(m_static_b64_arena), 2048, &written, pcm_data, chunk_size) == 0) {
-                // Ensure null termination of base64 string
+            if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(m_static_b64_arena),
+                                      2048, &written, pcm_data, chunk_size) == 0) {
                 m_static_b64_arena[written] = '\0';
-                
-                // Pass directly to ProtocolTask for transmission
                 GeminiProtocolTask::getInstance().transmitAudioUplink(m_static_b64_arena);
             }
         }
-        
-        // Always discard/return item to prevent leaks and eliminate ring buffer latency build-up
+
+        // Always return the item — prevents ring buffer leaks regardless of WS state
         bm.returnItem(Buffers::MIC_TX_BUF, pcm_data);
         return true;
     }

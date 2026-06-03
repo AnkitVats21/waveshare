@@ -3,6 +3,8 @@
 #include "common/IService.h"
 #include "common/TaskBase.h"
 #include "common/led_types.h"
+#include "app/assistant/AssistantVisualState.h"
+
 #include <mutex>
 
 class Board;
@@ -39,6 +41,7 @@ private:
   ~LedService() = default;
 
   void applyEvent(int32_t id, void *event_data);
+  void applyVisualState(AssistantVisualState state);
 
   Board *m_board         = nullptr;
   bool   m_initialized   = false;

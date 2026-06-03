@@ -54,15 +54,11 @@ bool Board::begin() {
     return false;
 
   // Power-on PA enable and peripheral power rails via IO expander pins 0, 1, 5, 6, 8
-  m_io.setDirection(IO_EXPANDER_PIN_NUM_0 | IO_EXPANDER_PIN_NUM_1 |
-                    IO_EXPANDER_PIN_NUM_5 | IO_EXPANDER_PIN_NUM_6 |
-                    IO_EXPANDER_PIN_NUM_8,
-                    true /* output */);
-  esp_io_expander_set_level(m_io.getRawHandle(),
-                            IO_EXPANDER_PIN_NUM_0 | IO_EXPANDER_PIN_NUM_1 |
-                            IO_EXPANDER_PIN_NUM_5 | IO_EXPANDER_PIN_NUM_6 |
-                            IO_EXPANDER_PIN_NUM_8,
-                            1);
+  uint16_t mask = IO_EXPANDER_PIN_NUM_0 | IO_EXPANDER_PIN_NUM_1 |
+                  IO_EXPANDER_PIN_NUM_5 | IO_EXPANDER_PIN_NUM_6 |
+                  IO_EXPANDER_PIN_NUM_8;
+  m_io.setDirection(mask, true /* output */);
+  m_io.setOutputMask(mask, true /* HIGH */);
   vTaskDelay(pdMS_TO_TICKS(200)); // Allow power rails to stabilize
 
   // 3. Audio HAL — I2S + ES7210/ES8311 codec initialization
@@ -78,7 +74,12 @@ bool Board::begin() {
   m_current_mic_gain = (float)m_record_volume; // Sync stored gain with initialized gain
 
   // 4. RGB LED strip — no dependencies, safe to init last
-  m_leds.init((gpio_num_t)LED_STRIP_GPIO_PIN, LED_STRIP_LED_COUNT);
+  esp_err_t led_ret = m_leds.init((gpio_num_t)LED_STRIP_GPIO_PIN, LED_STRIP_LED_COUNT);
+  if (led_ret != ESP_OK) {
+    ESP_LOGE(TAG, "LED strip initialization failed on GPIO %d: %s",
+             (int)LED_STRIP_GPIO_PIN, esp_err_to_name(led_ret));
+    return false;
+  }
 
   m_initialized = true;
   ESP_LOGI(TAG, "Board hardware ready.");

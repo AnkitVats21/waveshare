@@ -62,6 +62,18 @@ esp_err_t IoExpander::setDirection(uint16_t mask, bool is_output) {
   return writeReg16(REG_CONFIG_PORT0, m_config_state);
 }
 
+esp_err_t IoExpander::setOutputMask(uint16_t mask, bool level) {
+  if (!m_dev_handle)
+    return ESP_ERR_INVALID_STATE;
+
+  if (level) {
+    m_output_state |= mask;
+  } else {
+    m_output_state &= ~mask;
+  }
+  return writeReg16(REG_OUTPUT_PORT0, m_output_state);
+}
+
 esp_err_t IoExpander::writeReg16(uint8_t reg, uint16_t value) {
   uint8_t data[3];
   data[0] = reg;

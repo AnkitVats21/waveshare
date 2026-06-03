@@ -37,6 +37,7 @@ struct GlobalSystemSettings {
   // Audio hardware
   uint32_t sample_rate   = 16000;
   bool     mic_enabled   = true;
+  bool     dynamic_sample_rate_enabled = true;
 
   // FreeRTOS task tuning
   BaseType_t network_core_id    = 0;

@@ -45,8 +45,9 @@ public:
   template <typename T>
   esp_err_t subscribe(esp_event_base_t base, T id,
                       esp_event_handler_t handler, void *arg) {
-    return esp_event_handler_register_with(custom_loop, base,
-                                           static_cast<int32_t>(id),
-                                           handler, arg);
+    return esp_event_handler_instance_register_with(custom_loop, base,
+                                                    static_cast<int32_t>(id),
+                                                    handler, arg,
+                                                    nullptr);
   }
 };

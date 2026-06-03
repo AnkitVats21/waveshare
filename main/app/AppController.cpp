@@ -6,7 +6,9 @@
 #include "app/gemini_live/GeminiLiveService.h"
 #include "app/gemini_live/gemini_skills_generated.h"
 #include "app/led/LedService.h"
+#include "app/assistant/AssistantSessionService.h"
 #include "app/mqtt/MqttTask.h"
+
 #include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
@@ -51,16 +53,19 @@ bool AppController::onStart() {
   LedService::getInstance().begin(&Board::getInstance(),
                                   &EventBus::getInstance());
 
+  // Start Assistant Session controller
+  AssistantSessionService::getInstance().onStart();
+
   // Subscribe to Wi-Fi lifecycle events via IService helper
   subscribeEvent(WIFI_SYSTEM_EVENTS, WifiEvent::CONNECTED);
   subscribeEvent(WIFI_SYSTEM_EVENTS, WifiEvent::DISCONNECTED);
+
   
   // Subscribe to Gemini Tool Calls
   subscribeEvent(APP_EVENTS, AppEvent::GEMINI_TOOL_CALL);
 
-  // Signal "not yet connected" with a red LED
-  LedEventData init_led = {LedMode::SOLID, RED_LED, 0, 0};
-  EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND, init_led);
+  // Bootstrap Audio at boot time so wake word works offline
+  bootstrapAudio();
 
 #ifdef CONFIG_WAVESHARE_WAKEWORD_ENABLE
   // Wake-word detector starts before WiFi — needs Board audio + AudioService listener
@@ -96,10 +101,6 @@ void AppController::onEvent(esp_event_base_t base, int32_t id, void *data) {
       // (This is a stub for Production TLS verification. Uncomment this call when enabling USE_PRODUCTION_SECURE_TLS)
       // initialize_sntp_and_set_time();
 
-      LedEventData green_led = {LedMode::SOLID, GREEN_LED, 0, 0};
-      EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND,
-                                      green_led);
-
       // Setup network logging
       auto &ctx = SystemContext::get();
       AsyncNetLogger::getInstance().init(ctx.settings.server_ip, 5006);
@@ -107,27 +108,17 @@ void AppController::onEvent(esp_event_base_t base, int32_t id, void *data) {
       LogRouter::getInstance().setNetworkStreamingState(
           LogRouter::State::ROUTE_CONSOLE_AND_NETWORK);
 
-      bootstrapAudio();
-
-      LedEventData blue_blink = {LedMode::BLINK, BLUE_LED, 250, 2};
-      EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND,
-                                      blue_blink);
-      vTaskDelay(pdMS_TO_TICKS(1100));
+      // Publish availability event to the assistant session state machine
+      EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WIFI_AVAILABLE, 0);
 
       initMqtt();
-
-      LedEventData purple_blink = {LedMode::BLINK, PURPLE_LED, 250, 2};
-      EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND,
-                                      purple_blink);
-      vTaskDelay(pdMS_TO_TICKS(1100));
 
     } else if (id == static_cast<int32_t>(WifiEvent::DISCONNECTED)) {
       LOGW_WIFI("Network connection lost. Tearing down network services.");
       teardownNetworkServices();
 
-      LedEventData red_led = {LedMode::BLINK, RED_LED, 500, 0};
-      EventBus::getInstance().publish(APP_EVENTS, AppEvent::LED_COMMAND,
-                                      red_led);
+      // Publish lost event to the assistant session state machine
+      EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WIFI_LOST, 0);
     }
   } else if (base == APP_EVENTS) {
       if (id == static_cast<int32_t>(AppEvent::GEMINI_TOOL_CALL)) {

@@ -38,6 +38,7 @@ bool MqttTask::init(const GlobalSystemSettings &settings) {
   m_cache.mic_volume     = 70.0f;
   m_cache.sample_rate    = settings.sample_rate;
   m_cache.mic_enabled    = settings.mic_enabled;
+  m_cache.dynamic_sample_rate_enabled = settings.dynamic_sample_rate_enabled;
   m_cache.led_color      = {0, 80, 0};
   return start();
 }
@@ -153,7 +154,8 @@ void MqttTask::processIncomingData(esp_mqtt_event_handle_t event) {
         std::string val = line.substr(pos + 1);
 
         if (key == "speaker_volume" || key == "mic_volume" ||
-            key == "sample_rate" || key == "mic_enabled") {
+            key == "sample_rate" || key == "mic_enabled" ||
+            key == "dynamic_sample_rate_enabled") {
           handleAudioConfig(key, val);
         } else if (key == "led_color") {
           handleLedConfig(val);
@@ -211,6 +213,13 @@ void MqttTask::handleAudioConfig(const std::string &key,
         m_cache.mic_enabled = enabled;
         AudioService::getInstance().setMicEnabled(enabled);
         ESP_LOGI(m_config.name, "Mic enabled set to %d", enabled);
+      }
+    } else if (key == "dynamic_sample_rate_enabled") {
+      bool enabled = (val == "1" || val == "true");
+      if (enabled != m_cache.dynamic_sample_rate_enabled) {
+        m_cache.dynamic_sample_rate_enabled = enabled;
+        AudioService::getInstance().setDynamicSampleRateEnabled(enabled);
+        ESP_LOGI(m_config.name, "Dynamic sample-rate switching set to %d", enabled);
       }
     }
   } catch (...) {
