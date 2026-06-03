@@ -1,7 +1,9 @@
 #include "app/led/LedService.h"
 #include "common/AppLogger.h"
 #include "common/events/app_events.h"
+#include "app/assistant/AssistantEvents.h"
 #include "esp_log.h"
+
 #include "hal/Board.h"
 #include <cmath>
 
@@ -41,8 +43,7 @@ bool LedService::onStart() {
   // IService::subscribeEvent routes all these events to onEvent()
   subscribeEvent(APP_EVENTS, AppEvent::LED_COMMAND);
   subscribeEvent(APP_EVENTS, AppEvent::LED_COLOR_UPDATE);
-  subscribeEvent(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED);
-  subscribeEvent(APP_EVENTS, AppEvent::STOP_STREAMING);
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::VISUAL_STATE_CHANGED);
 
   if (!this->start()) {
     ESP_LOGE(TAG, "Failed to start LedService thread");
@@ -57,8 +58,17 @@ bool LedService::onStart() {
 // ---------------------------------------------------------------------------
 // IService::onEvent — single dispatch point, no manual cast needed
 // ---------------------------------------------------------------------------
-void LedService::onEvent(esp_event_base_t /*base*/, int32_t id, void *data) {
-  applyEvent(id, data);
+void LedService::onEvent(esp_event_base_t base, int32_t id, void *data) {
+  if (base == ASSISTANT_EVENTS) {
+    if (id == static_cast<int32_t>(AssistantEvent::VISUAL_STATE_CHANGED)) {
+      if (data) {
+        auto visual_state = *static_cast<AssistantVisualState *>(data);
+        applyVisualState(visual_state);
+      }
+    }
+  } else {
+    applyEvent(id, data);
+  }
 }
 
 void LedService::applyEvent(int32_t id, void *event_data) {
@@ -84,21 +94,53 @@ void LedService::applyEvent(int32_t id, void *event_data) {
     }
     break;
 
-  case AppEvent::WAKE_WORD_DETECTED:
-    m_current_command = {LedMode::BREATH, {0, 100, 100}, 30, 0};
-    m_command_dirty   = true;
-    ESP_LOGI(TAG, "WakeWord: triggering BREATH animation");
-    break;
-
-  case AppEvent::STOP_STREAMING:
-    m_current_command = {LedMode::OFF, OFF_LED, 0, 0};
-    m_command_dirty   = true;
-    ESP_LOGI(TAG, "StopStreaming: LEDs OFF");
-    break;
-
   default:
     break;
   }
+}
+
+void LedService::applyVisualState(AssistantVisualState state) {
+  std::lock_guard<std::mutex> lock(m_mutex);
+
+  switch (state) {
+    case AssistantVisualState::Idle:
+      m_current_command = {LedMode::OFF, OFF_LED, 0, 0};
+      ESP_LOGI(TAG, "LED State: Idle (OFF)");
+      break;
+    case AssistantVisualState::Listening:
+      m_current_command = {LedMode::BREATH, GREEN_LED, 25, 0};
+      ESP_LOGI(TAG, "LED State: Listening (Green Breathe)");
+      break;
+    case AssistantVisualState::Connecting:
+      m_current_command = {LedMode::BLINK, BLUE_LED, 250, 0};
+      ESP_LOGI(TAG, "LED State: Connecting (Blue Blink)");
+      break;
+    case AssistantVisualState::Speaking:
+      m_current_command = {LedMode::RAINBOW, OFF_LED, 15, 0};
+      ESP_LOGI(TAG, "LED State: Speaking (Rainbow Cycle)");
+      break;
+    case AssistantVisualState::Thinking:
+      m_current_command = {LedMode::BREATH, BLUE_LED, 25, 0};
+      ESP_LOGI(TAG, "LED State: Thinking (Blue Breathe)");
+      break;
+    case AssistantVisualState::Offline:
+      m_current_command = {LedMode::SOLID, RED_LED, 0, 0};
+      ESP_LOGI(TAG, "LED State: Offline (Red Solid)");
+      break;
+    case AssistantVisualState::Recovering:
+      m_current_command = {LedMode::BLINK, ORANGE_LED, 300, 0};
+      ESP_LOGI(TAG, "LED State: Recovering (Orange Blink)");
+      break;
+    case AssistantVisualState::RateLimited:
+      m_current_command = {LedMode::BLINK, PURPLE_LED, 300, 0};
+      ESP_LOGI(TAG, "LED State: Rate Limited (Purple Blink)");
+      break;
+    case AssistantVisualState::Error:
+      m_current_command = {LedMode::BLINK, RED_LED, 250, 4};
+      ESP_LOGI(TAG, "LED State: Error (Red Blink x 4)");
+      break;
+  }
+  m_command_dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +150,19 @@ void LedService::run() {
   uint32_t step      = 0;
   bool     blink_state = false;
   float    breath_val  = 0.0f;
+  bool     warned_not_ready = false;
 
   while (m_running) {
+    if (!m_board || !m_board->isLedStripInitialized()) {
+      if (!warned_not_ready) {
+        ESP_LOGW(TAG, "LED strip is not initialized yet. Waiting before rendering assistant visual state.");
+        warned_not_ready = true;
+      }
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+    warned_not_ready = false;
+
     LedEventData cmd;
     bool dirty = false;
 
@@ -136,6 +189,7 @@ void LedService::run() {
 
     case LedMode::SOLID:
       m_board->setAllLedsColor(cmd.color.r, cmd.color.g, cmd.color.b);
+      m_board->refreshLeds();
       delay_ms = 200;
       break;
 
@@ -151,6 +205,7 @@ void LedService::run() {
       }
       if (blink_state) {
         m_board->setAllLedsColor(cmd.color.r, cmd.color.g, cmd.color.b);
+        m_board->refreshLeds();
       } else {
         m_board->clearLeds();
       }
@@ -167,6 +222,7 @@ void LedService::run() {
           (uint8_t)(cmd.color.r * factor),
           (uint8_t)(cmd.color.g * factor),
           (uint8_t)(cmd.color.b * factor));
+      m_board->refreshLeds();
 
       breath_val += 0.08f;
       if (breath_val >= M_PI) {

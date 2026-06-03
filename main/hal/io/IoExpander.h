@@ -44,6 +44,13 @@ public:
    */
   esp_err_t setDirection(uint16_t mask, bool is_output);
 
+  /**
+   * @brief Set the output level for a bitmask of pins.
+   * @param mask   16-bit pin mask
+   * @param level  true = HIGH, false = LOW
+   */
+  esp_err_t setOutputMask(uint16_t mask, bool level);
+
   // -- Board-level convenience wrappers --
 
   /** @brief Enable or disable the on-board power amplifier rail. */

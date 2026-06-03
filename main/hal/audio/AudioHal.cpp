@@ -88,12 +88,11 @@ esp_err_t AudioHal::deinit() {
 
   // 3. Disable + delete I2S channels
   if (m_tx_handle) {
-    i2s_channel_disable(m_tx_handle);
+    // Delete standard channel (no manual disable needed because esp_codec_dev_close already disabled it)
     i2s_del_channel(m_tx_handle);
     m_tx_handle = nullptr;
   }
   if (m_rx_handle) {
-    i2s_channel_disable(m_rx_handle);
     i2s_del_channel(m_rx_handle);
     m_rx_handle = nullptr;
   }

@@ -6,6 +6,9 @@
 #include "esp_heap_caps.h"
 #include <vector>
 #include <new>
+#include <atomic>
+#include <mutex>
+#include <string>
 
 // Custom Allocator to force std::vector dynamic reallocations directly into external 8MB PSRAM
 template <typename T>
@@ -40,8 +43,21 @@ public:
     void transmitToolResponse(const char* call_id, const char* json_result);
     void transmitAudioUplink(const char* base64_pcm);
     
-    bool isConnected() { return m_client != nullptr && esp_websocket_client_is_connected(m_client); }
+    enum class ConnectionState {
+        DISCONNECTED,
+        CONNECTING,
+        CONNECTED,
+        GOING_AWAY,
+        ERROR_STATE
+    };
+
+    ConnectionState getConnectionState() const { return m_state.load(std::memory_order_relaxed); }
+    bool isConnected() { return getConnectionState() == ConnectionState::CONNECTED; }
+    void connect();
+    void closeConnection();
+    void forceReconnect() { connect(); }
     void sendTextDirect(const char* text);
+
 
 protected:
     void run() override;
@@ -50,12 +66,18 @@ private:
     GeminiProtocolTask(const Config& cfg);
     ~GeminiProtocolTask() = default;
 
+    bool ensureClientInitialized();
     void transmitSetupHandshake();
     void processIncomingFrame(char* payload, size_t length);
 
     static void websocketEventHandler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
+    bool startClientConnection();
 
     esp_websocket_client_handle_t m_client = nullptr;
+    std::atomic<ConnectionState> m_state{ConnectionState::DISCONNECTED};
+    std::atomic<bool> m_connect_requested{false};
+    std::mutex m_client_mutex;
+    std::string m_ws_uri;
 
     // Persistent Zero-Allocation Arenas for Audio & Skill Tool execution
     uint8_t* m_static_pcm_scratch_arena = nullptr;

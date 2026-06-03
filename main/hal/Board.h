@@ -69,6 +69,7 @@ public:
   }
   void refreshLeds() { m_leds.refresh(); }
   void clearLeds() { m_leds.clear(); }
+  bool isLedStripInitialized() const { return m_leds.isInitialized(); }
 
   // -- Audio orchestration APIs (delegate to AudioHal) -----------------------
 

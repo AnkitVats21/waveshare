@@ -26,6 +26,7 @@ public:
 
   bool reinit(uint32_t sample_rate);
   void setMicEnabled(bool enabled);
+  void setDynamicSampleRateEnabled(bool enabled);
   bool isInitialized() const { return m_initialized; }
 
   // IService interface
@@ -55,6 +56,9 @@ private:
   uint64_t m_last_activity_ms = 0;
   bool     m_session_active   = false;
   volatile bool m_turn_complete_pending = false;
+  uint32_t m_current_hardware_rate = 16000;
+  bool     m_assistant_speaking = false;
+  bool     m_dynamic_sample_rate_enabled = true;
 
   static constexpr const char *TAG = "AudioSvc";
 };

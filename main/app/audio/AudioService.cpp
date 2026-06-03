@@ -6,7 +6,9 @@
 #include "app/wake_word/WakeWordDetector.h"
 #include "common/AppLogger.h"
 #include "common/events/app_events.h"
+#include "app/assistant/AssistantEvents.h"
 #include "hal/Board.h"
+
 #include "services/BufferManager.h"
 #include "esp_timer.h"
 
@@ -61,19 +63,23 @@ bool AudioService::onStart() {
 
   // 5. Subscribe to EventBus events (MQTT-driven or server-driven state changes)
   subscribeEvent(APP_EVENTS, AppEvent::MIC_GAIN_UPDATE);
-  subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_TALKING);
-  subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_SILENT);
-  subscribeEvent(APP_EVENTS, AppEvent::ASSISTANT_TURN_COMPLETE);
-  subscribeEvent(APP_EVENTS, AppEvent::STREAMING_STOP_REQUESTED);
-  // Note: WAKE_WORD_DETECTED, STOP_STREAMING, USER_INTERRUPTED are now
-  // handled via IWakeWordListener callbacks — no EventBus round-trip needed.
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::AUDIO_ENTER_CONVERSATION_MODE);
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::AUDIO_ENTER_PLAYBACK_MODE_24K);
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::AUDIO_RETURN_TO_WAKE_MODE_16K);
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::AUDIO_FLUSH_PLAYBACK);
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::AUDIO_RESUME_MIC_STREAMING);
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::AUDIO_SUSPEND_MIC_STREAMING);
+  subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE);
+
 
   // 6. Start background supervisor task
   if (!this->start())
     return false;
 
+  m_current_hardware_rate = m_settings->sample_rate;
+  m_dynamic_sample_rate_enabled = m_settings->dynamic_sample_rate_enabled;
   m_initialized = true;
-  LOGI_AUDIO("AudioService operational.");
+  LOGI_AUDIO("AudioService operational with rate %lu Hz.", (unsigned long)m_current_hardware_rate);
   return true;
 }
 
@@ -93,6 +99,7 @@ bool AudioService::reinit(uint32_t sample_rate) {
   m_board->reinitAudio(sample_rate);
 
   m_settings->sample_rate      = sample_rate;
+  m_current_hardware_rate      = sample_rate;
   m_handles->speaker_tx_handle = m_board->getTxHandle();
   m_handles->mic_rx_handle     = m_board->getRxHandle();
   m_handles->play_dev          = m_board->getPlayDev();
@@ -122,133 +129,147 @@ void AudioService::setMicEnabled(bool enabled) {
   }
 }
 
+void AudioService::setDynamicSampleRateEnabled(bool enabled) {
+  m_dynamic_sample_rate_enabled = enabled;
+  if (m_settings) {
+    m_settings->dynamic_sample_rate_enabled = enabled;
+  }
+  LOGI_AUDIO("Dynamic sample-rate switching for assistant playback is now %s.",
+             enabled ? "ENABLED" : "DISABLED");
+}
+
 // ============================================================================
 // IWakeWordListener callbacks — called from WakeWordDetector detectTask
 // ============================================================================
 
 void AudioService::onWakeWord(uint8_t channel) {
-  LOGI_AUDIO("Wake word (ch %d): enabling RTP, setting mic gain", channel);
-
-  m_session_active = true;
-  updateActivity();
-
-  auto &ww = WakeWordDetector::getInstance();
-  ww.setAssistantActive(false);
-  ww.setVadDeferred(false);
-  AudioPipelineManager::setRtpRxInterrupted(false);
-  AudioPipelineManager::setRtpEnabled(true);
-  m_board->setRecordGain(m_mic_gain);
-
-  // Publish to EventBus so LedService and others can react
-  WakeWordData wd = {channel};
-  EventBus::getInstance().publish(APP_EVENTS, AppEvent::WAKE_WORD_DETECTED, wd);
+  LOGI_AUDIO("Wake word (ch %d) detected. Publishing WAKE_WORD_DETECTED.", channel);
+  AssistantWakeWordData wd = {channel};
+  EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::WAKE_WORD_DETECTED, wd);
 }
 
 void AudioService::onVadTimeout() {
-  LOGI_AUDIO("VAD timeout: disabling RTP stream");
-
-  auto &ww = WakeWordDetector::getInstance();
-  ww.setAssistantActive(false);
-  ww.setVadDeferred(false);
-  AudioPipelineManager::setRtpEnabled(false);
-
-  uint32_t zero = 0;
-  EventBus::getInstance().publish(APP_EVENTS, AppEvent::STOP_STREAMING, zero);
+  LOGI_AUDIO("VAD timeout. Publishing VAD_TIMEOUT.");
+  EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::VAD_TIMEOUT, 0);
 }
 
 void AudioService::onUserSpeechDetected() {
-  LOGW_AUDIO("Barge-In Confirmed! Flushing playback channels and cutting cloud stream...");
-
-  auto &ww = WakeWordDetector::getInstance();
-  ww.setAssistantActive(false);
-  ww.setVadDeferred(false);
-  AudioPipelineManager::setRtpRxInterrupted(true);
-
-  // 1. Immediately drop physical hardware playback to prevent echo loop pollution
-  BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-
-#if defined(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
-  // 2. Transmit structural cancellation state up the active WebSocket channel
-  GeminiLiveService::getInstance().sendInterruptionSignal();
-#endif
-
-  // 3. Inform peripheral controllers (e.g. reset LED strip pattern to listening state)
-  uint32_t payload_dummy = 0;
-  EventBus::getInstance().publish(APP_EVENTS, AppEvent::USER_INTERRUPTED, payload_dummy);
+  LOGW_AUDIO("Barge-in / User speech detected. Publishing USER_SPEECH_DETECTED.");
+  EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::USER_SPEECH_DETECTED, 0);
 }
 
 // ============================================================================
 // IService::onEvent — handles MQTT-driven / server-driven state changes
 // ============================================================================
 
-void AudioService::onEvent(esp_event_base_t /*base*/, int32_t id, void *data) {
+void AudioService::onEvent(esp_event_base_t base, int32_t id, void *data) {
   auto &ww = WakeWordDetector::getInstance();
 
-  switch (static_cast<AppEvent>(id)) {
+  if (base == ASSISTANT_EVENTS) {
+    switch (static_cast<AssistantEvent>(id)) {
+      case AssistantEvent::AUDIO_ENTER_CONVERSATION_MODE: {
+        LOGI_AUDIO("AudioService: Entering conversation mode");
+        m_session_active = true;
+        m_assistant_speaking = false;
+        m_turn_complete_pending = false;
+        updateActivity();
 
-  case AppEvent::MIC_GAIN_UPDATE:
-    if (data) {
-      m_mic_gain = *static_cast<float *>(data);
-      LOGI_AUDIO("Stored optimal mic gain: %.1f dB", m_mic_gain);
+        ww.setAssistantActive(false);
+        ww.setVadDeferred(false);
+        AudioPipelineManager::setRtpRxInterrupted(false);
+        AudioPipelineManager::setRtpEnabled(true);
+        m_board->setRecordGain(m_mic_gain);
+        break;
+      }
+      case AssistantEvent::AUDIO_ENTER_PLAYBACK_MODE_24K: {
+        m_assistant_speaking = true;
+        ww.setAssistantActive(true);
+        ww.setVadDeferred(true);
+
+        if (!m_dynamic_sample_rate_enabled) {
+          LOGI_AUDIO("Assistant playback entered with dynamic sample-rate switching disabled. Staying at %lu Hz.",
+                     (unsigned long)m_current_hardware_rate);
+          break;
+        }
+
+        if (m_current_hardware_rate == 24000) {
+          LOGI_AUDIO("Assistant already active at 24kHz. Bypassing redundant clock configuration.");
+          break;
+        }
+
+        LOGI_AUDIO("Assistant talking: deferring VAD & switching clocks to 24kHz");
+
+        // Pause both speaker playback task and wake word detector before switching clocks
+        AudioPipelineManager::pauseSpeaker();
+        ww.pauseHardware();
+
+        // Reconfigure the clock speed
+        Board::getInstance().setHardwareSampleRate(24000);
+        m_current_hardware_rate = 24000;
+
+        // Resume speaker task safely at the new frequency
+        AudioPipelineManager::resumeSpeaker();
+        break;
+      }
+      case AssistantEvent::AUDIO_RETURN_TO_WAKE_MODE_16K: {
+        m_session_active = false;
+        m_turn_complete_pending = false;
+        m_assistant_speaking = false;
+
+        ww.stopStreaming();
+
+        if (m_current_hardware_rate == 16000) {
+          LOGI_AUDIO("Streaming already stopped/idle at 16kHz. Bypassing redundant clock switches.");
+        } else {
+          LOGW_AUDIO("Streaming stop requested! Restoring safe idle 16kHz state...");
+
+          // Reset physical I2S clock back to 16kHz safely
+          AudioPipelineManager::pauseSpeaker();
+          Board::getInstance().setHardwareSampleRate(16000);
+          m_current_hardware_rate = 16000;
+
+          ww.setAssistantActive(false);
+          ww.setVadDeferred(false);
+          ww.resumeHardware();
+          AudioPipelineManager::resumeSpeaker();
+        }
+        AudioPipelineManager::setRtpRxInterrupted(false);
+
+        // Reset buffer states
+        BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+        break;
+      }
+      case AssistantEvent::AUDIO_FLUSH_PLAYBACK: {
+        BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+        break;
+      }
+      case AssistantEvent::AUDIO_RESUME_MIC_STREAMING: {
+        AudioPipelineManager::setRtpEnabled(true);
+        break;
+      }
+      case AssistantEvent::AUDIO_SUSPEND_MIC_STREAMING: {
+        AudioPipelineManager::setRtpEnabled(false);
+        break;
+      }
+      case AssistantEvent::ASSISTANT_TURN_COMPLETE: {
+        LOGI_AUDIO("Turn complete received from assistant state flow; pending final speaker drainage...");
+        m_turn_complete_pending = true;
+        break;
+      }
+      default:
+        break;
     }
-    break;
-
-  case AppEvent::ASSISTANT_TALKING:
-    LOGI_AUDIO("Assistant talking: deferring VAD & switching clocks to 24kHz");
-    ww.setAssistantActive(true);
-    ww.setVadDeferred(true);
-    
-    // Pause both speaker playback task and wake word detector before switching clocks
-    AudioPipelineManager::pauseSpeaker();
-    ww.pauseHardware();
-
-    // Reconfigure the clock speed
-    Board::getInstance().setHardwareSampleRate(24000);
-
-    // Resume speaker task safely at the new frequency
-    AudioPipelineManager::resumeSpeaker();
-    break;
-
-  case AppEvent::ASSISTANT_SILENT:
-    LOGI_AUDIO("Assistant silent: holding VAD defer");
-    ww.setAssistantActive(true);
-    ww.setVadDeferred(true);
-    break;
-
-  case AppEvent::ASSISTANT_TURN_COMPLETE:
-    LOGI_AUDIO("Turn complete received from server; pending final speaker drainage...");
-    m_turn_complete_pending = true;
-    break;
-
-  case AppEvent::STREAMING_STOP_REQUESTED:
-    LOGW_AUDIO("Streaming stop requested (disconnection/error)! Restoring safe idle 16kHz state...");
-    m_session_active = false;
-    m_turn_complete_pending = false;
-
-    // 1. Terminate active streaming and re-arm WakeNet
-    ww.stopStreaming();
-
-    // 2. Reset physical I2S clock back to 16kHz safely
-    AudioPipelineManager::pauseSpeaker();
-    Board::getInstance().setHardwareSampleRate(16000);
-    ww.setAssistantActive(false);
-    ww.setVadDeferred(false);
-    ww.resumeHardware();
-    AudioPipelineManager::resumeSpeaker();
-    AudioPipelineManager::setRtpRxInterrupted(false);
-
-    // 3. Reset buffer states
-    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-
-    // 4. Propagate stop streaming to LedService and others
-    {
-      uint32_t zero = 0;
-      EventBus::getInstance().publish(APP_EVENTS, AppEvent::STOP_STREAMING, zero);
+  } else if (base == APP_EVENTS) {
+    switch (static_cast<AppEvent>(id)) {
+      case AppEvent::MIC_GAIN_UPDATE:
+        if (data) {
+          m_mic_gain = *static_cast<float *>(data);
+          LOGI_AUDIO("Stored optimal mic gain: %.1f dB", m_mic_gain);
+        }
+        break;
+      default:
+        break;
     }
-    break;
-
-  default:
-    break;
   }
 }
 
@@ -261,7 +282,7 @@ void AudioService::updateActivity() {
 }
 
 void AudioService::checkInactivityTimeout() {
-  if (!m_session_active) {
+  if (!m_session_active || m_assistant_speaking || m_turn_complete_pending) {
     return;
   }
 
@@ -276,8 +297,8 @@ void AudioService::checkInactivityTimeout() {
   uint64_t now_ms = esp_timer_get_time() / 1000;
   uint64_t inactive_ms = now_ms - m_last_activity_ms;
 
-  if (inactive_ms >= 20000) { // 20-second silence timeout threshold for comfortable conversational pacing
-    LOGW_AUDIO("Inactivity Timeout: 20 seconds of silence detected. Stopping session...");
+  if (inactive_ms >= 10000) { // 10-second silence timeout threshold for comfortable conversational pacing
+    LOGW_AUDIO("Inactivity Timeout: 10 seconds of silence detected. Stopping session...");
     m_session_active = false;
     
     // Disable active audio streaming and re-arm WakeNet
@@ -286,9 +307,7 @@ void AudioService::checkInactivityTimeout() {
     // Reset speaker buffer and playback pipeline
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
 
-    // Stop streaming event publishes to restore idle peripheral modes (LEDs, etc)
-    uint32_t zero = 0;
-    EventBus::getInstance().publish(APP_EVENTS, AppEvent::STOP_STREAMING, zero);
+    EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::SESSION_IDLE_TIMEOUT, 0);
   }
 }
 
@@ -298,21 +317,33 @@ void AudioService::run() {
   uint32_t ticks = 0;
   while (m_running) {
     vTaskDelay(pdMS_TO_TICKS(50)); // Responsive 50ms supervisor interval
-    
+
     if (m_turn_complete_pending) {
       size_t remaining_bytes = BufferManager::getInstance().getUsedBytes(Buffers::SPK_RX_BUF);
       if (remaining_bytes == 0) {
-        LOGI_AUDIO("Speaker buffer fully drained. Safely switching clocks back to 16kHz...");
         m_turn_complete_pending = false;
+        m_assistant_speaking = false;
 
-        auto &ww = WakeWordDetector::getInstance();
-        AudioPipelineManager::pauseSpeaker();
-        Board::getInstance().setHardwareSampleRate(16000);
-        ww.setAssistantActive(false);
-        ww.setVadDeferred(false);
-        ww.resumeHardware();
-        AudioPipelineManager::resumeSpeaker();
-        AudioPipelineManager::setRtpRxInterrupted(false);
+        // Reset inactivity silence timer to start counting 10 seconds from exactly this moment
+        updateActivity();
+
+        if (m_current_hardware_rate == 16000) {
+          LOGI_AUDIO("Speaker buffer drained but already running at 16kHz. Bypassing clock switch.");
+        } else {
+          LOGI_AUDIO("Speaker buffer fully drained. Safely switching clocks back to 16kHz...");
+          auto &ww = WakeWordDetector::getInstance();
+          AudioPipelineManager::pauseSpeaker();
+          Board::getInstance().setHardwareSampleRate(16000);
+          m_current_hardware_rate = 16000;
+
+          ww.setAssistantActive(false);
+          ww.setVadDeferred(false);
+          ww.resumeHardware();
+          AudioPipelineManager::resumeSpeaker();
+          AudioPipelineManager::setRtpRxInterrupted(false);
+        }
+
+        AudioPipelineManager::setRtpEnabled(true);
       }
     }
 
