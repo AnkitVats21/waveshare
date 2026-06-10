@@ -5,7 +5,7 @@
 #include <cstdlib>
 
 // Defines + registers the SPK_RX_BUF ring buffer with BufferManager
-DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 512 * 1024)
+DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 1024 * 1024)
 
 
 
@@ -19,7 +19,7 @@ void SpeakerPlaybackTask::start(const GlobalSystemSettings &settings,
   param->settings = settings;
   param->device   = device;
 
-  xTaskCreatePinnedToCore(&SpeakerPlaybackTask::worker_bridge, "speaker_playback_task",
+  xTaskCreatePinnedToCore(&SpeakerPlaybackTask::worker_bridge, "speaker_playback_task", 
                           settings.audio_stack_size, param,
                           settings.audio_task_priority, &m_task_handle,
                           settings.audio_core_id);
@@ -41,7 +41,7 @@ void SpeakerPlaybackTask::worker_bridge(void *pvParameters) {
 }
 
 void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
-                                  esp_codec_dev_handle_t device) {
+                                 esp_codec_dev_handle_t device) {
   auto &bm = BufferManager::getInstance();
   if (device == nullptr) {
     LOGE_HAL("SpeakerPlaybackTask started without a valid codec device!");
@@ -69,12 +69,16 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
       SILENCE_SAMPLES * 2 * sizeof(int32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   memset(silence_buffer, 0, SILENCE_SAMPLES * 2 * sizeof(int32_t));
 
-  bool is_prebuffering = true;
+  bool is_prebuffering = true; // Only true at start or after hw pause
   const size_t PREBUFFER_THRESHOLD = 8000;
+  uint32_t consecutive_empty = 0; // Track consecutive empty reads
+  const uint32_t EMPTY_THRESHOLD =
+      40; // 40 * 20ms = 800ms of silence = real end of speech
 
   while (m_is_running) {
     if (!m_hw_valid) {
-      is_prebuffering = true;
+      is_prebuffering = true; // Reset prebuffering on hw pause
+      consecutive_empty = 0;
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
@@ -93,11 +97,21 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
                                    pdMS_TO_TICKS(10), MAX_AUDIO_CHUNK_BYTES);
 
     if (rx_data_ptr == nullptr || rx_chunk_bytes == 0) {
+      // Write silence to keep the codec DMA clock running — never re-enter
+      // prebuffering here; that caused the gibberish on long 30s+ responses.
+      // A real end-of-stream is detected by turn_complete + sustained empty.
+      consecutive_empty++;
       esp_codec_dev_write(device, silence_buffer,
                           SILENCE_SAMPLES * 2 * sizeof(int32_t));
-      is_prebuffering = true;
+      // Only re-enter prebuffering after sustained silence (not momentary
+      // bursts)
+      if (consecutive_empty >= EMPTY_THRESHOLD) {
+        is_prebuffering = true;
+        consecutive_empty = 0;
+      }
       continue;
     }
+    consecutive_empty = 0; // Reset on every real audio chunk
 
     size_t num_samples = rx_chunk_bytes / sizeof(int16_t);
     memcpy(dma_safe_buffer, rx_data_ptr, rx_chunk_bytes);

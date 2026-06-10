@@ -54,6 +54,8 @@ WD9f
 -----END CERTIFICATE-----)EOF";
 #endif
 
+static std::atomic<bool> g_assistant_currently_talking{false};
+
 // Custom PSRAM Allocators for cJSON Engine
 static void* cjson_psram_malloc(size_t size) {
     return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -335,9 +337,6 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
     cJSON* serverContent = cJSON_GetObjectItem(root, "serverContent");
     if (serverContent) {
         
-        // Track whether assistant is actively streaming audio
-        static bool assistant_currently_talking = false;
-
         // --- 1. Audio Streaming Pipeline Processing ---
         cJSON* modelTurn = cJSON_GetObjectItem(serverContent, "modelTurn");
         if (modelTurn) {
@@ -360,8 +359,8 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
                     cJSON* inlineData = cJSON_GetObjectItem(part, "inlineData");
                     if (inlineData) {
                         // Fire ASSISTANT_TALKING event on the absolute first audio packet
-                        if (!assistant_currently_talking) {
-                            assistant_currently_talking = true;
+                        if (!g_assistant_currently_talking.load(std::memory_order_relaxed)) {
+                            g_assistant_currently_talking.store(true, std::memory_order_relaxed);
                             EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_AUDIO_STARTED, 0);
                         }
 
@@ -398,7 +397,7 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
         // B. Parse Turn Conclusion (End Speaking) — at serverContent level per API docs
         cJSON* turnComplete = cJSON_GetObjectItem(serverContent, "turnComplete");
         if (turnComplete && cJSON_IsTrue(turnComplete)) {
-            assistant_currently_talking = false;
+            g_assistant_currently_talking.store(false, std::memory_order_relaxed);
             LOGI_NET("Assistant turn complete");
             EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE, 0);
         }
@@ -406,7 +405,7 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
         // C. Parse Interruption Signal (Barge-In detected by server-side VAD)
         cJSON* interruptedObj = cJSON_GetObjectItem(serverContent, "interrupted");
         if (interruptedObj && cJSON_IsTrue(interruptedObj)) {
-            assistant_currently_talking = false;
+            g_assistant_currently_talking.store(false, std::memory_order_relaxed);
             LOGI_NET("Server detected barge-in — flushing speaker buffer");
             BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
             EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE, 0);
@@ -471,6 +470,7 @@ void GeminiProtocolTask::connect() {
 void GeminiProtocolTask::closeConnection() {
     ConnectionState current_state = m_state.load(std::memory_order_relaxed);
     m_connect_requested.store(false, std::memory_order_relaxed);
+    g_assistant_currently_talking.store(false, std::memory_order_relaxed);
 
     if (current_state != ConnectionState::DISCONNECTED) {
         LOGI_NET("Gemini Live Engine: Closing connection...");
@@ -491,6 +491,7 @@ bool GeminiProtocolTask::startClientConnection() {
 
     LOGI_NET("Gemini Live Engine: Connecting to WebSocket...");
     m_state.store(ConnectionState::CONNECTING, std::memory_order_relaxed);
+    g_assistant_currently_talking.store(false, std::memory_order_relaxed);
     esp_websocket_client_stop(m_client);
     esp_err_t start_err = esp_websocket_client_start(m_client);
     if (start_err != ESP_OK) {

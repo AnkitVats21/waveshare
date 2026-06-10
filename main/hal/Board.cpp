@@ -81,6 +81,14 @@ bool Board::begin() {
     return false;
   }
 
+  // Boot-time LED self-test: flash white briefly to confirm hardware path works.
+  // If you see this flash but no later LED states, the bug is in LedService event delivery.
+  m_leds.setAll(30, 30, 30);   // dim white (pixels buffered)
+  m_leds.refresh();             // push to hardware (one clean RMT transfer)
+  vTaskDelay(pdMS_TO_TICKS(200));
+  m_leds.clear();
+  ESP_LOGI(TAG, "LED self-test complete (GPIO %d).", (int)LED_STRIP_GPIO_PIN);
+
   m_initialized = true;
   ESP_LOGI(TAG, "Board hardware ready.");
   return true;

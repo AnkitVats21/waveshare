@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "esp_afe_sr_iface.h"
 
 #include "hal/interfaces/IAudioFeedSource.h"
@@ -65,10 +66,23 @@ public:
     bool isStreamingActive() const { return m_streaming_active; }
     void stopStreaming();
 
-    /** Pause hardware reads in feedTask (call before AudioHal::reinit). */
-    void pauseHardware()  { m_hw_valid = false; }
-    /** Resume hardware reads after AudioHal::reinit completes. */
-    void resumeHardware() { m_hw_valid = true;  }
+    /**
+     * @brief Pause both feedTask and detectTask cleanly using EventGroup.
+     * Blocks both tasks at the top of their loops — they never enter feed()/fetch()
+     * while paused, eliminating the TWDT crash caused by fetch() starvation.
+     * Call before any hardware clock switch (e.g. 16kHz → 24kHz).
+     */
+    void pauseProcessing();
+
+    /**
+     * @brief Resume both tasks simultaneously after hardware is ready.
+     * Sets AUDIO_RUNNING_BIT so both tasks unblock in the same scheduler tick.
+     */
+    void resumeProcessing();
+
+    // Legacy aliases kept for call-site compatibility — delegate to new API
+    void pauseHardware()  { pauseProcessing(); }
+    void resumeHardware() { resumeProcessing(); }
 
 private:
     WakeWordDetector();
@@ -95,12 +109,15 @@ private:
     SemaphoreHandle_t m_feed_done   = nullptr; ///< signalled when feedTask exits
     SemaphoreHandle_t m_detect_done = nullptr; ///< signalled when detectTask exits
 
+    // ---- EventGroup for task gating (replaces racy volatile m_hw_valid) ----
+    EventGroupHandle_t m_audio_event_group = nullptr;
+    static constexpr EventBits_t AUDIO_RUNNING_BIT = (1 << 0);
+
     // ---- State flags (volatile — written by detectTask, read by AudioService) ----
-    volatile bool m_streaming_active     = false;
-    volatile bool m_vad_deferred         = false;
-    volatile bool m_assistant_active     = false;
+    volatile bool m_streaming_active       = false;
+    volatile bool m_vad_deferred           = false;
+    volatile bool m_assistant_active       = false;
     volatile bool m_interruption_triggered = false;
-    volatile bool m_hw_valid             = true;
 
     // ---- Config ----
     static constexpr int VAD_SILENCE_TIMEOUT_MS = 3000;

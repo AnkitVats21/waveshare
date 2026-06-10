@@ -2,9 +2,60 @@
 #include "app/event/EventBus.h"
 #include "app/audio/AudioAlertPlayer.h"
 #include "common/AppLogger.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h" // Native FreeRTOS Semaphore engine
 #include <cstring>
 
-AssistantSessionService::AssistantSessionService() : IService("AssistantSessionService") {
+#define SUBSCRIBE_ASSISTANT_EVENT(id) subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::id)
+#define PUBLISH_ASSISTANT_EVENT(id, data) EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::id, data)
+
+// ---------------------------------------------------------------------------
+// Native FreeRTOS Lightweight C++ RAII Mutex Guard
+// ---------------------------------------------------------------------------
+class FreeRTOSLockGuard {
+public:
+    explicit FreeRTOSLockGuard(SemaphoreHandle_t mutex) : m_mutex(mutex) {
+        if (m_mutex) {
+            xSemaphoreTake(m_mutex, portMAX_DELAY);
+        }
+    }
+    ~FreeRTOSLockGuard() {
+        if (m_mutex) {
+            xSemaphoreGive(m_mutex);
+        }
+    }
+private:
+    SemaphoreHandle_t m_mutex;
+};
+
+AssistantSessionService::AssistantSessionService() 
+    : IService("AssistantSessionService"), 
+      m_rtos_mutex(nullptr),
+      m_wifi_available_atomic(0),
+      m_state_atomic(static_cast<int>(AssistantState::Idle)) {
+      
+    // Initialize native FreeRTOS mutex primitive at boot
+    m_rtos_mutex = xSemaphoreCreateMutex();
+    assert(m_rtos_mutex != nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Helper: play an audio alert on a tiny fire-and-forget FreeRTOS task.
+// This prevents AudioAlertPlayer from blocking the ESP event loop task
+// (which would delay VISUAL_STATE_CHANGED reaching LedService).
+// ---------------------------------------------------------------------------
+static void playAlertTask(void* arg) {
+    auto fn = reinterpret_cast<void(*)()>(arg);
+    if (fn) {
+        fn();
+    }
+    vTaskDelete(nullptr);
+}
+
+static void playAlertAsync(void (*fn)()) {
+    // Pinned explicitly to Core 1 alongside our high-speed Audio pipelines
+    xTaskCreatePinnedToCore(playAlertTask, "alert_async", 3072, (void*)fn, 3, nullptr, 1);
 }
 
 AssistantSessionService& AssistantSessionService::getInstance() {
@@ -49,33 +100,32 @@ bool AssistantSessionService::onStart() {
         esp_timer_create(&cooldown_args, &m_cooldown_timer);
     }
 
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::WAKE_WORD_DETECTED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::WIFI_AVAILABLE);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::WIFI_LOST);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::USER_SPEECH_DETECTED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::VAD_TIMEOUT);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::USER_INTERRUPTED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::WS_CONNECTED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::WS_CONNECT_FAILED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::WS_CLOSED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::GEMINI_GO_AWAY);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_AUDIO_STARTED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::QUOTA_EXCEEDED);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::SERVER_ERROR);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::TRANSPORT_ERROR);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::CONNECT_TIMEOUT);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::SESSION_IDLE_TIMEOUT);
-    subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::COOLDOWN_ELAPSED);
+    SUBSCRIBE_ASSISTANT_EVENT(WAKE_WORD_DETECTED);
+    SUBSCRIBE_ASSISTANT_EVENT(WIFI_AVAILABLE);
+    SUBSCRIBE_ASSISTANT_EVENT(WIFI_LOST);
+    SUBSCRIBE_ASSISTANT_EVENT(USER_SPEECH_DETECTED);
+    SUBSCRIBE_ASSISTANT_EVENT(VAD_TIMEOUT);
+    SUBSCRIBE_ASSISTANT_EVENT(USER_INTERRUPTED);
+    SUBSCRIBE_ASSISTANT_EVENT(WS_CONNECTED);
+    SUBSCRIBE_ASSISTANT_EVENT(WS_CONNECT_FAILED);
+    SUBSCRIBE_ASSISTANT_EVENT(WS_CLOSED);
+    SUBSCRIBE_ASSISTANT_EVENT(GEMINI_GO_AWAY);
+    SUBSCRIBE_ASSISTANT_EVENT(ASSISTANT_AUDIO_STARTED);
+    SUBSCRIBE_ASSISTANT_EVENT(ASSISTANT_TURN_COMPLETE);
+    SUBSCRIBE_ASSISTANT_EVENT(QUOTA_EXCEEDED);
+    SUBSCRIBE_ASSISTANT_EVENT(SERVER_ERROR);
+    SUBSCRIBE_ASSISTANT_EVENT(TRANSPORT_ERROR);
+    SUBSCRIBE_ASSISTANT_EVENT(CONNECT_TIMEOUT);
+    SUBSCRIBE_ASSISTANT_EVENT(SESSION_IDLE_TIMEOUT);
+    SUBSCRIBE_ASSISTANT_EVENT(COOLDOWN_ELAPSED);
 
-    m_state.store(AssistantState::Idle, std::memory_order_relaxed);
-    EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::VISUAL_STATE_CHANGED,
-                                    AssistantVisualState::Offline);
+    __atomic_store_n(&m_state_atomic, static_cast<int>(AssistantState::Idle), __ATOMIC_RELAXED);
+    PUBLISH_ASSISTANT_EVENT(VISUAL_STATE_CHANGED, AssistantVisualState::Offline);
     return true;
 }
 
 void AssistantSessionService::onStop() {
-    LOGI_SYSTEM("Stopping AssistantSessionService...");
+    LOGI_SYSTEM("Tearing down AssistantSessionService layers cleanly...");
     if (m_idle_timer) {
         esp_timer_stop(m_idle_timer);
         esp_timer_delete(m_idle_timer);
@@ -90,6 +140,10 @@ void AssistantSessionService::onStop() {
         esp_timer_stop(m_cooldown_timer);
         esp_timer_delete(m_cooldown_timer);
         m_cooldown_timer = nullptr;
+    }
+    if (m_rtos_mutex) {
+        vSemaphoreDelete(m_rtos_mutex);
+        m_rtos_mutex = nullptr;
     }
 }
 
@@ -114,12 +168,21 @@ const char* AssistantSessionService::getStateName(AssistantState state) const {
 }
 
 void AssistantSessionService::transitionTo(AssistantState newState) {
-    AssistantState oldState = m_state.exchange(newState);
+    // Dynamic atomic exchange utilizing standard GCC machine fences across cores
+    int expect = __atomic_load_n(&m_state_atomic, __ATOMIC_RELAXED);
+    while (expect != static_cast<int>(newState)) {
+        if (__atomic_compare_exchange_n(&m_state_atomic, &expect, static_cast<int>(newState), 
+                                        false, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) {
+            break;
+        }
+    }
+    
+    AssistantState oldState = static_cast<AssistantState>(expect);
     if (oldState == newState) {
         return;
     }
 
-    LOGI_SYSTEM("State transition: %s -> %s", getStateName(oldState), getStateName(newState));
+    LOGI_SYSTEM("State change execution: %s -> %s", getStateName(oldState), getStateName(newState));
 
     // 1. Cleanup timers/actions of the old state
     switch (oldState) {
@@ -138,101 +201,123 @@ void AssistantSessionService::transitionTo(AssistantState newState) {
 
     // 2. Setup actions/timers of the new state
     AssistantVisualState visState = AssistantVisualState::Idle;
+    bool trigger_auto_transition_to_idle = false;
+    int wifi_status = __atomic_load_n(&m_wifi_available_atomic, __ATOMIC_RELAXED);
+
     switch (newState) {
         case AssistantState::Idle:
-            visState = m_wifi_available ? AssistantVisualState::Idle : AssistantVisualState::Offline;
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_RETURN_TO_WAKE_MODE_16K, 0);
+            visState = (wifi_status != 0) ? AssistantVisualState::Idle : AssistantVisualState::Offline;
+            PUBLISH_ASSISTANT_EVENT(AUDIO_RETURN_TO_WAKE_MODE_16K, 0);
             break;
 
         case AssistantState::StartingSession:
             visState = AssistantVisualState::Thinking;
-            AudioAlertPlayer::playWakeConfirm();   // ← audio: "heard you, connecting"
             break;
 
         case AssistantState::Connecting:
             visState = AssistantVisualState::Connecting;
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::TRANSPORT_CONNECT, 0);
+            PUBLISH_ASSISTANT_EVENT(TRANSPORT_CONNECT, 0);
             if (m_connect_timer) {
-                esp_timer_start_once(m_connect_timer, 10ULL * 1000 * 1000); // 10s connect timeout
+                esp_timer_start_once(m_connect_timer, 10ULL * 1000 * 1000); // 10s timeout
             }
             break;
 
         case AssistantState::StreamingUserAudio:
             visState = AssistantVisualState::Listening;
-            AudioAlertPlayer::playReadyToSpeak();  // ← audio: "mic is hot, speak now"
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_ENTER_CONVERSATION_MODE, 0);
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::TRANSPORT_SEND_BUFFERED_AUDIO, 0);
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::TRANSPORT_SEND_LIVE_AUDIO, 0);
+            PUBLISH_ASSISTANT_EVENT(AUDIO_ENTER_CONVERSATION_MODE, 0);
+            PUBLISH_ASSISTANT_EVENT(TRANSPORT_SEND_BUFFERED_AUDIO, 0);
+            PUBLISH_ASSISTANT_EVENT(TRANSPORT_SEND_LIVE_AUDIO, 0);
             break;
 
         case AssistantState::AssistantSpeaking:
             visState = AssistantVisualState::Speaking;
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_ENTER_PLAYBACK_MODE_24K, 0);
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_SUSPEND_MIC_STREAMING, 0);
+            PUBLISH_ASSISTANT_EVENT(AUDIO_ENTER_PLAYBACK_MODE_24K, 0);
+            PUBLISH_ASSISTANT_EVENT(AUDIO_SUSPEND_MIC_STREAMING, 0);
             break;
 
         case AssistantState::WaitingForFollowup:
             visState = AssistantVisualState::Thinking;
             if (m_idle_timer) {
-                esp_timer_start_once(m_idle_timer, 10ULL * 1000 * 1000); // 10s idle followup timeout
+                esp_timer_start_once(m_idle_timer, 30ULL * 1000 * 1000); // 30s window
             }
             break;
 
         case AssistantState::Closing:
-            AudioAlertPlayer::playSessionEnd();    // ← audio: "session ending"
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::TRANSPORT_CLOSE, 0);
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_RETURN_TO_WAKE_MODE_16K, 0);
-            // Auto-transition back to Idle
-            transitionTo(AssistantState::Idle);
+            PUBLISH_ASSISTANT_EVENT(TRANSPORT_CLOSE, 0);
+            PUBLISH_ASSISTANT_EVENT(AUDIO_RETURN_TO_WAKE_MODE_16K, 0);
+            trigger_auto_transition_to_idle = true; 
             break;
 
         case AssistantState::ErrorCooldown:
             visState = AssistantVisualState::Error;
-            AudioAlertPlayer::playError();         // ← audio: "something went wrong"
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::TRANSPORT_CLOSE, 0);
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_RETURN_TO_WAKE_MODE_16K, 0);
+            PUBLISH_ASSISTANT_EVENT(TRANSPORT_CLOSE, 0);
+            PUBLISH_ASSISTANT_EVENT(AUDIO_RETURN_TO_WAKE_MODE_16K, 0);
             if (m_cooldown_timer) {
-                esp_timer_start_once(m_cooldown_timer, 5ULL * 1000 * 1000); // 5s error cooldown
+                esp_timer_start_once(m_cooldown_timer, 5ULL * 1000 * 1000); // 5s cooldown
             }
             break;
     }
 
-    EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::VISUAL_STATE_CHANGED, visState);
+    // Publish visual state FIRST so LedService updates immediately
+    PUBLISH_ASSISTANT_EVENT(VISUAL_STATE_CHANGED, visState);
+
+    // Play audio alerts AFTER visual update safely inside background task windows
+    switch (newState) {
+        case AssistantState::StartingSession:
+            playAlertAsync(AudioAlertPlayer::playWakeConfirm);
+            break;
+        case AssistantState::StreamingUserAudio:
+            playAlertAsync(AudioAlertPlayer::playReadyToSpeak);
+            break;
+        case AssistantState::Closing:
+            playAlertAsync(AudioAlertPlayer::playSessionEnd);
+            break;
+        case AssistantState::ErrorCooldown:
+            playAlertAsync(AudioAlertPlayer::playError);
+            break;
+        default:
+            break;
+    }
+
+    // Safely execute sequential transitions outside of active recursive lock windows
+    if (trigger_auto_transition_to_idle) {
+        this->transitionTo(AssistantState::Idle);
+    }
 }
 
 void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /*data*/) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // Native FreeRTOS lock guard allocation avoids the standard POSIX wrapper overhead entirely
+    FreeRTOSLockGuard lock(m_rtos_mutex);
     
-    // Wi-Fi updates apply globally across all states
     if (event == AssistantEvent::WIFI_AVAILABLE) {
-        m_wifi_available = true;
-        if (m_state.load(std::memory_order_relaxed) == AssistantState::Idle) {
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::VISUAL_STATE_CHANGED, AssistantVisualState::Idle);
+        __atomic_store_n(&m_wifi_available_atomic, 1, __ATOMIC_RELAXED);
+        if (static_cast<AssistantState>(__atomic_load_n(&m_state_atomic, __ATOMIC_RELAXED)) == AssistantState::Idle) {
+            PUBLISH_ASSISTANT_EVENT(VISUAL_STATE_CHANGED, AssistantVisualState::Idle);
         }
         return;
     } else if (event == AssistantEvent::WIFI_LOST) {
-        m_wifi_available = false;
+        __atomic_store_n(&m_wifi_available_atomic, 0, __ATOMIC_RELAXED);
         transitionTo(AssistantState::Idle);
         return;
     }
 
-    AssistantState current = m_state.load(std::memory_order_relaxed);
+    AssistantState current = static_cast<AssistantState>(__atomic_load_n(&m_state_atomic, __ATOMIC_RELAXED));
 
     switch (current) {
         case AssistantState::Idle:
             if (event == AssistantEvent::WAKE_WORD_DETECTED) {
-                if (m_wifi_available) {
+                if (__atomic_load_n(&m_wifi_available_atomic, __ATOMIC_RELAXED) != 0) {
                     transitionTo(AssistantState::StartingSession);
                     transitionTo(AssistantState::Connecting);
                 } else {
-                    LOGW_SYSTEM("WakeWord detected but Wi-Fi offline. Flashing Offline.");
-                    AudioAlertPlayer::playOffline(); // ← audio: "no network"
-                    EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::VISUAL_STATE_CHANGED, AssistantVisualState::Offline);
-                    // Reset to offline warning, wait a bit, then return to normal
+                    LOGW_SYSTEM("WakeWord caught but Wi-Fi link reports down. Shifting warning alert to background task.");
+                    playAlertAsync(AudioAlertPlayer::playOffline); // Shifted to async worker context
+                    PUBLISH_ASSISTANT_EVENT(VISUAL_STATE_CHANGED, AssistantVisualState::Offline);
+                    
                     if (m_cooldown_timer) {
-                        esp_timer_start_once(m_cooldown_timer, 2ULL * 1000 * 1000); // reuse cooldown timer for offline flash
+                        esp_timer_start_once(m_cooldown_timer, 2ULL * 1000 * 1000); 
                     }
-                    m_state.store(AssistantState::ErrorCooldown, std::memory_order_relaxed);
+                    __atomic_store_n(&m_state_atomic, static_cast<int>(AssistantState::ErrorCooldown), __ATOMIC_RELAXED);
                 }
             }
             break;
@@ -264,8 +349,7 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
             } else if (event == AssistantEvent::QUOTA_EXCEEDED) {
                 transitionTo(AssistantState::ErrorCooldown);
             } else if (event == AssistantEvent::VAD_TIMEOUT) {
-                // Suspends mic capture while we wait for response
-                EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_SUSPEND_MIC_STREAMING, 0);
+                PUBLISH_ASSISTANT_EVENT(AUDIO_SUSPEND_MIC_STREAMING, 0);
             }
             break;
 
@@ -273,8 +357,7 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
             if (event == AssistantEvent::ASSISTANT_TURN_COMPLETE) {
                 transitionTo(AssistantState::WaitingForFollowup);
             } else if (event == AssistantEvent::USER_SPEECH_DETECTED || event == AssistantEvent::USER_INTERRUPTED) {
-                // Barge-in: flush active playback immediately, resume mic capture, stream barge-in
-                EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::AUDIO_FLUSH_PLAYBACK, 0);
+                PUBLISH_ASSISTANT_EVENT(AUDIO_FLUSH_PLAYBACK, 0);
                 transitionTo(AssistantState::StreamingUserAudio);
             } else if (event == AssistantEvent::GEMINI_GO_AWAY || event == AssistantEvent::WS_CLOSED) {
                 transitionTo(AssistantState::Closing);
@@ -291,14 +374,7 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
             }
             break;
 
-        case AssistantState::Closing:
-            // Handled via auto-transition in transitionTo
-            break;
-
-        case AssistantState::ErrorCooldown:
-            if (event == AssistantEvent::COOLDOWN_ELAPSED || event == AssistantEvent::SESSION_IDLE_TIMEOUT) {
-                transitionTo(AssistantState::Idle);
-            }
+        default:
             break;
     }
 }
