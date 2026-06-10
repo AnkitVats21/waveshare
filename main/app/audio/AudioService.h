@@ -27,6 +27,7 @@ public:
   bool reinit(uint32_t sample_rate);
   void setMicEnabled(bool enabled);
   void setDynamicSampleRateEnabled(bool enabled);
+  void enterAssistantPlaybackModeNow();
   bool isInitialized() const { return m_initialized; }
 
   // IService interface
