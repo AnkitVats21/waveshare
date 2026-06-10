@@ -360,6 +360,7 @@ void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
                     if (inlineData) {
                         // Fire ASSISTANT_TALKING event on the absolute first audio packet
                         if (!g_assistant_currently_talking.load(std::memory_order_relaxed)) {
+                            AudioService::getInstance().enterAssistantPlaybackModeNow();
                             g_assistant_currently_talking.store(true, std::memory_order_relaxed);
                             EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_AUDIO_STARTED, 0);
                         }

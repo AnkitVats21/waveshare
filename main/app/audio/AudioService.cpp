@@ -138,6 +138,31 @@ void AudioService::setDynamicSampleRateEnabled(bool enabled) {
              enabled ? "ENABLED" : "DISABLED");
 }
 
+void AudioService::enterAssistantPlaybackModeNow() {
+  auto &ww = WakeWordDetector::getInstance();
+
+  m_assistant_speaking = true;
+  ww.setAssistantActive(true);
+  ww.setVadDeferred(true);
+
+  if (!m_dynamic_sample_rate_enabled) {
+    LOGI_AUDIO("Immediate assistant playback path entered with dynamic sample-rate switching disabled. Staying at %lu Hz.",
+               (unsigned long)m_current_hardware_rate);
+    return;
+  }
+
+  if (m_current_hardware_rate == 24000) {
+    return;
+  }
+
+  LOGI_AUDIO("Immediate assistant audio detected: switching hardware to 24kHz before queueing playback.");
+  AudioPipelineManager::pauseSpeaker();
+  ww.pauseHardware();
+  Board::getInstance().setHardwareSampleRate(24000);
+  m_current_hardware_rate = 24000;
+  AudioPipelineManager::resumeSpeaker();
+}
+
 // ============================================================================
 // IWakeWordListener callbacks — called from WakeWordDetector detectTask
 // ============================================================================
@@ -192,33 +217,7 @@ void AudioService::onEvent(esp_event_base_t base, int32_t id, void *data) {
         break;
       }
       case AssistantEvent::AUDIO_ENTER_PLAYBACK_MODE_24K: {
-        m_assistant_speaking = true;
-        ww.setAssistantActive(true);
-        ww.setVadDeferred(true);
-
-        if (!m_dynamic_sample_rate_enabled) {
-          LOGI_AUDIO("Assistant playback entered with dynamic sample-rate switching disabled. Staying at %lu Hz.",
-                     (unsigned long)m_current_hardware_rate);
-          break;
-        }
-
-        if (m_current_hardware_rate == 24000) {
-          LOGI_AUDIO("Assistant already active at 24kHz. Bypassing redundant clock configuration.");
-          break;
-        }
-
-        LOGI_AUDIO("Assistant talking: deferring VAD & switching clocks to 24kHz");
-
-        // Pause both speaker playback task and wake word detector before switching clocks
-        AudioPipelineManager::pauseSpeaker();
-        ww.pauseHardware();
-
-        // Reconfigure the clock speed
-        Board::getInstance().setHardwareSampleRate(24000);
-        m_current_hardware_rate = 24000;
-
-        // Resume speaker task safely at the new frequency
-        AudioPipelineManager::resumeSpeaker();
+        enterAssistantPlaybackModeNow();
         break;
       }
       case AssistantEvent::AUDIO_RETURN_TO_WAKE_MODE_16K: {
