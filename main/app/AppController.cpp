@@ -16,13 +16,15 @@
 #include "common/events/app_events.h"
 #include "common/events/wifi_events.h"
 #include "hal/Board.h"
-#include "cJSON.h"
 #include "esp_heap_caps.h"
 #include <string>
 
 #include "esp_sntp.h"
 #include "esp_netif_sntp.h"
 #include <sys/time.h>
+
+// Include ArduinoJson instead of cJSON
+#include <ArduinoJson.h>
 
 #if defined(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
 #include "app/gemini_live/GeminiLiveService.h"
@@ -128,7 +130,8 @@ void AppController::onEvent(esp_event_base_t base, int32_t id, void *data) {
           if (!skill_ptr_ptr || !*skill_ptr_ptr) return;
           auto* skill_call = *skill_ptr_ptr;
           
-          cJSON* response_root = cJSON_CreateObject();
+          // Allocate ArduinoJson dynamic document pool on the stack
+          JsonDocument response_doc;
           
           // Use type-safe generated Enums for dispatch switching
           switch (skill_call->type) {
@@ -138,8 +141,8 @@ void AppController::onEvent(esp_event_base_t base, int32_t id, void *data) {
                   int volume = skill_call->args.adjust_hardware_volume->volume_level;
                   
                   Board::getInstance().setPlayVolume(volume);
-                  cJSON_AddStringToObject(response_root, "status", "success");
-                  cJSON_AddNumberToObject(response_root, "new_volume", volume);
+                  response_doc["status"] = "success";
+                  response_doc["new_volume"] = volume;
                   break;
               }
               
@@ -147,27 +150,27 @@ void AppController::onEvent(esp_event_base_t base, int32_t id, void *data) {
                   std::string city = skill_call->args.get_current_weather->location;
                   LOGI_SYSTEM("Checking weather condition telemetry for city: %s", city.c_str());
                   
-                  cJSON_AddStringToObject(response_root, "status", "success");
-                  cJSON_AddStringToObject(response_root, "condition", "Sunny");
-                  cJSON_AddNumberToObject(response_root, "temperature", 72);
+                  response_doc["status"] = "success";
+                  response_doc["condition"] = "Sunny";
+                  response_doc["temperature"] = 72;
                   break;
               }
               
               default:
-                  cJSON_AddStringToObject(response_root, "status", "error");
-                  cJSON_AddStringToObject(response_root, "message", "Unsupported or unknown skill channel");
+                  response_doc["status"] = "error";
+                  response_doc["message"] = "Unsupported or unknown skill channel";
                   break;
           }
           
-          char* feedback_string = cJSON_PrintUnformatted(response_root);
-          if (feedback_string) {
+          // Serialize directly into a clean std::string (equivalent to unformatted print)
+          std::string feedback_string;
+          serializeJson(response_doc, feedback_string);
+
 #if defined(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
-              // Transmit acknowledgment structure natively back down into the open stream
-              GeminiLiveService::getInstance().sendToolExecutionReceipt(skill_call->call_id, feedback_string);
+          // Transmit acknowledgment structure natively back down into the open stream
+          GeminiLiveService::getInstance().sendToolExecutionReceipt(skill_call->call_id, feedback_string.c_str());
 #endif
-              cJSON_free(feedback_string);
-          }
-          cJSON_Delete(response_root);
+          // RAII guarantees response_doc's pool is automatically cleanly wiped here. No manual delete needed.
       }
   }
 }

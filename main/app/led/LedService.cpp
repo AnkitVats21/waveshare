@@ -16,16 +16,24 @@ LedService &LedService::getInstance() {
   return instance;
 }
 
-LedService::LedService() : IService("LedSvc"), TaskBase({"LedService", 3072, 2, 0}) {
+// FIX: Pinned to Core 1, Priority 1. Keeps Core 0 isolated and fully dedicated to I2S DMA, Wi-Fi, and AFE.
+LedService::LedService() : IService("LedSvc"), TaskBase({"LedService", 3072, 1, 1}) {
   m_current_command.mode        = LedMode::OFF;
   m_current_command.color       = OFF_LED;
   m_current_command.speed_ms    = 0;
   m_current_command.repeat_count = 0;
+
+  // FIX: Explicitly initialize a FreeRTOS Mutex handle instead of standard library locks
+  m_rtos_mutex = xSemaphoreCreateMutex();
 }
 
-// ---------------------------------------------------------------------------
-// begin() — backward-compat shim used by AppController::onStart()
-// ---------------------------------------------------------------------------
+// Clean up primitive allocation on teardown
+LedService::~LedService() {
+  if (m_rtos_mutex) {
+    vSemaphoreDelete(m_rtos_mutex);
+  }
+}
+
 bool LedService::begin(Board *board, EventBus * /*event_bus*/) {
   m_board = board;
   return onStart();
@@ -40,7 +48,6 @@ bool LedService::onStart() {
     return false;
   }
 
-  // IService::subscribeEvent routes all these events to onEvent()
   subscribeEvent(APP_EVENTS, AppEvent::LED_COMMAND);
   subscribeEvent(APP_EVENTS, AppEvent::LED_COLOR_UPDATE);
   subscribeEvent(ASSISTANT_EVENTS, AssistantEvent::VISUAL_STATE_CHANGED);
@@ -55,9 +62,6 @@ bool LedService::onStart() {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// IService::onEvent — single dispatch point, no manual cast needed
-// ---------------------------------------------------------------------------
 void LedService::onEvent(esp_event_base_t base, int32_t id, void *data) {
   if (base == ASSISTANT_EVENTS) {
     if (id == static_cast<int32_t>(AssistantEvent::VISUAL_STATE_CHANGED)) {
@@ -72,75 +76,75 @@ void LedService::onEvent(esp_event_base_t base, int32_t id, void *data) {
 }
 
 void LedService::applyEvent(int32_t id, void *event_data) {
-  std::lock_guard<std::mutex> lock(m_mutex);
+  // FIX: Protected safely with native RTOS binary structures
+  if (m_rtos_mutex && xSemaphoreTake(m_rtos_mutex, portMAX_DELAY) == pdTRUE) {
+    switch (static_cast<AppEvent>(id)) {
+    case AppEvent::LED_COMMAND:
+      if (event_data) {
+        m_current_command = *static_cast<LedEventData *>(event_data);
+        ESP_LOGD(TAG, "LedCommand updated: mode=%d", (int)m_current_command.mode);
+      }
+      break;
 
-  switch (static_cast<AppEvent>(id)) {
-  case AppEvent::LED_COMMAND:
-    if (event_data) {
-      m_current_command = *static_cast<LedEventData *>(event_data);
-      m_command_dirty   = true;
-      ESP_LOGD(TAG, "LedCommand updated: mode=%d", (int)m_current_command.mode);
+    case AppEvent::LED_COLOR_UPDATE:
+      if (event_data) {
+        RgbColor color         = *static_cast<RgbColor *>(event_data);
+        m_current_command.mode = LedMode::SOLID;
+        m_current_command.color = color;
+        m_current_command.speed_ms    = 0;
+        m_current_command.repeat_count = 0;
+      }
+      break;
+
+    default:
+      break;
     }
-    break;
-
-  case AppEvent::LED_COLOR_UPDATE:
-    if (event_data) {
-      RgbColor color         = *static_cast<RgbColor *>(event_data);
-      m_current_command.mode = LedMode::SOLID;
-      m_current_command.color = color;
-      m_current_command.speed_ms    = 0;
-      m_current_command.repeat_count = 0;
-      m_command_dirty = true;
-    }
-    break;
-
-  default:
-    break;
+    xSemaphoreGive(m_rtos_mutex);
   }
 }
 
 void LedService::applyVisualState(AssistantVisualState state) {
-  std::lock_guard<std::mutex> lock(m_mutex);
-
-  switch (state) {
-    case AssistantVisualState::Idle:
-      m_current_command = {LedMode::OFF, OFF_LED, 0, 0};
-      ESP_LOGI(TAG, "LED State: Idle (OFF)");
-      break;
-    case AssistantVisualState::Listening:
-      m_current_command = {LedMode::BREATH, GREEN_LED, 25, 0};
-      ESP_LOGI(TAG, "LED State: Listening (Green Breathe)");
-      break;
-    case AssistantVisualState::Connecting:
-      m_current_command = {LedMode::BLINK, BLUE_LED, 250, 0};
-      ESP_LOGI(TAG, "LED State: Connecting (Blue Blink)");
-      break;
-    case AssistantVisualState::Speaking:
-      m_current_command = {LedMode::RAINBOW, OFF_LED, 15, 0};
-      ESP_LOGI(TAG, "LED State: Speaking (Rainbow Cycle)");
-      break;
-    case AssistantVisualState::Thinking:
-      m_current_command = {LedMode::BREATH, BLUE_LED, 25, 0};
-      ESP_LOGI(TAG, "LED State: Thinking (Blue Breathe)");
-      break;
-    case AssistantVisualState::Offline:
-      m_current_command = {LedMode::SOLID, RED_LED, 0, 0};
-      ESP_LOGI(TAG, "LED State: Offline (Red Solid)");
-      break;
-    case AssistantVisualState::Recovering:
-      m_current_command = {LedMode::BLINK, ORANGE_LED, 300, 0};
-      ESP_LOGI(TAG, "LED State: Recovering (Orange Blink)");
-      break;
-    case AssistantVisualState::RateLimited:
-      m_current_command = {LedMode::BLINK, PURPLE_LED, 300, 0};
-      ESP_LOGI(TAG, "LED State: Rate Limited (Purple Blink)");
-      break;
-    case AssistantVisualState::Error:
-      m_current_command = {LedMode::BLINK, RED_LED, 250, 4};
-      ESP_LOGI(TAG, "LED State: Error (Red Blink x 4)");
-      break;
+  if (m_rtos_mutex && xSemaphoreTake(m_rtos_mutex, portMAX_DELAY) == pdTRUE) {
+    switch (state) {
+      case AssistantVisualState::Idle:
+        m_current_command = {LedMode::OFF, OFF_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Idle (OFF)");
+        break;
+      case AssistantVisualState::Listening:
+        m_current_command = {LedMode::BREATH, GREEN_LED, 25, 0};
+        ESP_LOGI(TAG, "LED State: Listening (Green Breathe)");
+        break;
+      case AssistantVisualState::Connecting:
+        m_current_command = {LedMode::BLINK, BLUE_LED, 250, 0};
+        ESP_LOGI(TAG, "LED State: Connecting (Blue Blink)");
+        break;
+      case AssistantVisualState::Speaking:
+        m_current_command = {LedMode::RAINBOW, OFF_LED, 15, 0};
+        ESP_LOGI(TAG, "LED State: Speaking (Rainbow Cycle)");
+        break;
+      case AssistantVisualState::Thinking:
+        m_current_command = {LedMode::BREATH, BLUE_LED, 25, 0};
+        ESP_LOGI(TAG, "LED State: Thinking (Blue Breathe)");
+        break;
+      case AssistantVisualState::Offline:
+        m_current_command = {LedMode::SOLID, RED_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Offline (Red Solid)");
+        break;
+      case AssistantVisualState::Recovering:
+        m_current_command = {LedMode::BLINK, ORANGE_LED, 300, 0};
+        ESP_LOGI(TAG, "LED State: Recovering (Orange Blink)");
+        break;
+      case AssistantVisualState::RateLimited:
+        m_current_command = {LedMode::BLINK, PURPLE_LED, 300, 0};
+        ESP_LOGI(TAG, "LED State: Rate Limited (Purple Blink)");
+        break;
+      case AssistantVisualState::Error:
+        m_current_command = {LedMode::BLINK, RED_LED, 250, 4};
+        ESP_LOGI(TAG, "LED State: Error (Red Blink x 4)");
+        break;
+    }
+    xSemaphoreGive(m_rtos_mutex);
   }
-  m_command_dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,11 +155,12 @@ void LedService::run() {
   bool     blink_state = false;
   float    breath_val  = 0.0f;
   bool     warned_not_ready = false;
+  LedMode  last_mode   = LedMode::OFF;
 
   while (m_running) {
     if (!m_board || !m_board->isLedStripInitialized()) {
       if (!warned_not_ready) {
-        ESP_LOGW(TAG, "LED strip is not initialized yet. Waiting before rendering assistant visual state.");
+        ESP_LOGW(TAG, "LED strip is not initialized yet. Waiting...");
         warned_not_ready = true;
       }
       vTaskDelay(pdMS_TO_TICKS(100));
@@ -164,19 +169,16 @@ void LedService::run() {
     warned_not_ready = false;
 
     LedEventData cmd;
-    bool dirty = false;
-
-    {
-      std::lock_guard<std::mutex> lock(m_mutex);
-      cmd   = m_current_command;
-      dirty = m_command_dirty;
-      m_command_dirty = false;
+    if (m_rtos_mutex && xSemaphoreTake(m_rtos_mutex, portMAX_DELAY) == pdTRUE) {
+      cmd = m_current_command;
+      xSemaphoreGive(m_rtos_mutex);
     }
 
-    if (dirty) {
+    if (cmd.mode != last_mode) {
       step        = 0;
       blink_state = false;
       breath_val  = 0.0f;
+      last_mode   = cmd.mode;
     }
 
     uint32_t delay_ms = 100;
@@ -196,10 +198,11 @@ void LedService::run() {
     case LedMode::BLINK:
       if (cmd.repeat_count > 0 && step >= (uint32_t)cmd.repeat_count * 2) {
         m_board->clearLeds();
-        {
-          std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_rtos_mutex && xSemaphoreTake(m_rtos_mutex, portMAX_DELAY) == pdTRUE) {
           m_current_command.mode = LedMode::OFF;
+          xSemaphoreGive(m_rtos_mutex);
         }
+        last_mode = LedMode::OFF; // FIX: Keep state variables explicitly synced to prevent loop iteration skip flickering
         delay_ms = 200;
         break;
       }
@@ -227,10 +230,13 @@ void LedService::run() {
       breath_val += 0.08f;
       if (breath_val >= M_PI) {
         breath_val = 0.0f;
-        if (cmd.repeat_count > 0 && ++step >= cmd.repeat_count) {
+        if (cmd.repeat_count > 0 && ++step >= (uint32_t)cmd.repeat_count) {
           m_board->clearLeds();
-          std::lock_guard<std::mutex> lock(m_mutex);
-          m_current_command.mode = LedMode::OFF;
+          if (m_rtos_mutex && xSemaphoreTake(m_rtos_mutex, portMAX_DELAY) == pdTRUE) {
+            m_current_command.mode = LedMode::OFF;
+            xSemaphoreGive(m_rtos_mutex);
+          }
+          last_mode = LedMode::OFF; // FIX: Keep state variables explicitly synced to prevent loop iteration skip flickering
         }
       }
       delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30;

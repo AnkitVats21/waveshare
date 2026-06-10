@@ -7,7 +7,9 @@
 
 #include <mutex>
 
+// Forward declarations to keep compilation fast
 class Board;
+class EventBus;
 
 /**
  * @brief Low-priority LED animation and state orchestrator service.
@@ -22,6 +24,12 @@ class LedService : public IService, public TaskBase {
 public:
   static LedService &getInstance();
 
+  // Disable copy and move semantics for strict Singleton pattern
+  LedService(const LedService&) = delete;
+  LedService& operator=(const LedService&) = delete;
+  LedService(LedService&&) = delete;
+  LedService& operator=(LedService&&) = delete;
+
   /**
    * @brief Initialize the service, subscribe to events, and start the thread.
    * @note Kept for backward compat with AppController::onStart().
@@ -35,10 +43,12 @@ public:
 
 protected:
   void run() override; ///< TaskBase animation loop
+  
+  // Virtual destructor prevents undefined behavior during base pointer destruction
+  ~LedService() override; 
 
 private:
   LedService();
-  ~LedService() = default;
 
   void applyEvent(int32_t id, void *event_data);
   void applyVisualState(AssistantVisualState state);
@@ -48,7 +58,6 @@ private:
 
   std::mutex  m_mutex;
   LedEventData m_current_command{};
-  bool         m_command_dirty = false;
-
+  SemaphoreHandle_t m_rtos_mutex;
   static constexpr const char *TAG = "LedSvc";
 };

@@ -174,8 +174,18 @@ void AudioService::onEvent(esp_event_base_t base, int32_t id, void *data) {
         m_turn_complete_pending = false;
         updateActivity();
 
+        if (m_current_hardware_rate != 16000) {
+          LOGI_AUDIO("Conversation mode requires 16kHz capture. Restoring from %lu Hz.",
+                     (unsigned long)m_current_hardware_rate);
+          AudioPipelineManager::pauseSpeaker();
+          Board::getInstance().setHardwareSampleRate(16000);
+          m_current_hardware_rate = 16000;
+          AudioPipelineManager::resumeSpeaker();
+        }
+
         ww.setAssistantActive(false);
         ww.setVadDeferred(false);
+        ww.resumeHardware();
         AudioPipelineManager::setRtpRxInterrupted(false);
         AudioPipelineManager::setRtpEnabled(true);
         m_board->setRecordGain(m_mic_gain);

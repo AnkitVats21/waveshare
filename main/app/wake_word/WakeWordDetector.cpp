@@ -25,13 +25,19 @@
 // ============================================================================
 
 WakeWordDetector::WakeWordDetector() {
-    m_feed_done   = xSemaphoreCreateBinary();
-    m_detect_done = xSemaphoreCreateBinary();
+    m_feed_done        = xSemaphoreCreateBinary();
+    m_detect_done      = xSemaphoreCreateBinary();
+    m_audio_event_group = xEventGroupCreate();
+    // Start in "running" state so tasks begin processing immediately after begin()
+    if (m_audio_event_group) {
+        xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
+    }
 }
 
 WakeWordDetector::~WakeWordDetector() {
-    if (m_feed_done)   vSemaphoreDelete(m_feed_done);
-    if (m_detect_done) vSemaphoreDelete(m_detect_done);
+    if (m_feed_done)         vSemaphoreDelete(m_feed_done);
+    if (m_detect_done)       vSemaphoreDelete(m_detect_done);
+    if (m_audio_event_group) vEventGroupDelete(m_audio_event_group);
 }
 
 WakeWordDetector &WakeWordDetector::getInstance() {
@@ -99,9 +105,13 @@ bool WakeWordDetector::begin() {
         return false;
     }
 
-    m_task_flag          = 1;
-    m_streaming_active   = false;
+    m_task_flag              = 1;
+    m_streaming_active       = false;
     m_interruption_triggered = false;
+    // Ensure both tasks start in the running state
+    if (m_audio_event_group) {
+        xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
+    }
 
     // 4. Launch tasks (detect on Core 1, feed on Core 0)
     xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", 8 * 1024,
@@ -122,6 +132,11 @@ void WakeWordDetector::stop() {
         return;
 
     m_task_flag = 0;
+    // Unblock any parked tasks so they can see m_task_flag == 0 and exit cleanly.
+    // Without this, a paused task would block forever on xEventGroupWaitBits.
+    if (m_audio_event_group) {
+        xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
+    }
     ESP_LOGI(TAG, "stop(): waiting for feedTask...");
     xSemaphoreTake(m_feed_done,   pdMS_TO_TICKS(3000));
     ESP_LOGI(TAG, "stop(): waiting for detectTask...");
@@ -176,11 +191,20 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
     int warmup_chunks = 50;
 
     while (m_task_flag) {
-        if (!m_hw_valid) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        // Use a timed wait so paused tasks still periodically service TWDT.
+        EventBits_t bits = xEventGroupWaitBits(m_audio_event_group,
+                                               AUDIO_RUNNING_BIT,
+                                               pdFALSE,
+                                               pdTRUE,
+                                               pdMS_TO_TICKS(250));
+
+        if ((bits & AUDIO_RUNNING_BIT) == 0) {
             esp_task_wdt_reset();
             continue;
         }
+
+        // Re-check task flag after waking — stop() may have unblocked us to exit
+        if (!m_task_flag) break;
 
         // Sole hardware reader — MicCaptureTask must stay soft-disabled
         m_feed_source->readFeedData(i2s_buff, buf_bytes);
@@ -189,7 +213,8 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
             --warmup_chunks;
             std::memset(i2s_buff, 0, buf_bytes);
         }
-
+        // Sending data to AFE SR engine. The feed() call is thread-safe and
+        // returns immediately after copying data into the ring buffer.
         m_afe_handle->feed(afe_data, i2s_buff);
         esp_task_wdt_reset();
     }
@@ -222,22 +247,29 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     auto &bm = BufferManager::getInstance();
 
     while (m_task_flag) {
-        if (!m_hw_valid) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        // Timed wait keeps the task watchdog satisfied while processing is paused.
+        EventBits_t bits = xEventGroupWaitBits(m_audio_event_group,
+                                               AUDIO_RUNNING_BIT,
+                                               pdFALSE,
+                                               pdTRUE,
+                                               pdMS_TO_TICKS(250));
+
+        if ((bits & AUDIO_RUNNING_BIT) == 0) {
             esp_task_wdt_reset();
             continue;
         }
 
+        // Re-check task flag after waking — stop() may have unblocked us to exit
+        if (!m_task_flag) break;
+
+        // Safe to call fetch() — feedTask is guaranteed to be running too
         afe_fetch_result_t *res = m_afe_handle->fetch(afe_data);
         if (!res || res->ret_value == ESP_FAIL) {
-            if (!m_hw_valid) {
-                // If hardware is paused, this is a transient starvation. Skip and retry.
-                vTaskDelay(pdMS_TO_TICKS(10));
-                esp_task_wdt_reset();
-                continue;
-            }
-            ESP_LOGE(TAG, "AFE fetch error");
-            break;
+            // Transient starvation on resume edge; back off briefly and retry.
+            ESP_LOGW(TAG, "AFE fetch returned null/fail — possible resume edge, retrying");
+            esp_task_wdt_reset();
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
         }
 
         // ── Stream AFE-processed audio into MIC_TX_BUF ───────────────────────
@@ -303,4 +335,32 @@ void WakeWordDetector::stopStreaming() {
         m_afe_handle->enable_wakenet(m_afe_data);
         ESP_LOGI(TAG, "stopStreaming(): AFE WakeNet re-armed successfully");
     }
+}
+
+// ============================================================================
+// pauseProcessing / resumeProcessing — EventGroup-based task gating
+// ============================================================================
+
+void WakeWordDetector::pauseProcessing() {
+    ESP_LOGI(TAG, "pauseProcessing(): parking feedTask and detectTask...");
+    // 1. Drop RUNNING bit — both tasks will block at the top of their loops
+    //    the next time they reach xEventGroupWaitBits (within one loop iteration).
+    if (m_audio_event_group) {
+        xEventGroupClearBits(m_audio_event_group, AUDIO_RUNNING_BIT);
+    }
+    // 2. Flush the AFE internal ring buffer so stale audio from before the
+    //    clock switch doesn't cause pitch/sync artifacts when we resume.
+    if (m_afe_handle && m_afe_data) {
+        m_afe_handle->reset_buffer(m_afe_data);
+    }
+    ESP_LOGI(TAG, "pauseProcessing(): pipeline paused (tasks will block on next loop).");
+}
+
+void WakeWordDetector::resumeProcessing() {
+    ESP_LOGI(TAG, "resumeProcessing(): releasing feedTask and detectTask...");
+    // Set RUNNING bit — both tasks unblock simultaneously in the FreeRTOS scheduler
+    if (m_audio_event_group) {
+        xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
+    }
+    ESP_LOGI(TAG, "resumeProcessing(): pipeline resumed.");
 }
