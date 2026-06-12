@@ -246,6 +246,8 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     // Convenience ref to the ring buffer we stream beamformed audio into
     auto &bm = BufferManager::getInstance();
 
+    int silence_frames = 0;
+
     while (m_task_flag) {
         // Timed wait keeps the task watchdog satisfied while processing is paused.
         EventBits_t bits = xEventGroupWaitBits(m_audio_event_group,
@@ -314,7 +316,18 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
             if (res->vad_state == VAD_SPEECH) {
                 // Update inactivity timer on active user speech (completely immune to speaker echo)
                 AudioService::getInstance().updateActivity();
+                silence_frames = 0;
+            } else {
+                silence_frames++;
+                if (silence_frames >= SILENCE_TIMEOUT_FRAMES) {
+                    LOGW_AUDIO("VAD: Silence threshold reached (%d ms). Suspending stream.", (int)VAD_SILENCE_TIMEOUT_MS);
+                    m_streaming_active = false; // Suspend immediately to stop pump task
+                    silence_frames = 0;
+                    m_listener->onVadTimeout();
+                }
             }
+        } else {
+            silence_frames = 0;
         }
 
         esp_task_wdt_reset();

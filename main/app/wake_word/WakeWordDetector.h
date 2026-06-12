@@ -120,6 +120,6 @@ private:
     volatile bool m_interruption_triggered = false;
 
     // ---- Config ----
-    static constexpr int VAD_SILENCE_TIMEOUT_MS = 3000;
+    static constexpr int VAD_SILENCE_TIMEOUT_MS = 10000;
     static constexpr const char *TAG = "WakeWord";
 };

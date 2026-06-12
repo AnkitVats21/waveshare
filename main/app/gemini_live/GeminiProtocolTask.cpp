@@ -78,10 +78,10 @@ GeminiProtocolTask::GeminiProtocolTask(const Config& cfg) : TaskBase(cfg) {
     );
     assert(m_static_pcm_scratch_arena != nullptr);
 
-    m_static_pcm_downsampled_arena = static_cast<uint8_t*>(
-        heap_caps_malloc(STATIC_PCM_ARENA_MAX_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-    );
-    assert(m_static_pcm_downsampled_arena != nullptr);
+    // m_static_pcm_downsampled_arena = static_cast<uint8_t*>(
+    //     heap_caps_malloc(STATIC_PCM_ARENA_MAX_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+    // );
+    // assert(m_static_pcm_downsampled_arena != nullptr);
 
     m_static_payload_arena = static_cast<char*>(
         heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
@@ -177,25 +177,20 @@ void GeminiProtocolTask::run() {
         vTaskDelay(pdMS_TO_TICKS(100)); // Relinquish CPU context slice
     }
 
-    if (m_client) {
-        esp_websocket_client_stop(m_client);
-        esp_websocket_client_destroy(m_client);
-        m_client = nullptr;
-    }
+    m_client.destroy();
 }
 
 void GeminiProtocolTask::transmitSetupHandshake() {
-    if (!m_client || !esp_websocket_client_is_connected(m_client)) return;
+    if (!m_client.isConnected()) return;
     
     LOGI_NET("Uplinking auto-generated JSON schema compilation payload...");
-    esp_websocket_client_send_text(m_client, 
-                                   GeminiSkills::SETUP_HANDSHAKE_JSON, 
-                                   strlen(GeminiSkills::SETUP_HANDSHAKE_JSON), 
-                                   pdMS_TO_TICKS(1000));
+    m_client.sendText(GeminiSkills::SETUP_HANDSHAKE_JSON, 
+                      strlen(GeminiSkills::SETUP_HANDSHAKE_JSON), 
+                      pdMS_TO_TICKS(1000));
 }
 
 void GeminiProtocolTask::transmitToolResponse(const char* call_id, const char* json_result) {
-    if (!m_client || !esp_websocket_client_is_connected(m_client) || !call_id) return;
+    if (!m_client.isConnected() || !call_id) return;
     
     cJSON* root = cJSON_CreateObject();
     cJSON* toolResponse = cJSON_CreateObject();
@@ -218,7 +213,7 @@ void GeminiProtocolTask::transmitToolResponse(const char* call_id, const char* j
     
     char* payload = cJSON_PrintUnformatted(root);
     if (payload) {
-        esp_websocket_client_send_text(m_client, payload, strlen(payload), pdMS_TO_TICKS(1000));
+        m_client.sendText(payload, strlen(payload), pdMS_TO_TICKS(1000));
         cJSON_free(payload);
     }
     cJSON_Delete(root);
@@ -232,7 +227,7 @@ void GeminiProtocolTask::transmitAudioUplink(const char* base64_pcm) {
         }
         return;
     }
-    if (!esp_websocket_client_is_connected(m_client)) {
+    if (!m_client.isConnected()) {
         static int ws_not_connected_count = 0;
         if (++ws_not_connected_count % 100 == 1) {
             LOGW_NET("transmitAudioUplink: WebSocket NOT connected (count=%d)", ws_not_connected_count);
@@ -251,10 +246,9 @@ void GeminiProtocolTask::transmitAudioUplink(const char* base64_pcm) {
     int payload_len = snprintf(m_static_payload_arena, 4096, 
                                "{\"realtimeInput\":{\"audio\":{\"mimeType\":\"audio/pcm;rate=16000\",\"data\":\"%s\"}}}", 
                                base64_pcm);
-                               
     if (payload_len > 0 && payload_len < 4096) {
         // Increased write timeout to 2000ms to allow LwIP TCP buffers to flush over transient Wi-Fi jitter safely
-        int ret = esp_websocket_client_send_text(m_client, m_static_payload_arena, payload_len, pdMS_TO_TICKS(2000));
+        int ret = m_client.sendText(m_static_payload_arena, payload_len, pdMS_TO_TICKS(2000));
         static int uplink_count = 0;
         if (++uplink_count % 50 == 1) {
             LOGI_NET("Audio uplink #%d (b64_len=%d, send_ret=%d)", uplink_count, (int)strlen(base64_pcm), ret);
@@ -264,182 +258,115 @@ void GeminiProtocolTask::transmitAudioUplink(const char* base64_pcm) {
 
 void GeminiProtocolTask::sendTextDirect(const char* text) {
     if (isConnected() && text) {
-        esp_websocket_client_send_text(m_client, text, strlen(text), pdMS_TO_TICKS(1000));
+        m_client.sendText(text, strlen(text), pdMS_TO_TICKS(1000));
     }
 }
 
 void GeminiProtocolTask::processIncomingFrame(char* payload, size_t length) {
-    // IN-PLACE OPTIMIZATION: Temporarily terminate the payload string container 
-    // to avoid an internal duplicate string allocation loop.
     char old_char = payload[length];
     payload[length] = '\0';
 
-    if (length < 500) {
-        LOGI_NET("processIncomingFrame: received %d bytes: %s", (int)length, payload);
-    } else {
-        LOGI_NET("processIncomingFrame: received %d bytes", (int)length);
+    // Fast string scanning for audio data
+    const char* data_key = "\"data\": \"";
+    char* data_start = strstr(payload, data_key);
+    
+    // Check alternative formatting just in case
+    if (!data_start) {
+        data_key = "\"data\":\"";
+        data_start = strstr(payload, data_key);
     }
 
-    cJSON* root = cJSON_Parse(payload);
-    if (!root) {
-        LOGW_NET("processIncomingFrame: cJSON_Parse FAILED (first 100 chars: %.100s)", payload);
-        payload[length] = old_char; // Restore structure safely
-        return;
-    }
+    if (data_start) {
+        data_start += strlen(data_key);
+        char* data_end = strchr(data_start, '"');
+        if (data_end) {
+            // Found base64 string!
+            *data_end = '\0'; // Temporarily terminate base64 string
+            size_t b64_len = data_end - data_start;
+            size_t pcm_out_len = 0;
 
-    cJSON* errorObj = cJSON_GetObjectItem(root, "error");
-    if (errorObj) {
-        cJSON* codeObj = cJSON_GetObjectItem(errorObj, "code");
-        cJSON* messageObj = cJSON_GetObjectItem(errorObj, "message");
-        cJSON* statusObj = cJSON_GetObjectItem(errorObj, "status");
+            if (!g_assistant_currently_talking.load(std::memory_order_relaxed)) {
+                AudioService::getInstance().enterAssistantPlaybackModeNow();
+                g_assistant_currently_talking.store(true, std::memory_order_relaxed);
+                EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_AUDIO_STARTED, 0);
+            }
 
-        int code = codeObj ? codeObj->valueint : 0;
-        const char* message = messageObj ? messageObj->valuestring : "Unknown error";
-        const char* status = statusObj ? statusObj->valuestring : "UNKNOWN";
-
-        ESP_LOGE("GeminiError", "==================================================");
-        ESP_LOGE("GeminiError", "!!! GEMINI API SERVER ERROR !!!");
-        ESP_LOGE("GeminiError", "Status:  %s", status);
-        ESP_LOGE("GeminiError", "Code:    %d", code);
-        ESP_LOGE("GeminiError", "Message: %s", message);
-        if (code == 429) {
-            ESP_LOGE("GeminiError", "--------------------------------------------------");
-            ESP_LOGE("GeminiError", "--> WARNING: You are being rate-limited by Google AI Studio!");
-            ESP_LOGE("GeminiError", "--> Please wait a moment before resuming conversation.");
-        }
-        ESP_LOGE("GeminiError", "==================================================");
-
-        if (code == 429) {
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::QUOTA_EXCEEDED, code);
-        } else {
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::SERVER_ERROR, code);
-        }
-    }
-
-    cJSON* goAwayObj = cJSON_GetObjectItem(root, "goAway");
-    if (goAwayObj) {
-        cJSON* timeLeftObj = cJSON_GetObjectItem(goAwayObj, "timeLeft");
-        const char* time_left = timeLeftObj ? timeLeftObj->valuestring : "unknown";
-
-        LOGW_NET("Gemini Live Engine: Received 'goAway' signal from server (timeLeft: %s).", time_left);
-        LOGW_NET("Gemini Live Engine: Initiating graceful socket closure from our end...");
-
-        m_state.store(ConnectionState::GOING_AWAY, std::memory_order_relaxed);
-
-        EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::GEMINI_GO_AWAY, 0);
-
-        // 2. Send standard WebSocket Close Frame (opcode 0x08) to the server
-        if (m_client) {
-            esp_websocket_client_close(m_client, pdMS_TO_TICKS(1500));
-        }
-    }
-
-    cJSON* serverContent = cJSON_GetObjectItem(root, "serverContent");
-    if (serverContent) {
-        
-        // --- 1. Audio Streaming Pipeline Processing ---
-        cJSON* modelTurn = cJSON_GetObjectItem(serverContent, "modelTurn");
-        if (modelTurn) {
+            mbedtls_base64_decode(nullptr, 0, &pcm_out_len, reinterpret_cast<const unsigned char*>(data_start), b64_len);
             
-            // Process all parts in the model's turn (handles mixed text transcripts and audio data robustly)
-            cJSON* parts = cJSON_GetObjectItem(modelTurn, "parts");
-            if (parts && cJSON_IsArray(parts)) {
-                int parts_count = cJSON_GetArraySize(parts);
-                for (int p = 0; p < parts_count; ++p) {
-                    cJSON* part = cJSON_GetArrayItem(parts, p);
-                    if (!part) continue;
-
-                    // A. Extract and print text responses (what the assistant is saying)
-                    cJSON* textObj = cJSON_GetObjectItem(part, "text");
-                    if (textObj && cJSON_IsString(textObj)) {
-                        ESP_LOGW("GeminiText", ">>> ASSISTANT: %s", textObj->valuestring);
-                    }
-
-                    // B. Extract and process audio streaming payload
-                    cJSON* inlineData = cJSON_GetObjectItem(part, "inlineData");
-                    if (inlineData) {
-                        // Fire ASSISTANT_TALKING event on the absolute first audio packet
-                        if (!g_assistant_currently_talking.load(std::memory_order_relaxed)) {
-                            AudioService::getInstance().enterAssistantPlaybackModeNow();
-                            g_assistant_currently_talking.store(true, std::memory_order_relaxed);
-                            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_AUDIO_STARTED, 0);
-                        }
-
-                        cJSON* data = cJSON_GetObjectItem(inlineData, "data");
-                        if (data && cJSON_IsString(data)) {
-                            const char* base64_pcm = data->valuestring;
-                            size_t b64_len = strlen(base64_pcm);
-                            size_t pcm_out_len = 0;
-                            
-                            // Dry-run sizing extraction
-                            mbedtls_base64_decode(nullptr, 0, &pcm_out_len, 
-                                                 reinterpret_cast<const unsigned char*>(base64_pcm), b64_len);
-                                                 
-                            if (pcm_out_len > 0 && pcm_out_len <= STATIC_PCM_ARENA_MAX_SIZE) {
-                                size_t written = 0;
-                                if (mbedtls_base64_decode(m_static_pcm_scratch_arena, pcm_out_len, &written, 
-                                                         reinterpret_cast<const unsigned char*>(base64_pcm), b64_len) == 0) {
-                                    // Native 24kHz Playback (Zero Downsampling Overhead!):
-                                    // We push the decoded 24kHz PCM directly to the speaker queue.
-                                    if (written > 0) {
-                                        BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20));
-                                        
-                                        // Update activity timeout supervisor
-                                        AudioService::getInstance().updateActivity();
-                                    }
-                                }
-                            }
-                        }
+            if (pcm_out_len > 0 && pcm_out_len <= STATIC_PCM_ARENA_MAX_SIZE) {
+                size_t written = 0;
+                if (mbedtls_base64_decode(m_static_pcm_scratch_arena, pcm_out_len, &written, reinterpret_cast<const unsigned char*>(data_start), b64_len) == 0) {
+                    if (written > 0) {
+                        BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20));
+                        AudioService::getInstance().updateActivity();
                     }
                 }
             }
+            *data_end = '"'; // Restore original character
+        }
+    } else {
+        // Not an audio frame. Dump to console for debugging/monitoring
+        if (length < 1000) {
+            ESP_LOGW("GeminiData", "Received non-audio frame: %s", payload);
+        } else {
+            ESP_LOGW("GeminiData", "Received LARGE non-audio frame (%d bytes)", (int)length);
         }
 
-        // B. Parse Turn Conclusion (End Speaking) — at serverContent level per API docs
-        cJSON* turnComplete = cJSON_GetObjectItem(serverContent, "turnComplete");
-        if (turnComplete && cJSON_IsTrue(turnComplete)) {
+        // Check for turn completion signal
+        if (strstr(payload, "\"turnComplete\": true") || strstr(payload, "\"turnComplete\":true")) {
             g_assistant_currently_talking.store(false, std::memory_order_relaxed);
             LOGI_NET("Assistant turn complete");
             EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE, 0);
         }
 
-        // C. Parse Interruption Signal (Barge-In detected by server-side VAD)
-        cJSON* interruptedObj = cJSON_GetObjectItem(serverContent, "interrupted");
-        if (interruptedObj && cJSON_IsTrue(interruptedObj)) {
-            g_assistant_currently_talking.store(false, std::memory_order_relaxed);
-            LOGI_NET("Server detected barge-in — flushing speaker buffer");
-            BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::ASSISTANT_TURN_COMPLETE, 0);
+        // Check for server errors
+        if (strstr(payload, "\"error\"")) {
+            LOGE_NET("Gemini API SERVER ERROR detected in frame!");
+            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::SERVER_ERROR, 0);
+        }
+
+        // Check for goAway
+        if (strstr(payload, "\"goAway\"")) {
+            LOGW_NET("Gemini Live Engine: Received 'goAway' signal from server.");
+            m_state.store(ConnectionState::GOING_AWAY, std::memory_order_relaxed);
+            EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::GEMINI_GO_AWAY, 0);
+            if (m_client) m_client.close(pdMS_TO_TICKS(1500));
         }
         
-        // --- 2. Asynchronous Hardware Tool Call Processing ---
-        cJSON* toolCall = cJSON_GetObjectItem(serverContent, "toolCall");
-        if (toolCall) {
-            cJSON* functionCalls = cJSON_GetObjectItem(toolCall, "functionCalls");
-            if (functionCalls && cJSON_IsArray(functionCalls)) {
-                cJSON* funcCall = cJSON_GetArrayItem(functionCalls, 0);
-                if (funcCall) {
-                    cJSON* nameObj = cJSON_GetObjectItem(funcCall, "name");
-                    cJSON* idObj = cJSON_GetObjectItem(funcCall, "id");
-                    cJSON* argsObj = cJSON_GetObjectItem(funcCall, "args");
-                    
-                    if (nameObj && idObj && argsObj) {
-                        // Wipe our persistent internal member variable cleanly
-                        std::memset(&m_static_skill_event_slot, 0, sizeof(m_static_skill_event_slot));
-                        std::strncpy(m_static_skill_event_slot.call_id, idObj->valuestring, sizeof(m_static_skill_event_slot.call_id) - 1);
-                        
-                        if (GeminiSkills::decode_incoming_arguments(nameObj->valuestring, argsObj, m_static_skill_event_slot)) {
-                            LOGI_NET("Tool request successfully isolated: %s", nameObj->valuestring);
-                            EventBus::getInstance().publish(APP_EVENTS, AppEvent::GEMINI_TOOL_CALL, &m_static_skill_event_slot);
-                        }
-                    }
-                }
+        // Let tool calls be parsed by cJSON if they exist
+        if (strstr(payload, "\"toolCall\"")) {
+            cJSON* root = cJSON_Parse(payload);
+            if (root) {
+                cJSON* toolCall = cJSON_GetObjectItem(root, "toolCall");
+                if (toolCall) handleToolCall(toolCall);
+                cJSON_Delete(root);
             }
         }
     }
+
+    payload[length] = old_char;
+}
+
+void GeminiProtocolTask::handleToolCall(cJSON* toolCall) {
+    cJSON* functionCalls = cJSON_GetObjectItem(toolCall, "functionCalls");
+    if (!functionCalls || !cJSON_IsArray(functionCalls)) return;
+
+    cJSON* funcCall = cJSON_GetArrayItem(functionCalls, 0);
+    if (!funcCall) return;
+
+    cJSON* nameObj = cJSON_GetObjectItem(funcCall, "name");
+    cJSON* idObj = cJSON_GetObjectItem(funcCall, "id");
+    cJSON* argsObj = cJSON_GetObjectItem(funcCall, "args");
     
-    cJSON_Delete(root);
-    payload[length] = old_char; // Restore standard string profile state
+    if (nameObj && idObj && argsObj) {
+        std::memset(&m_static_skill_event_slot, 0, sizeof(m_static_skill_event_slot));
+        std::strncpy(m_static_skill_event_slot.call_id, idObj->valuestring, sizeof(m_static_skill_event_slot.call_id) - 1);
+        
+        if (GeminiSkills::decode_incoming_arguments(nameObj->valuestring, argsObj, m_static_skill_event_slot)) {
+            LOGI_NET("Tool request successfully isolated: %s", nameObj->valuestring);
+            EventBus::getInstance().publish(APP_EVENTS, AppEvent::GEMINI_TOOL_CALL, &m_static_skill_event_slot);
+        }
+    }
 }
 
 void GeminiProtocolTask::connect() {
@@ -478,8 +405,8 @@ void GeminiProtocolTask::closeConnection() {
 
         if (m_client) {
             m_state.store(ConnectionState::DISCONNECTED, std::memory_order_relaxed);
-            esp_websocket_client_close(m_client, pdMS_TO_TICKS(1000));
-            esp_websocket_client_stop(m_client);
+            m_client.close(pdMS_TO_TICKS(1000));
+            m_client.stop();
         }
     }
 }
@@ -493,8 +420,8 @@ bool GeminiProtocolTask::startClientConnection() {
     LOGI_NET("Gemini Live Engine: Connecting to WebSocket...");
     m_state.store(ConnectionState::CONNECTING, std::memory_order_relaxed);
     g_assistant_currently_talking.store(false, std::memory_order_relaxed);
-    esp_websocket_client_stop(m_client);
-    esp_err_t start_err = esp_websocket_client_start(m_client);
+    m_client.stop();
+    esp_err_t start_err = m_client.start();
     if (start_err != ESP_OK) {
         LOGE_NET("esp_websocket_client_start failed with err=0x%x", (unsigned)start_err);
         m_state.store(ConnectionState::ERROR_STATE, std::memory_order_relaxed);
@@ -538,13 +465,12 @@ bool GeminiProtocolTask::ensureClientInitialized() {
     ws_cfg.crt_bundle_attach = nullptr;
 #endif
 
-    m_client = esp_websocket_client_init(&ws_cfg);
-    if (!m_client) {
+    if (!m_client.init(ws_cfg)) {
         LOGE_NET("Failed to initialize Gemini websocket client handle.");
         return false;
     }
 
-    esp_websocket_register_events(m_client, WEBSOCKET_EVENT_ANY, websocketEventHandler, this);
+    m_client.registerEvents(websocketEventHandler, this);
     LOGI_NET("Gemini websocket client initialized successfully.");
     return true;
 }
