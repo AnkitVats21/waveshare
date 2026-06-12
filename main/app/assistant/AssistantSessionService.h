@@ -32,6 +32,9 @@ public:
     void onStop() override;
     void onEvent(esp_event_base_t base, int32_t id, void* data) override;
 
+    /** @brief Resets the conversational idle timer to prevent premature session closure. */
+    // void resetIdleTimer();
+
     // Zero-overhead state retrieval utilizing native memory-fence reads
     AssistantState getState() const { 
         return static_cast<AssistantState>(__atomic_load_n(&m_state_atomic, __ATOMIC_RELAXED)); 

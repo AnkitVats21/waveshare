@@ -179,8 +179,8 @@ void AudioService::onVadTimeout() {
 }
 
 void AudioService::onUserSpeechDetected() {
-  LOGW_AUDIO("Barge-in / User speech detected. Publishing USER_SPEECH_DETECTED.");
-  EventBus::getInstance().publish(ASSISTANT_EVENTS, AssistantEvent::USER_SPEECH_DETECTED, 0);
+  // Barge-in / User speech detected during assistant playback is ignored in stable half-duplex mode.
+  LOGW_AUDIO("User speech detected during assistant playback; ignoring (Half-Duplex).");
 }
 
 // ============================================================================
@@ -306,8 +306,8 @@ void AudioService::checkInactivityTimeout() {
   uint64_t now_ms = esp_timer_get_time() / 1000;
   uint64_t inactive_ms = now_ms - m_last_activity_ms;
 
-  if (inactive_ms >= 10000) { // 10-second silence timeout threshold for comfortable conversational pacing
-    LOGW_AUDIO("Inactivity Timeout: 10 seconds of silence detected. Stopping session...");
+  if (inactive_ms >= 120000) { // 60-second silence timeout threshold for comfortable conversational pacing
+    LOGW_AUDIO("Inactivity Timeout: 60 seconds of silence detected. Stopping session...");
     m_session_active = false;
     
     // Disable active audio streaming and re-arm WakeNet
@@ -357,12 +357,12 @@ void AudioService::run() {
     }
 
     // Evaluate session timeout every 50ms
-    checkInactivityTimeout();
+    // checkInactivityTimeout(); // DISABLED: Relying on pure WebSocket disconnection lifecycle per user request
 
     // Log PSRAM buffer health every 30 s (600 * 50ms = 30000ms)
-    if (++ticks >= 600) {
-      BufferManager::getInstance().dumpStats();
-      ticks = 0;
-    }
+    // if (++ticks >= 600) {
+    //   BufferManager::getInstance().dumpStats();
+    //   ticks = 0;
+    // }
   }
 }

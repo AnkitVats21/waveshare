@@ -1,7 +1,7 @@
 #pragma once
 
 #include "common/TaskBase.h"
-#include "esp_websocket_client.h"
+#include "WssClient.h"
 #include "gemini_skills_generated.h"
 #include "esp_heap_caps.h"
 #include <vector>
@@ -52,7 +52,7 @@ public:
     };
 
     ConnectionState getConnectionState() const { return m_state.load(std::memory_order_relaxed); }
-    bool isConnected() { return getConnectionState() == ConnectionState::CONNECTED; }
+    bool isConnected() { return m_client.isConnected(); }
     void connect();
     void closeConnection();
     void forceReconnect() { connect(); }
@@ -69,11 +69,12 @@ private:
     bool ensureClientInitialized();
     void transmitSetupHandshake();
     void processIncomingFrame(char* payload, size_t length);
+    void handleToolCall(struct cJSON* toolCall);
 
     static void websocketEventHandler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
     bool startClientConnection();
 
-    esp_websocket_client_handle_t m_client = nullptr;
+    WssClient m_client;
     std::atomic<ConnectionState> m_state{ConnectionState::DISCONNECTED};
     std::atomic<bool> m_connect_requested{false};
     std::mutex m_client_mutex;
@@ -81,7 +82,7 @@ private:
 
     // Persistent Zero-Allocation Arenas for Audio & Skill Tool execution
     uint8_t* m_static_pcm_scratch_arena = nullptr;
-    uint8_t* m_static_pcm_downsampled_arena = nullptr;
+    // uint8_t* m_static_pcm_downsampled_arena = nullptr;
     char* m_static_payload_arena = nullptr;
     static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 24576; // 24KB max decoded output ceiling
     GeminiSkills::DecodedSkillCall m_static_skill_event_slot;

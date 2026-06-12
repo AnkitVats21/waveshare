@@ -111,36 +111,36 @@ void LedService::applyVisualState(AssistantVisualState state) {
         ESP_LOGI(TAG, "LED State: Idle (OFF)");
         break;
       case AssistantVisualState::Listening:
-        m_current_command = {LedMode::BREATH, GREEN_LED, 25, 0};
-        ESP_LOGI(TAG, "LED State: Listening (Green Breathe)");
+        m_current_command = {LedMode::SOLID, GREEN_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Listening (Green Solid)");
         break;
       case AssistantVisualState::Connecting:
-        m_current_command = {LedMode::BLINK, BLUE_LED, 250, 0};
-        ESP_LOGI(TAG, "LED State: Connecting (Blue Blink)");
+        m_current_command = {LedMode::SOLID, BLUE_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Connecting (Blue Solid)");
         break;
       case AssistantVisualState::Speaking:
-        m_current_command = {LedMode::RAINBOW, OFF_LED, 15, 0};
-        ESP_LOGI(TAG, "LED State: Speaking (Rainbow Cycle)");
+        m_current_command = {LedMode::SOLID, PURPLE_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Speaking (Purple Solid)");
         break;
       case AssistantVisualState::Thinking:
-        m_current_command = {LedMode::BREATH, BLUE_LED, 25, 0};
-        ESP_LOGI(TAG, "LED State: Thinking (Blue Breathe)");
+        m_current_command = {LedMode::SOLID, BLUE_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Thinking (Blue Solid)");
         break;
       case AssistantVisualState::Offline:
         m_current_command = {LedMode::SOLID, RED_LED, 0, 0};
         ESP_LOGI(TAG, "LED State: Offline (Red Solid)");
         break;
       case AssistantVisualState::Recovering:
-        m_current_command = {LedMode::BLINK, ORANGE_LED, 300, 0};
-        ESP_LOGI(TAG, "LED State: Recovering (Orange Blink)");
+        m_current_command = {LedMode::SOLID, ORANGE_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Recovering (Orange Solid)");
         break;
       case AssistantVisualState::RateLimited:
-        m_current_command = {LedMode::BLINK, PURPLE_LED, 300, 0};
-        ESP_LOGI(TAG, "LED State: Rate Limited (Purple Blink)");
+        m_current_command = {LedMode::SOLID, PURPLE_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Rate Limited (Purple Solid)");
         break;
       case AssistantVisualState::Error:
-        m_current_command = {LedMode::BLINK, RED_LED, 250, 4};
-        ESP_LOGI(TAG, "LED State: Error (Red Blink x 4)");
+        m_current_command = {LedMode::SOLID, RED_LED, 0, 0};
+        ESP_LOGI(TAG, "LED State: Error (Red Solid)");
         break;
     }
     xSemaphoreGive(m_rtos_mutex);

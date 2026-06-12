@@ -1,6 +1,7 @@
 #include "AssistantSessionService.h"
 #include "app/event/EventBus.h"
 #include "app/audio/AudioAlertPlayer.h"
+#include "app/gemini_live/GeminiProtocolTask.h"
 #include "common/AppLogger.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -208,6 +209,7 @@ void AssistantSessionService::transitionTo(AssistantState newState) {
         case AssistantState::Idle:
             visState = (wifi_status != 0) ? AssistantVisualState::Idle : AssistantVisualState::Offline;
             PUBLISH_ASSISTANT_EVENT(AUDIO_RETURN_TO_WAKE_MODE_16K, 0);
+            // Persistent WebSocket: We do NOT publish TRANSPORT_CLOSE here.
             break;
 
         case AssistantState::StartingSession:
@@ -237,9 +239,9 @@ void AssistantSessionService::transitionTo(AssistantState newState) {
 
         case AssistantState::WaitingForFollowup:
             visState = AssistantVisualState::Thinking;
-            if (m_idle_timer) {
+            /* if (m_idle_timer) {
                 esp_timer_start_once(m_idle_timer, 30ULL * 1000 * 1000); // 30s window
-            }
+            } */
             break;
 
         case AssistantState::Closing:
@@ -285,6 +287,14 @@ void AssistantSessionService::transitionTo(AssistantState newState) {
     }
 }
 
+// void AssistantSessionService::resetIdleTimer() {
+//     FreeRTOSLockGuard lock(m_rtos_mutex);
+//     if (m_idle_timer && static_cast<AssistantState>(__atomic_load_n(&m_state_atomic, __ATOMIC_RELAXED)) == AssistantState::WaitingForFollowup) {
+//         esp_timer_stop(m_idle_timer);
+//         esp_timer_start_once(m_idle_timer, 30ULL * 1000 * 1000); // 30s window
+//     }
+// }
+
 void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /*data*/) {
     // Native FreeRTOS lock guard allocation avoids the standard POSIX wrapper overhead entirely
     FreeRTOSLockGuard lock(m_rtos_mutex);
@@ -308,7 +318,13 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
             if (event == AssistantEvent::WAKE_WORD_DETECTED) {
                 if (__atomic_load_n(&m_wifi_available_atomic, __ATOMIC_RELAXED) != 0) {
                     transitionTo(AssistantState::StartingSession);
-                    transitionTo(AssistantState::Connecting);
+
+                    if (GeminiProtocolTask::getInstance().isConnected()) {
+                        LOGI_SYSTEM("Persistent WS active: skipping Connecting state.");
+                        transitionTo(AssistantState::StreamingUserAudio);
+                    } else {
+                        transitionTo(AssistantState::Connecting);
+                    }
                 } else {
                     LOGW_SYSTEM("WakeWord caught but Wi-Fi link reports down. Shifting warning alert to background task.");
                     playAlertAsync(AudioAlertPlayer::playOffline); // Shifted to async worker context
@@ -323,6 +339,9 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
             break;
 
         case AssistantState::StartingSession:
+            if (event == AssistantEvent::WS_CONNECTED) {
+                transitionTo(AssistantState::StreamingUserAudio);
+            }
             break;
 
         case AssistantState::Connecting:
@@ -342,23 +361,18 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
                 transitionTo(AssistantState::AssistantSpeaking);
             } else if (event == AssistantEvent::ASSISTANT_TURN_COMPLETE) {
                 transitionTo(AssistantState::WaitingForFollowup);
-            } else if (event == AssistantEvent::SESSION_IDLE_TIMEOUT) {
-                transitionTo(AssistantState::Closing);
             } else if (event == AssistantEvent::GEMINI_GO_AWAY || event == AssistantEvent::WS_CLOSED) {
                 transitionTo(AssistantState::Closing);
             } else if (event == AssistantEvent::QUOTA_EXCEEDED) {
                 transitionTo(AssistantState::ErrorCooldown);
             } else if (event == AssistantEvent::VAD_TIMEOUT) {
-                PUBLISH_ASSISTANT_EVENT(AUDIO_SUSPEND_MIC_STREAMING, 0);
+                transitionTo(AssistantState::Idle);
             }
             break;
 
         case AssistantState::AssistantSpeaking:
             if (event == AssistantEvent::ASSISTANT_TURN_COMPLETE) {
                 transitionTo(AssistantState::WaitingForFollowup);
-            } else if (event == AssistantEvent::USER_SPEECH_DETECTED || event == AssistantEvent::USER_INTERRUPTED) {
-                PUBLISH_ASSISTANT_EVENT(AUDIO_FLUSH_PLAYBACK, 0);
-                transitionTo(AssistantState::StreamingUserAudio);
             } else if (event == AssistantEvent::GEMINI_GO_AWAY || event == AssistantEvent::WS_CLOSED) {
                 transitionTo(AssistantState::Closing);
             }
@@ -367,8 +381,10 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
         case AssistantState::WaitingForFollowup:
             if (event == AssistantEvent::USER_SPEECH_DETECTED) {
                 transitionTo(AssistantState::StreamingUserAudio);
-            } else if (event == AssistantEvent::SESSION_IDLE_TIMEOUT) {
-                transitionTo(AssistantState::Closing);
+            } else if (event == AssistantEvent::ASSISTANT_AUDIO_STARTED) {
+                transitionTo(AssistantState::AssistantSpeaking);
+            } else if (event == AssistantEvent::ASSISTANT_TURN_COMPLETE) {
+                // resetIdleTimer();
             } else if (event == AssistantEvent::WS_CLOSED) {
                 transitionTo(AssistantState::Idle);
             }

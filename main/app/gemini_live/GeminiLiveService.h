@@ -25,20 +25,7 @@ private:
     GeminiLiveService();
     ~GeminiLiveService() = default;
 
-    void bufferAudioChunk(const char* base64_pcm);
-    void flushBufferedAudio();
-    void clearBufferedAudio();
-    char* getBufferedChunkSlot(size_t index);
-
     // Singleton constraints
     GeminiLiveService(const GeminiLiveService&) = delete;
     GeminiLiveService& operator=(const GeminiLiveService&) = delete;
-
-    std::mutex m_audio_buffer_mutex;
-    char* m_buffered_audio_arena = nullptr;
-    size_t m_buffered_head = 0;
-    size_t m_buffered_count = 0;
-
-    static constexpr size_t MAX_BUFFERED_AUDIO_CHUNKS = 128;
-    static constexpr size_t MAX_BASE64_AUDIO_CHUNK = 2048;
 };
