@@ -341,13 +341,15 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
         case AssistantState::StartingSession:
             if (event == AssistantEvent::WS_CONNECTED) {
                 transitionTo(AssistantState::StreamingUserAudio);
+            } else if (event == AssistantEvent::VAD_TIMEOUT) {
+                transitionTo(AssistantState::Idle);
             }
             break;
 
         case AssistantState::Connecting:
             if (event == AssistantEvent::WS_CONNECTED) {
                 transitionTo(AssistantState::StreamingUserAudio);
-            } else if (event == AssistantEvent::CONNECT_TIMEOUT || event == AssistantEvent::WS_CONNECT_FAILED) {
+            } else if (event == AssistantEvent::CONNECT_TIMEOUT || event == AssistantEvent::WS_CONNECT_FAILED || event == AssistantEvent::VAD_TIMEOUT) {
                 transitionTo(AssistantState::Idle);
             } else if (event == AssistantEvent::QUOTA_EXCEEDED) {
                 transitionTo(AssistantState::ErrorCooldown);
@@ -383,6 +385,8 @@ void AssistantSessionService::handleAssistantEvent(AssistantEvent event, void* /
                 transitionTo(AssistantState::StreamingUserAudio);
             } else if (event == AssistantEvent::ASSISTANT_AUDIO_STARTED) {
                 transitionTo(AssistantState::AssistantSpeaking);
+            } else if (event == AssistantEvent::VAD_TIMEOUT) {
+                transitionTo(AssistantState::Idle);
             } else if (event == AssistantEvent::ASSISTANT_TURN_COMPLETE) {
                 // resetIdleTimer();
             } else if (event == AssistantEvent::WS_CLOSED) {

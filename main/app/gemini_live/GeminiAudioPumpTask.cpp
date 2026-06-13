@@ -72,7 +72,11 @@ bool GeminiAudioPumpTask::processUplink() {
                                       2048, &written, pcm_data, chunk_size) == 0) {
                 m_static_b64_arena[written] = '\0';
                 GeminiProtocolTask::getInstance().transmitAudioUplink(m_static_b64_arena);
+            } else {
+                LOGE_AUDIO("Base64 encoding FAILED");
             }
+        } else if (pump_read_count % 100 == 1) {
+            LOGW_AUDIO("PumpTask: Skipping transmit (streaming=%d, ws=%d)", (int)streaming, (int)ws_connected);
         }
 
         // Always return the item — prevents ring buffer leaks regardless of WS state
