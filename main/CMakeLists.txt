@@ -22,28 +22,28 @@ set(srcs
             "hal/storage/SdCardManager.cpp"
 
             # HAL — Network
-            "hal/network/WifiManager.cpp"
+            "hal/network/WifiService.cpp"
 
             # Application layer
             "app/AppController.cpp"
-            "app/SystemContext.cpp"
             "app/audio/AudioService.cpp"
             "app/audio/AudioPipelineManager.cpp"
+            "app/audio/RtpTransceiver.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
             "app/audio/AudioAlertPlayer.cpp"
-            "app/mqtt/MqttTask.cpp"
+            "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
 
             # Wake Word Detection
-            "app/wake_word/WakeWordDetector.cpp"
+            "app/wake_word/WakeWordEngine.cpp"
 
             # Event and LED Services
-            "app/event/EventBus.cpp"
             "app/led/LedService.cpp"
 
             # Assistant Session Control
-            "app/assistant/AssistantSessionService.cpp"
+            "app/assistant/AssistantService.cpp"
+            "app/assistant/MpvCommandHandler.cpp"
 
 
             # Services
@@ -52,18 +52,11 @@ set(srcs
             # Common utilities
             "common/LogRouter.cpp"
             "common/AsyncNetLogger.cpp"
+            "common/ReactorTask.cpp"
 
-            # Services
-            "services/BufferManager.cpp"
+            # SysDB-Lite core
+            "common/sysdb/EmbeddedSysDb.cpp"
 )
-
-if(CONFIG_VOICE_BACKEND_RTP)
-    list(APPEND srcs
-        "app/audio/RtpTaskBase.cpp"
-        "app/audio/RtpStreamer.cpp"
-        "app/audio/RtpReceiver.cpp"
-    )
-endif()
 
 if(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
     add_custom_command(
@@ -79,9 +72,8 @@ if(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
     )
 
     list(APPEND srcs
-        "app/gemini_live/GeminiLiveService.cpp"
-        "app/gemini_live/GeminiAudioPumpTask.cpp"
-        "app/gemini_live/GeminiProtocolTask.cpp"
+        "app/gemini_live/GeminiAudioPump.cpp"
+        "app/gemini_live/GeminiProtocol.cpp"
         "app/gemini_live/gemini_skills_generated.cpp"
     )
 endif()
@@ -110,6 +102,8 @@ idf_component_register(
             "services"
             "common"
             "common/events"
+            "common/sysdb"
+            "hal/input"
 
             # HAL interfaces
             "hal/interfaces"

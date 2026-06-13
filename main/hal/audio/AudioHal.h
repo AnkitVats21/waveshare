@@ -8,6 +8,7 @@
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
 #include "esp_err.h"
+#include "hal/audio/IAudioFeedSource.h"
 #include <cstdint>
 
 /**
@@ -34,7 +35,7 @@
  * Board owns one AudioHal instance and initializes it via init().
  * Board's public methods delegate to AudioHal for all audio operations.
  */
-class AudioHal {
+class AudioHal : public IAudioFeedSource {
 public:
   /**
    * @brief Configuration passed from Board before initialization.
@@ -111,11 +112,21 @@ public:
    */
   int getFeedChannel() const { return ADC_I2S_CHANNEL; }
 
+  // --- IAudioFeedSource interface (implemented here; used by WakeWordEngine) ---
+
   /**
-   * @brief Return the AFE input format string for this board.
-   * @return "RMNM"  (Reference, Mic1, Noise/unused, Mic2)
+   * @brief Read one chunk of raw 4-channel mic data (IAudioFeedSource impl).
+   * Delegates to getFeedData(true, buf, bytes).
    */
-  const char *getInputFormat() const { return "RMNM"; }
+  esp_err_t readFeedData(int16_t* buf, int bytes) override {
+      return getFeedData(true, buf, bytes);
+  }
+
+  /** @brief Returns 4 (RMNM: Ref, Mic1, Noise, Mic2). */
+  int feedChannelCount() const override { return ADC_I2S_CHANNEL; }
+
+  /** @brief Returns "RMNM" — the AFE input format string for this board. */
+  const char* feedInputFormat() const override { return "RMNM"; }
 
   // --- Playback (write to ES8311 DAC) ---------------------------------------
 

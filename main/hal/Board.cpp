@@ -6,6 +6,7 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+
 /**
  * Board is the hardware orchestration layer.
  *

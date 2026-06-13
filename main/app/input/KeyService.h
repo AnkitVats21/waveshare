@@ -1,22 +1,24 @@
 #pragma once
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "common/ReactorTask.h"
 #include "hal/input/ExpanderKeyInput.h"
 
-class KeyService {
+class KeyService : public ReactorTask {
 public:
-  explicit KeyService(ExpanderKeyInput &input);
+    explicit KeyService(ExpanderKeyInput &input);
+    ~KeyService() override = default;
 
-  void start();
+    bool begin();
+
+    // ReactorTask interface
+    void onStateChanged(ComponentMask changed, const SystemState& snap) override;
+
+protected:
+    void run() override;
 
 private:
-  ExpanderKeyInput &m_input;
+    ExpanderKeyInput &m_input;
+    bool m_prevState[5] = {false};
 
-  static void taskEntry(void *arg);
-  void taskLoop();
-
-  bool m_prevState[5] = {false};
-
-  static constexpr const char *TAG = "KeyService";
+    static constexpr const char *TAG = "KeySvc";
 };

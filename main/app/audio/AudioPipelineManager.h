@@ -1,9 +1,9 @@
 #pragma once
 
-#include "common/system_settings.h"
 #include "common/hw_types.h"
 
 // Forward declarations
+class AudioHal;
 class MicCaptureTask;
 class SpeakerPlaybackTask;
 class RtpStreamer;
@@ -22,7 +22,8 @@ public:
      * @brief Initialize the audio pipeline (Tasks + RTP).
      * BufferManager::initAll() must have been called before this.
      */
-    static bool initialize(const GlobalSystemSettings &settings,
+    static bool initialize(uint32_t sample_rate,
+                           AudioHal& hal,
                            const HardwareAudioHandles &hw_handles);
 
     /**
@@ -45,9 +46,7 @@ public:
     static void resumeSpeaker();
 
 private:
-    static MicCaptureTask     *m_mic_task;
-    static SpeakerPlaybackTask *m_speaker_task;
-    static RtpStreamer         *m_rtp_tx;
-    static RtpReceiver         *m_rtp_rx;
+    static MicCaptureTask*      m_mic_task;
+    static SpeakerPlaybackTask* m_speaker_task;
     static int                  m_shared_socket;
 };

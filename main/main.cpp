@@ -1,58 +1,115 @@
 #include "app/AppController.h"
-#include "app/SystemContext.h"
-#include "app/event/EventBus.h"
+#include "app/audio/AudioService.h"
+#include "app/audio/RtpTransceiver.h"
+#include "app/led/LedService.h"
+#include "app/assistant/AssistantService.h"
+#include "app/mqtt/MqttService.h"
 #include "app/input/KeyService.h"
+#include "app/gemini_live/GeminiProtocol.h"
+#include "app/gemini_live/GeminiAudioPump.h"
 #include "common/AppLogger.h"
 #include "common/LogRouter.h"
+#include "common/sysdb/EmbeddedSysDb.h"
 #include "hal/Board.h"
 #include "hal/input/ExpanderKeyInput.h"
-#include "hal/network/WifiManager.h"
+#include "hal/network/WifiService.h"
+#include "services/BufferManager.h"
+#include "esp_netif.h"
+#include "esp_event.h"
 
 extern "C" void app_main(void) {
-  // 1. Initialize Log Routing
-  LogRouter::getInstance().init();
-  LOGI_SYSTEM("Initializing System Application Layer...");
+    // 1. Initialize Foundational Network Stack & Log Routing
+    ESP_ERROR_CHECK(esp_netif_init());
+    esp_err_t loop_ret = esp_event_loop_create_default();
+    if (loop_ret != ESP_OK && loop_ret != ESP_ERR_INVALID_STATE) {
+        ESP_ERROR_CHECK(loop_ret);
+    }
 
-  // 2. Load system configuration from Kconfig
-  SystemContext &ctx = SystemContext::get();
-  ctx.init();
+    LogRouter::getInstance().init();
+    LOGI_SYSTEM("Initializing System Application Layer...");
 
-  // 3. Initialize Board Hardware (NVS, I2C, IO Expander, I2S, Codecs)
-  Board &board = Board::getInstance();
-  board.setSampleRate(ctx.settings.sample_rate);
-  if (!board.begin()) {
-    LOGE_SYSTEM("Fatal: Failed to initialize board hardware!");
-  } else {
-    LOGI_SYSTEM("Board hardware and NVS ready.");
-  }
+    // 2. Boot SysDb with Kconfig defaults
+    EmbeddedSysDb::getInstance().mutate(COMP::SYSTEM | COMP::AUDIO, [](SystemState& s) {
+        s.system.wifi_ssid        = CONFIG_WAVESHARE_WIFI_SSID;
+        s.system.wifi_password    = CONFIG_WAVESHARE_WIFI_PASSWORD;
+        s.system.server_ip        = CONFIG_WAVESHARE_SERVER_IP;
+        s.audio.sample_rate       = 16000;
+        s.audio.speaker_volume    = 80;
+        s.audio.mic_gain_db       = 60.0f;
+        s.audio.rtp_tx_port       = CONFIG_WAVESHARE_RTP_TX_PORT;
+        s.audio.rtp_rx_port       = CONFIG_WAVESHARE_RTP_RX_PORT;
+        s.audio.buffer_size       = 131072;
+    });
 
-  // 4. Populate hardware handles into context (for AudioService)
-  ctx.hw.mic_rx_handle     = board.getRxHandle();
-  ctx.hw.speaker_tx_handle = board.getTxHandle();
-  ctx.hw.play_dev          = board.getPlayDev();
-  ctx.hw.record_dev        = board.getRecordDev();
+    // 2.5 Initialize Ring Buffers in PSRAM
+    if (!BufferManager::getInstance().initAll()) {
+        LOGE_SYSTEM("Fatal: Failed to allocate ring buffers in PSRAM!");
+    }
 
-  // 5. Initialize Key Polling Service
-  static ExpanderKeyInput key_input(board.getIoExpanderInstance());
-  static KeyService key_service(key_input);
-  key_service.start();
+    // 3. Initialize Board Hardware
+    Board &board = Board::getInstance();
+    board.setSampleRate(EmbeddedSysDb::getInstance().snapshot().audio.sample_rate);
+    if (!board.begin()) {
+        LOGE_SYSTEM("Fatal: Failed to initialize board hardware!");
+    } else {
+        LOGI_SYSTEM("Board hardware and NVS ready.");
+    }
 
-  // 6. Initialize Event Bus
-  EventBus::getInstance().init();
+    // 4. Extract typed HAL references (Dependency Injection)
+    AudioHal&        audio_hal = board.getAudio();
+    LedStripManager& led_strip = board.getLeds();
+    IoExpander&      io_exp    = board.getIoExpanderInstance();
 
-  // 7. Initialize Application Orchestrator
-  // Handles everything that happens when network connects/disconnects
-  AppController::getInstance().begin();
+    HardwareAudioHandles handles = {
+        .mic_rx_handle     = board.getRxHandle(),
+        .speaker_tx_handle = board.getTxHandle(),
+        .play_dev          = board.getPlayDev(),
+        .record_dev        = board.getRecordDev(),
+    };
 
-  // 8. Configure and Start WiFi (credentials come from Kconfig via SystemContext)
-  WifiManager::Config wifi_cfg = {
-      .ssid     = ctx.settings.wifi_ssid,
-      .password = ctx.settings.wifi_password,
-      .max_retry = ctx.settings.wifi_max_retries,
-  };
+    // 5. Construct ReactorTask services
+    static AudioService         audio_svc(audio_hal, handles);
+    static LedService           led_svc(led_strip);
+    static AssistantService     assistant_svc;
+    static MqttService&         mqtt_svc = MqttService::getInstance();
+    // static RtpTransceiver       rtp_trans;
+    static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
+    (void)gemini_proto; // Suppress unused warning since task auto-spawns on instantiation
+    static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
+    static AppController&       app_ctrl = AppController::getInstance();
 
-  static WifiManager wifi(wifi_cfg);
-  wifi.begin();
+    // Start services
+    audio_svc.begin();
+    assistant_svc.begin();
+    mqtt_svc.begin();
+    // rtp_trans.begin();
+    gemini_pump.start();
+    app_ctrl.begin();
 
-  LOGI_SYSTEM("System initialization complete. Waiting for network events...");
+    // 6. Initialize Key Input service
+    static ExpanderKeyInput key_input(io_exp);
+    static KeyService key_svc(key_input);
+    key_svc.begin();
+
+    // 6.5 Spawn ReactorTask background threads
+    audio_svc.start();
+    led_svc.start();
+    assistant_svc.start();
+    mqtt_svc.start();
+    // rtp_trans.start();
+    gemini_proto.start();
+    app_ctrl.start();
+    key_svc.start();
+
+    // 7. Start WiFi service event bridge
+    WifiService::Config wifi_cfg = {
+        .ssid        = EmbeddedSysDb::getInstance().snapshot().system.wifi_ssid,
+        .password    = EmbeddedSysDb::getInstance().snapshot().system.wifi_password,
+        .max_retries = 5,
+    };
+    static WifiService wifi(wifi_cfg);
+    wifi.begin();
+
+    LOGI_SYSTEM("System initialization complete. Monitoring system events...");
 }
+

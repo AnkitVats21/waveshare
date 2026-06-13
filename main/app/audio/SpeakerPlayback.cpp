@@ -9,20 +9,24 @@ DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 1024 * 1024)
 
 
 
-void SpeakerPlaybackTask::start(const GlobalSystemSettings &settings,
-                                esp_codec_dev_handle_t device) {
+#include "common/thread_config.h"
+#include "common/sysdb/EmbeddedSysDb.h"
+
+void SpeakerPlaybackTask::start(esp_codec_dev_handle_t device) {
   if (m_is_running) return;
   m_is_running = true;
 
+  auto snap = EmbeddedSysDb::getInstance().snapshot();
+
   TaskParam *param = new TaskParam();
-  param->self     = this;
-  param->settings = settings;
-  param->device   = device;
+  param->self        = this;
+  param->sample_rate = snap.audio.sample_rate;
+  param->device      = device;
 
   xTaskCreatePinnedToCore(&SpeakerPlaybackTask::worker_bridge, "speaker_playback_task", 
-                          settings.audio_stack_size, param,
-                          settings.audio_task_priority, &m_task_handle,
-                          settings.audio_core_id);
+                          8 * 1024, param,
+                          ThreadConfig::Priority::SPEAKER_PLAYBACK, &m_task_handle,
+                          ThreadConfig::CORE_AUDIO);
 }
 
 void SpeakerPlaybackTask::stop() {
@@ -34,13 +38,13 @@ void SpeakerPlaybackTask::stop() {
 void SpeakerPlaybackTask::worker_bridge(void *pvParameters) {
   TaskParam *param = static_cast<TaskParam *>(pvParameters);
   SpeakerPlaybackTask *self = param->self;
-  GlobalSystemSettings settings = param->settings;
+  uint32_t sample_rate = param->sample_rate;
   esp_codec_dev_handle_t device = param->device;
   delete param;
-  self->worker(settings, device);
+  self->worker(sample_rate, device);
 }
 
-void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
+void SpeakerPlaybackTask::worker(uint32_t sample_rate,
                                  esp_codec_dev_handle_t device) {
   auto &bm = BufferManager::getInstance();
   if (device == nullptr) {
@@ -50,7 +54,7 @@ void SpeakerPlaybackTask::worker(GlobalSystemSettings settings,
     return;
   }
 
-  LOGI_HAL("Speaker Audio Pipeline Active (%lu Hz).", settings.sample_rate);
+  LOGI_HAL("Speaker Audio Pipeline Active (%lu Hz).", (unsigned long)sample_rate);
 
   // The I2S bus runs in 32-bit stereo mode.  RTP data arrives as 16-bit mono.
   // We expand each int16 sample into a 32-bit left-justified stereo pair

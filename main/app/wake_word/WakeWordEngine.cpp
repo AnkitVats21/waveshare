@@ -1,4 +1,4 @@
-#include "app/wake_word/WakeWordDetector.h"
+#include "app/wake_word/WakeWordEngine.h"
 
 #include <cstring>
 
@@ -13,7 +13,6 @@
 #include "app/audio/SpeakerPlayback.h"  // for Buffers::SPK_RX_BUF
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
-#include "app/audio/AudioService.h"
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -24,7 +23,7 @@
 // Singleton
 // ============================================================================
 
-WakeWordDetector::WakeWordDetector() {
+WakeWordEngine::WakeWordEngine() {
     m_feed_done        = xSemaphoreCreateBinary();
     m_detect_done      = xSemaphoreCreateBinary();
     m_audio_event_group = xEventGroupCreate();
@@ -34,14 +33,14 @@ WakeWordDetector::WakeWordDetector() {
     }
 }
 
-WakeWordDetector::~WakeWordDetector() {
+WakeWordEngine::~WakeWordEngine() {
     if (m_feed_done)         vSemaphoreDelete(m_feed_done);
     if (m_detect_done)       vSemaphoreDelete(m_detect_done);
     if (m_audio_event_group) vEventGroupDelete(m_audio_event_group);
 }
 
-WakeWordDetector &WakeWordDetector::getInstance() {
-    static WakeWordDetector instance;
+WakeWordEngine &WakeWordEngine::getInstance() {
+    static WakeWordEngine instance;
     return instance;
 }
 
@@ -49,7 +48,7 @@ WakeWordDetector &WakeWordDetector::getInstance() {
 // State helpers
 // ============================================================================
 
-void WakeWordDetector::setAssistantActive(bool active) {
+void WakeWordEngine::setAssistantActive(bool active) {
     m_assistant_active = active;
     if (active) {
         m_interruption_triggered = false;
@@ -60,7 +59,7 @@ void WakeWordDetector::setAssistantActive(bool active) {
 // begin() — init AFE + launch tasks
 // ============================================================================
 
-bool WakeWordDetector::begin() {
+bool WakeWordEngine::begin() {
     if (m_task_flag) {
         ESP_LOGW(TAG, "Already running");
         return true;
@@ -119,7 +118,7 @@ bool WakeWordDetector::begin() {
     xTaskCreatePinnedToCore(feedTaskBridge,   "ww_feed",   8 * 1024,
                             afe_data, 6, nullptr, 1);
 
-    LOGI_SYSTEM("WakeWordDetector started (feed: %s)", input_format);
+    LOGI_SYSTEM("WakeWordEngine started (feed: %s)", input_format);
     return true;
 }
 
@@ -127,7 +126,7 @@ bool WakeWordDetector::begin() {
 // stop() — semaphore-based safe teardown
 // ============================================================================
 
-void WakeWordDetector::stop() {
+void WakeWordEngine::stop() {
     if (!m_task_flag)
         return;
 
@@ -148,13 +147,13 @@ void WakeWordDetector::stop() {
 // FreeRTOS task bridges
 // ============================================================================
 
-void WakeWordDetector::feedTaskBridge(void *arg) {
-    WakeWordDetector::getInstance().feedTask(
+void WakeWordEngine::feedTaskBridge(void *arg) {
+    WakeWordEngine::getInstance().feedTask(
         static_cast<esp_afe_sr_data_t *>(arg));
 }
 
-void WakeWordDetector::detectTaskBridge(void *arg) {
-    WakeWordDetector::getInstance().detectTask(
+void WakeWordEngine::detectTaskBridge(void *arg) {
+    WakeWordEngine::getInstance().detectTask(
         static_cast<esp_afe_sr_data_t *>(arg));
 }
 
@@ -162,7 +161,7 @@ void WakeWordDetector::detectTaskBridge(void *arg) {
 // feedTask: read 4-ch mic data via IAudioFeedSource → push to AFE
 // ============================================================================
 
-void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
+void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
     int audio_chunksize = m_afe_handle->get_feed_chunksize(afe_data);
     int nch             = m_afe_handle->get_feed_channel_num(afe_data);
     int feed_channel    = m_feed_source->feedChannelCount();
@@ -231,7 +230,7 @@ void WakeWordDetector::feedTask(esp_afe_sr_data_t *afe_data) {
 // MultiNet (command recognition) is intentionally removed — POC code only.
 // ============================================================================
 
-void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
+void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
     m_afe_data = afe_data;
     int fetch_chunksize  = m_afe_handle->get_fetch_chunksize(afe_data);
 
@@ -315,7 +314,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
         if (m_streaming_active && !m_assistant_active) {
             if (res->vad_state == VAD_SPEECH) {
                 // Update inactivity timer on active user speech (completely immune to speaker echo)
-                AudioService::getInstance().updateActivity();
+                m_listener->onSpeechDetected();
                 silence_frames = 0;
             } else {
                 silence_frames++;
@@ -339,7 +338,7 @@ void WakeWordDetector::detectTask(esp_afe_sr_data_t *afe_data) {
     vTaskDelete(nullptr);
 }
 
-void WakeWordDetector::stopStreaming() {
+void WakeWordEngine::stopStreaming() {
     m_streaming_active = false;
     m_interruption_triggered = false;
     m_assistant_active = false;
@@ -354,7 +353,7 @@ void WakeWordDetector::stopStreaming() {
 // pauseProcessing / resumeProcessing — EventGroup-based task gating
 // ============================================================================
 
-void WakeWordDetector::pauseProcessing() {
+void WakeWordEngine::pauseProcessing() {
     ESP_LOGI(TAG, "pauseProcessing(): parking feedTask and detectTask...");
     // 1. Drop RUNNING bit — both tasks will block at the top of their loops
     //    the next time they reach xEventGroupWaitBits (within one loop iteration).
@@ -369,7 +368,7 @@ void WakeWordDetector::pauseProcessing() {
     ESP_LOGI(TAG, "pauseProcessing(): pipeline paused (tasks will block on next loop).");
 }
 
-void WakeWordDetector::resumeProcessing() {
+void WakeWordEngine::resumeProcessing() {
     ESP_LOGI(TAG, "resumeProcessing(): releasing feedTask and detectTask...");
     // Set RUNNING bit — both tasks unblock simultaneously in the FreeRTOS scheduler
     if (m_audio_event_group) {

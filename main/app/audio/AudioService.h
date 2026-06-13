@@ -1,65 +1,78 @@
 #pragma once
 
-#include "common/IService.h"
-#include "common/TaskBase.h"
+#include "common/ReactorTask.h"
+#include "common/thread_config.h"
 #include "common/hw_types.h"
-#include "common/system_settings.h"
 #include "app/wake_word/IWakeWordListener.h"
 #include "services/BufferManager.h"
 
-class Board;
+class AudioHal;
 
 /**
- * @brief Unified Audio Service.
+ * @brief Unified Audio Service — ReactorTask + IWakeWordListener.
  *
- * Extends IService  — standardized event subscription and dispatch.
- * Extends TaskBase  — background supervisor loop.
- * Implements IWakeWordListener — receives wake-word/VAD/barge-in callbacks
- *   directly from WakeWordDetector without EventBus round-trips.
+ * Replaces the old IService+TaskBase architecture.
+ *
+ * Watches:
+ *   COMP::AUDIO    — volume, mic gain, sample rate, session flags
+ *   COMP::PIPELINE — pipeline mode switches (GEMINI_LIVE ↔ RTP ↔ WAKE_IDLE)
+ *
+ * Owns:
+ *   WakeWordEngine lifecycle (start/stop/pause/resume)
+ *   AudioPipelineManager (static, controlled via SysDb mutations)
+ *   AudioAlertPlayer async dispatch
+ *
+ * Injected:
+ *   AudioHal& — hardware driver (I2S + codecs)
  */
-class AudioService : public IService, public TaskBase, public IWakeWordListener {
+class AudioService : public ReactorTask, public IWakeWordListener {
 public:
-  static AudioService &getInstance();
+    explicit AudioService(AudioHal& hal, const HardwareAudioHandles& handles);
 
-  bool begin(GlobalSystemSettings &settings, HardwareAudioHandles &handles,
-             Board *board);
+    bool begin();
 
-  bool reinit(uint32_t sample_rate);
-  void setMicEnabled(bool enabled);
-  void setDynamicSampleRateEnabled(bool enabled);
-  void enterAssistantPlaybackModeNow();
-  bool isInitialized() const { return m_initialized; }
+    // IWakeWordListener interface
+    void onWakeWord(uint8_t channel) override;
+    void onVadTimeout() override;
+    void onUserSpeechDetected() override;
+    void onSpeechDetected() override;
 
-  // IService interface
-  bool onStart() override;
-  void onEvent(esp_event_base_t base, int32_t id, void *data) override;
-
-  // IWakeWordListener interface
-  void onWakeWord(uint8_t channel) override;
-  void onVadTimeout() override;
-  void onUserSpeechDetected() override;
-
-  void updateActivity();
-  void checkInactivityTimeout();
+    // ReactorTask interface
+    void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
 protected:
-  void run() override;
+    void run() override;
 
 private:
-  AudioService() : IService("AudioSvc"), TaskBase({"AudioService", 8192, 5, 0}) {}
+    AudioHal&             m_hal;
+    HardwareAudioHandles  m_handles;
+    bool                  m_initialized = false;
 
-  GlobalSystemSettings *m_settings = nullptr;
-  HardwareAudioHandles *m_handles  = nullptr;
-  Board                *m_board    = nullptr;
+    // Local shadow state — updated by onStateChanged(), applied by run()
+    volatile int      m_pending_volume        = 80;
+    volatile float    m_pending_gain           = 60.0f;
+    volatile bool     m_pending_mic_enabled    = true;
+    volatile uint32_t m_pending_sample_rate    = 16000;
+    volatile bool     m_pending_pipeline_change = false;
 
-  bool     m_initialized      = false;
-  float    m_mic_gain         = 60.0f;
-  uint64_t m_last_activity_ms = 0;
-  bool     m_session_active   = false;
-  volatile bool m_turn_complete_pending = false;
-  uint32_t m_current_hardware_rate = 16000;
-  bool     m_assistant_speaking = false;
-  bool     m_dynamic_sample_rate_enabled = true;
+    // Internal audio state (not cross-service — local to AudioService)
+    uint32_t m_current_hardware_rate      = 16000;
+    bool     m_dynamic_sr_enabled         = true;
+    bool     m_session_active             = false;
+    bool     m_assistant_speaking         = false;
+    bool     m_turn_complete_pending      = false;
+    uint64_t m_last_activity_ms           = 0;
+    int      m_current_volume             = -1;
+    float    m_current_gain               = -1.0f;
+    PipelineMode m_current_pipeline_mode  = PipelineMode::WAKE_IDLE;
 
-  static constexpr const char *TAG = "AudioSvc";
+    void applyVolumeChange(int vol);
+    void applyGainChange(float gain_db);
+    void applySampleRateSwitch(uint32_t rate);
+    void applyPipelineModeSwitch(PipelineMode mode);
+    void enterAssistantPlaybackModeNow();
+    void returnToWakeMode16k();
+    void updateActivity();
+
+    static constexpr const char* TAG = "AudioSvc";
 };

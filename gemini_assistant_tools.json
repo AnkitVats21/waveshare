@@ -7,7 +7,7 @@
       "properties": {
         "query": {
           "type": "STRING",
-          "description": "A plain text search query (e.g., 'Rick Astley Never Gonna Give You Up' or 'classical jazz')."
+          "description": "A plain text search query (e.g., 'Rick Astley Never Gonna Give You Up' or 'classical jazz'). Do not guess or generate video IDs or URLs."
         }
       },
       "required": [
@@ -23,7 +23,7 @@
       "properties": {
         "query": {
           "type": "STRING",
-          "description": "A plain text search query (e.g., 'Lofi hip hop mix')."
+          "description": "A plain text search query (e.g., 'Lofi hip hop mix'). Do not guess or generate video IDs or URLs."
         }
       },
       "required": [
@@ -39,7 +39,7 @@
       "properties": {
         "query": {
           "type": "STRING",
-          "description": "A plain text search query (e.g., 'Blinding Lights')."
+          "description": "A plain text search query (e.g., 'Blinding Lights'). Do not guess or generate video IDs or URLs."
         }
       },
       "required": [
@@ -57,7 +57,7 @@
   },
   {
     "name": "resume",
-    "description": "Resumes current media playback if paused. I user says only play not any song name then also you can execute this command.",
+    "description": "Resumes current media playback if paused.",
     "parameters": {
       "type": "OBJECT",
       "properties": {}

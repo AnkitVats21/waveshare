@@ -31,5 +31,10 @@ public:
      */
     virtual void onUserSpeechDetected() = 0;
 
+    /**
+     * @brief Called when speech activity is detected during streaming.
+     */
+    virtual void onSpeechDetected() = 0;
+
     virtual ~IWakeWordListener() = default;
 };

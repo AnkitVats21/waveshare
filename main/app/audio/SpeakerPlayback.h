@@ -23,11 +23,9 @@ public:
 
   /**
    * @brief Start the speaker playback task
-   * @param settings System settings
    * @param device Pre-initialized codec device handle
    */
-  void start(const GlobalSystemSettings &settings,
-             esp_codec_dev_handle_t device);
+  void start(esp_codec_dev_handle_t device);
 
   /**
    * @brief Cleanly stop the task
@@ -47,7 +45,7 @@ private:
 
   struct TaskParam {
     SpeakerPlaybackTask* self;
-    GlobalSystemSettings settings;
+    uint32_t sample_rate;
     esp_codec_dev_handle_t device;
   };
 
@@ -55,5 +53,5 @@ private:
    * @brief Internal worker thread for playing audio
    */
   static void worker_bridge(void *pvParameters);
-  void worker(GlobalSystemSettings settings, esp_codec_dev_handle_t device);
+  void worker(uint32_t sample_rate, esp_codec_dev_handle_t device);
 };
