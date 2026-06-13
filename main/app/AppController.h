@@ -1,41 +1,29 @@
 #pragma once
 
-#include "common/IService.h"
+#include "common/ReactorTask.h"
+#include "common/app_types.h"
+#include "gemini_skills_generated.h"
 
-/**
- * @brief System orchestrator that reacts to network lifecycle events.
- *
- * Subscribes to WifiEvent::CONNECTED / DISCONNECTED and bootstraps or
- * tears down the audio and MQTT subsystems accordingly.
- *
- * Extends IService: subscriptions and dispatch are handled via the base class.
- * No raw pointers, settings refs, or handle refs are passed in — all come
- * from SystemContext::get().
- */
-class AppController : public IService {
+class AppController : public ReactorTask {
 public:
-  static AppController &getInstance();
+    static AppController& getInstance();
 
-  /**
-   * @brief Subscribe to system events and start subsystems that don't
-   *        need the network (e.g. LedService, WakeWordDetector).
-   */
-  bool onStart() override;
+    bool begin();
 
-  /** @brief Convenience alias kept for backward compatibility with main.cpp. */
-  void begin() { onStart(); }
+    // ReactorTask interface
+    void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
-  void onStop() override;
-
-  void onEvent(esp_event_base_t base, int32_t id, void *data) override;
+protected:
+    void run() override;
 
 private:
-  AppController() : IService("AppCtrl") {}
-  ~AppController() = default;
+    AppController();
+    ~AppController() override = default;
 
-  void bootstrapAudio();
-  void teardownNetworkServices();
-  void initMqtt();
+    static void handleGeminiToolCall(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx);
+    void executeToolCall(const GeminiSkills::DecodedSkillCall& skill_call);
 
-  static constexpr const char *TAG = "AppCtrl";
+    bool m_wifi_connected = false;
+
+    static constexpr const char* TAG = "AppCtrl";
 };

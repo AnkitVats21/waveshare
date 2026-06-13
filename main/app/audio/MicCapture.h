@@ -11,6 +11,9 @@
 // Size: 128 KB in PSRAM (holds ~2 s of 16-bit mono at 16 kHz).
 // ---------------------------------------------------------------------------
 DECLARE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
+DECLARE_BUFFER(RTP_MIC_BUF, "rtp_mic", 64 * 1024)
+
+class AudioHal;
 
 /**
  * @brief Task for capturing audio from the microphone and sending it to a ring
@@ -18,16 +21,15 @@ DECLARE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
  */
 class MicCaptureTask {
 public:
-  MicCaptureTask()
-      : m_handle(nullptr), m_task_handle(nullptr),
+  explicit MicCaptureTask(AudioHal& hal)
+      : m_hal(hal), m_handle(nullptr), m_task_handle(nullptr),
         m_is_running(false) {}
 
   /**
    * @brief Start the microphone capture task
-   * @param settings System settings
    * @param handle Pre-initialized I2S handle
    */
-  void start(const GlobalSystemSettings &settings, i2s_chan_handle_t handle);
+  void start(i2s_chan_handle_t handle);
 
   /**
    * @brief Cleanly stops the microphone capture task loop and frees memory
@@ -40,8 +42,7 @@ public:
   void setEnabled(bool enabled) { m_is_enabled = enabled; }
 
 private:
-  // Persistent state variables inside the class instance context
-  GlobalSystemSettings m_settings;
+  AudioHal&         m_hal;
   i2s_chan_handle_t m_handle;
   TaskHandle_t m_task_handle;
   volatile bool m_is_running;

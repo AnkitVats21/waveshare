@@ -1,12 +1,11 @@
 #pragma once
 
-#include "common/TaskBase.h"
+#include "common/ReactorTask.h"
 #include "WssClient.h"
 #include "gemini_skills_generated.h"
 #include "esp_heap_caps.h"
 #include <vector>
 #include <new>
-#include <atomic>
 #include <mutex>
 #include <string>
 
@@ -32,61 +31,61 @@ bool operator==(const PsramAllocator<T>&, const PsramAllocator<U>&) { return tru
 template <typename T, typename U>
 bool operator!=(const PsramAllocator<T>&, const PsramAllocator<U>&) { return false; }
 
-/**
- * @brief Pinned to Core 0, handles WebSocket connections, cJSON parsing, 
- * and schema orchestration for Gemini API tool calls.
- */
-class GeminiProtocolTask : public TaskBase {
+class GeminiProtocol : public ReactorTask {
 public:
-    static GeminiProtocolTask& getInstance();
+    static GeminiProtocol& getInstance();
+
+    typedef void (*ToolCallHandlerFn)(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx);
+
+    void setToolCallHandler(ToolCallHandlerFn handler, void* ctx) {
+        m_tool_handler = handler;
+        m_tool_ctx = ctx;
+    }
 
     void transmitToolResponse(const char* call_id, const char* json_result);
     void transmitAudioUplink(const char* base64_pcm);
     
-    enum class ConnectionState {
-        DISCONNECTED,
-        CONNECTING,
-        CONNECTED,
-        GOING_AWAY,
-        ERROR_STATE
-    };
-
-    ConnectionState getConnectionState() const { return m_state.load(std::memory_order_relaxed); }
     bool isConnected() { return m_client.isConnected(); }
     void connect();
     void closeConnection();
     void forceReconnect() { connect(); }
     void sendTextDirect(const char* text);
 
+    // ReactorTask interface
+    void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
 protected:
     void run() override;
 
 private:
-    GeminiProtocolTask(const Config& cfg);
-    ~GeminiProtocolTask() = default;
+    GeminiProtocol();
+    ~GeminiProtocol() override = default;
 
     bool ensureClientInitialized();
     void transmitSetupHandshake();
     void processIncomingFrame(char* payload, size_t length);
-    void handleToolCall(struct cJSON* toolCall);
+    void handleToolCall(JsonObjectConst toolCall);
 
     static void websocketEventHandler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
     bool startClientConnection();
 
     WssClient m_client;
-    std::atomic<ConnectionState> m_state{ConnectionState::DISCONNECTED};
-    std::atomic<bool> m_connect_requested{false};
     std::mutex m_client_mutex;
     std::string m_ws_uri;
 
+    ToolCallHandlerFn m_tool_handler = nullptr;
+    void* m_tool_ctx = nullptr;
+
     // Persistent Zero-Allocation Arenas for Audio & Skill Tool execution
     uint8_t* m_static_pcm_scratch_arena = nullptr;
-    // uint8_t* m_static_pcm_downsampled_arena = nullptr;
     char* m_static_payload_arena = nullptr;
     static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 24576; // 24KB max decoded output ceiling
     GeminiSkills::DecodedSkillCall m_static_skill_event_slot;
 
     // Fragment assembly buffer explicitly stored in PSRAM
     std::vector<char, PsramAllocator<char>> m_incoming_assembly_buffer;
+
+    static constexpr const char* TAG = "GeminiProto";
 };
+
+

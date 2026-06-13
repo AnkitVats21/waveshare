@@ -1,64 +1,67 @@
 #include "KeyService.h"
 #include "esp_log.h"
-#include "hal/Board.h"
+#include "common/sysdb/EmbeddedSysDb.h"
+#include "common/thread_config.h"
+#include <algorithm>
 
-KeyService::KeyService(ExpanderKeyInput &input) : m_input(input) {}
+KeyService::KeyService(ExpanderKeyInput &input)
+    : ReactorTask({
+          "key_svc",
+          ThreadConfig::StackSize::STACK_SMALL,
+          ThreadConfig::Priority::KEY_POLL,
+          ThreadConfig::CORE_NETWORK,
+          0 // Pure writer, does not watch any state components
+      })
+    , m_input(input)
+{}
 
-void KeyService::start() {
-  xTaskCreatePinnedToCore(taskEntry, "key_service", 4096, this, 5, nullptr, 1);
+bool KeyService::begin() {
+    ESP_LOGI(TAG, "KeyService operational.");
+    return true;
 }
 
-void KeyService::taskEntry(void *arg) {
-  static_cast<KeyService *>(arg)->taskLoop();
+void KeyService::onStateChanged(ComponentMask changed, const SystemState& snap) {
+    // Pure writer, nothing to react to
 }
 
-void KeyService::taskLoop() {
-  using KeyId = ExpanderKeyInput::KeyId;
+void KeyService::run() {
+    using KeyId = ExpanderKeyInput::KeyId;
 
-  const KeyId keys[5] = {
-      KeyId::KEY_1, KeyId::KEY_2, KeyId::KEY_3, KeyId::KEY_4, KeyId::KEY_5,
-  };
+    const KeyId keys[5] = {
+        KeyId::KEY_1, KeyId::KEY_2, KeyId::KEY_3, KeyId::KEY_4, KeyId::KEY_5,
+    };
 
-  while (true) {
+    ESP_LOGI(TAG, "KeyService polling loop active.");
 
-    for (int i = 0; i < 5; ++i) {
+    while (m_running) {
+        for (int i = 0; i < 5; ++i) {
+            bool pressed = m_input.isPressed(keys[i]);
 
-      bool pressed = m_input.isPressed(keys[i]);
+            if (pressed != m_prevState[i]) {
+                m_prevState[i] = pressed;
 
-      if (pressed != m_prevState[i]) {
+                if (pressed) {
+                    ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
 
-        m_prevState[i] = pressed;
-
-        if (pressed) {
-          ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
-
-          if (keys[i] == KeyId::KEY_3) {
-            int vol = 0;
-            if (Board::getInstance().getPlayVolume(&vol) == ESP_OK) {
-              int new_vol = vol + 5;
-              if (new_vol > 100) new_vol = 100;
-              Board::getInstance().setPlayVolume(new_vol);
-              ESP_LOGI(TAG, "Volume increased: %d -> %d", vol, new_vol);
-            } else {
-              ESP_LOGE(TAG, "Failed to get current speaker volume");
+                    if (keys[i] == KeyId::KEY_3) {
+                        EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
+                            int old_vol = s.audio.speaker_volume;
+                            s.audio.speaker_volume = std::min(old_vol + 5, 100);
+                            ESP_LOGI("KeySvc", "Volume increase request: %d -> %d", old_vol, s.audio.speaker_volume);
+                        });
+                    } else if (keys[i] == KeyId::KEY_5) {
+                        EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
+                            int old_vol = s.audio.speaker_volume;
+                            s.audio.speaker_volume = std::max(old_vol - 5, 0);
+                            ESP_LOGI("KeySvc", "Volume decrease request: %d -> %d", old_vol, s.audio.speaker_volume);
+                        });
+                    }
+                } else {
+                    ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);
+                }
             }
-          } else if (keys[i] == KeyId::KEY_5) {
-            int vol = 0;
-            if (Board::getInstance().getPlayVolume(&vol) == ESP_OK) {
-              int new_vol = vol - 5;
-              if (new_vol < 0) new_vol = 0;
-              Board::getInstance().setPlayVolume(new_vol);
-              ESP_LOGI(TAG, "Volume decreased: %d -> %d", vol, new_vol);
-            } else {
-              ESP_LOGE(TAG, "Failed to get current speaker volume");
-            }
-          }
-        } else {
-          ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);
         }
-      }
-    }
 
-    vTaskDelay(pdMS_TO_TICKS(20));
-  }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
 }

@@ -3,9 +3,7 @@
 #include "esp_err.h"
 #include "esp_io_expander.h"
 #include "hal/Board_defs.h"
-#include "hal/HalBase.h"
 #include "hal/audio/AudioHal.h"
-#include "hal/interfaces/IAudioFeedSource.h"
 #include "hal/io/I2CBus.h"
 #include "hal/io/IoExpander.h"
 #include "hal/led/LedStripManager.h"
@@ -13,149 +11,89 @@
 #include <cstdint>
 
 /**
- * @brief Hardware orchestration layer for the Waveshare ESP32-S3 Audio Board.
+ * @brief Hardware orchestration layer and Dependency Injection factory.
  *
- * Board owns all concrete HAL component instances and coordinates their
- * initialization in the correct hardware-dependent order.
+ * Board owns all concrete HAL component instances, coordinates their
+ * initialization in the correct hardware-dependent order, and exposes
+ * typed references for Dependency Injection into application services.
  *
- * Responsibilities (what Board DOES):
- *  - Owns: AudioHal, I2CBus, IoExpander, LedStripManager, SdCardManager
- *  - Initializes hardware in correct dependency order
- *  - Exposes unified, policy-aware APIs to the application layer
- *  - Delegates all driver-level work to HAL components
+ * ## What Board DOES
+ *  - Initializes hardware in the correct dependency order
+ *  - Exposes typed sub-HAL getters (getAudio(), getLeds(), etc.)
+ *  - Owns the unique AudioHal, LedStripManager, IoExpander instances
  *
- * Non-responsibilities (what Board does NOT do):
- *  - Contain raw driver logic or codec register sequences
- *  - Contain LED or SD card implementation details
- *  - Contain application streaming, RTP, or wake word logic
+ * ## What Board does NOT do
+ *  - Implement IAudioFeedSource or HalBase (removed — AudioHal does that now)
+ *  - Wrap every sub-HAL method as a pass-through (removed — callers use getAudio().method())
+ *  - Touch EventBus or SystemContext
  */
-/**
- * Board inherits IAudioFeedSource so WakeWordDetector can receive a
- * `IAudioFeedSource&` reference without depending on Board directly.
- */
-class Board : public HalBase, public IAudioFeedSource {
+class Board {
 public:
-  static Board &getInstance();
+    static Board& getInstance();
 
-  /**
-   * @brief Initialize all board peripherals in dependency order.
-   * @return true on success
-   */
-  bool begin() override;
+    /**
+     * @brief Initialize all board peripherals in dependency order.
+     * @return true on success.
+     */
+    bool begin();
 
-  // -- Pre-init configuration (call before begin()) --------------------------
-  void setSampleRate(uint32_t sample_rate) { m_sample_rate = sample_rate; }
-  void setInitialVolumes(int record, int play) {
-    m_record_volume = record;
-    m_play_volume = play;
-  }
-  void setPreviousVolume() { m_audio.setPreviousVolume(); }
+    /** @return true if begin() has completed successfully. */
+    bool isInitialized() const { return m_initialized; }
 
-  // -- Handle accessors (for HardwareAudioHandles population in main.cpp) ----
-  i2c_master_bus_handle_t getI2cBus() { return m_i2c.getBusHandle(); }
-  i2s_chan_handle_t getTxHandle() { return m_audio.getTxHandle(); }
-  i2s_chan_handle_t getRxHandle() { return m_audio.getRxHandle(); }
-  esp_codec_dev_handle_t getPlayDev() { return m_audio.getPlayDev(); }
-  esp_codec_dev_handle_t getRecordDev() { return m_audio.getRecordDev(); }
-  esp_io_expander_handle_t getIoExpander() { return m_io.getRawHandle(); }
-  IoExpander &getIoExpanderInstance() { return m_io; }
+    // ── Pre-init configuration (call before begin()) ─────────────────────────
+    void setSampleRate(uint32_t sample_rate)     { m_sample_rate    = sample_rate; }
+    void setInitialVolumes(int record, int play)  { m_record_volume  = record; m_play_volume = play; }
 
-  // -- LED orchestration (delegates to LedStripManager) ----------------------
-  void setLedPixel(uint32_t index, uint32_t r, uint32_t g, uint32_t b) {
-    m_leds.setPixel(index, r, g, b);
-  }
-  void setAllLedsColor(uint32_t r, uint32_t g, uint32_t b) {
-    m_leds.setAll(r, g, b);
-  }
-  void refreshLeds() { m_leds.refresh(); }
-  void clearLeds() { m_leds.clear(); }
-  bool isLedStripInitialized() const { return m_leds.isInitialized(); }
+    // ── Typed sub-HAL getters (Dependency Injection) ─────────────────────────
+    /** @brief Direct reference to the AudioHal driver (inject into AudioService / WakeWordEngine). */
+    AudioHal&        getAudio()               { return m_audio; }
 
-  // -- Audio orchestration APIs (delegate to AudioHal) -----------------------
+    /** @brief Direct reference to the LED strip driver (inject into LedService). */
+    LedStripManager& getLeds()                { return m_leds; }
 
-  /**
-   * @brief Read 4-channel interleaved mic data.
-   *
-   * @param is_get_raw_channel  true  → raw 4-ch RMNM (for AFE/wake-word feed)
-   *                            false → remapped 3-ch [Mic1, Mic2, Ref]
-   * @param buffer     Destination int16_t buffer
-   * @param buffer_len Byte count to read
-   */
-  esp_err_t getFeedData(bool is_get_raw_channel, int16_t *buffer,
-                        int buffer_len) {
-    return m_audio.getFeedData(is_get_raw_channel, buffer, buffer_len);
-  }
+    /** @brief Direct reference to the I/O expander (inject into KeyService). */
+    IoExpander&      getIoExpanderInstance()  { return m_io; }
 
-  /**
-   * @brief Convenience overload — raw 4-ch, for streaming pipeline.
-   */
-  esp_err_t getFeedData(int16_t *buffer, int buffer_len) {
-    return m_audio.getFeedData(buffer, buffer_len);
-  }
+    /** @brief Direct reference to SD card storage (inject into storage consumers). */
+    SdCardManager&   getStorage()             { return m_storage; }
 
-  /** @brief Number of interleaved channels returned by getFeedData. */
-  int getFeedChannel() const { return m_audio.getFeedChannel(); }
+    // ── Raw handle accessors (kept for HardwareAudioHandles population) ───────
+    i2c_master_bus_handle_t  getI2cBus()    { return m_i2c.getBusHandle(); }
+    i2s_chan_handle_t        getTxHandle()  { return m_audio.getTxHandle(); }
+    i2s_chan_handle_t        getRxHandle()  { return m_audio.getRxHandle(); }
+    esp_codec_dev_handle_t   getPlayDev()  { return m_audio.getPlayDev(); }
+    esp_codec_dev_handle_t   getRecordDev(){ return m_audio.getRecordDev(); }
 
-  // -- IAudioFeedSource implementation (used by WakeWordDetector) -----------
-  esp_err_t readFeedData(int16_t *buf, int bytes) override {
-    return m_audio.getFeedData(/*raw=*/true, buf, bytes);
-  }
-  int feedChannelCount() const override { return m_audio.getFeedChannel(); }
-  const char *feedInputFormat() const override { return m_audio.getInputFormat(); }
+    // ── Audio policy helpers (Board-level guards remain here) ─────────────────
+    esp_err_t reinitAudio(uint32_t sample_rate);
+    esp_err_t setHardwareSampleRate(uint32_t sample_rate);
+    esp_err_t setRecordGain(float db_value, bool force = false);
+    void      setPreviousVolume() { m_audio.setPreviousVolume(); }
 
-  /** @brief AFE input format string ("RMNM"). */
-  const char *getInputFormat() const { return m_audio.getInputFormat(); }
-
-  /**
-   * @brief Write PCM audio to the ES8311 playback codec.
-   * @param data   16-bit mono PCM source buffer
-   * @param length Byte length of source buffer
-   */
-  esp_err_t audioPlay(const int16_t *data, int length) {
-    return m_audio.audioPlay(data, length);
-  }
-
-  esp_err_t setPlayVolume(int volume) { return m_audio.setPlayVolume(volume); }
-  esp_err_t getPlayVolume(int *volume) { return m_audio.getPlayVolume(volume); }
-  esp_err_t setRecordGain(float db_value, bool force = false);
-
-  /**
-   * @brief Tear down I2S and codec hardware (called before reinitAudio).
-   */
-  esp_err_t deinitAudio() { return m_audio.deinit(); }
-
-  /**
-   * @brief Reinitialize audio subsystem at a new sample rate.
-   * Board guards against calling reinit on an uninitialized board.
-   */
-  esp_err_t reinitAudio(uint32_t sample_rate);
-
-  /**
-   * @brief Dynamically reconfigure I2S clocks without heap re-allocations, muting the Power Amplifier to prevent pops.
-   */
-  esp_err_t setHardwareSampleRate(uint32_t sample_rate);
-
-  // -- Storage (delegates to SdCardManager) ----------------------------------
-  esp_err_t initSdCard(const char *mount_point, size_t max_files) {
-    return m_storage.mount(mount_point, max_files);
-  }
+    // ── Storage ───────────────────────────────────────────────────────────────
+    esp_err_t initSdCard(const char* mount_point, size_t max_files) {
+        return m_storage.mount(mount_point, max_files);
+    }
 
 private:
-  Board() = default;
-  ~Board() = default;
+    Board()  = default;
+    ~Board() = default;
+    Board(const Board&)            = delete;
+    Board& operator=(const Board&) = delete;
 
-  // HAL component instances — Board is the sole owner
-  I2CBus m_i2c;
-  IoExpander m_io;
-  AudioHal m_audio;
-  LedStripManager m_leds;
-  SdCardManager m_storage;
+    // HAL component instances — Board is the sole owner
+    I2CBus          m_i2c;
+    IoExpander      m_io;
+    AudioHal        m_audio;
+    LedStripManager m_leds;
+    SdCardManager   m_storage;
 
-  // Pre-init settings (forwarded to AudioHal::Config on begin())
-  uint32_t m_sample_rate = 16000;
-  int m_record_volume = 70;
-  int m_play_volume = 80;
-  float m_current_mic_gain = -999.0f; // Track active mic gain value
+    // Pre-init settings (forwarded to AudioHal::Config on begin())
+    uint32_t m_sample_rate    = 16000;
+    int      m_record_volume  = 70;
+    int      m_play_volume    = 80;
+    float    m_current_mic_gain = -999.0f;
+    bool     m_initialized    = false;
 
-  static constexpr const char *TAG = "Board";
+    static constexpr const char* TAG = "Board";
 };
