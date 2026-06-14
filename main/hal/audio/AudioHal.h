@@ -152,6 +152,10 @@ public:
   esp_err_t getPlayVolume(int *volume);
   esp_err_t setRecordGain(float db_value);
 
+  uint32_t getSampleRate() const { return m_sample_rate; }
+  int getPlayVolume() const { return m_play_volume; }
+  float getRecordGain() const { return (float)m_record_volume; }
+
   // --- Handle accessors (for Board to satisfy HardwareAudioHandles) ----------
 
   i2s_chan_handle_t getTxHandle() const { return m_tx_handle; }
