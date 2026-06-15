@@ -1,3 +1,4 @@
+#include "sdkconfig.h"
 #include "AudioPipelineManager.h"
 #include "MicCapture.h"
 #include "SpeakerPlayback.h"
@@ -27,9 +28,9 @@ bool AudioPipelineManager::initialize(uint32_t sample_rate,
     }
 
     // 1. Start Hardware Tasks
+#ifdef CONFIG_WAVESHARE_WAKEWORD_ENABLE
     m_mic_task = new MicCaptureTask(hal);
     m_mic_task->start(hw_handles.mic_rx_handle);
-#ifdef CONFIG_WAVESHARE_WAKEWORD_ENABLE
     // If WakeWordDetector is active, its feedTask takes exclusive ownership of the mic.
     // We soft-disable MicCaptureTask to prevent concurrent I2S reads from corrupting the driver state.
     m_mic_task->setEnabled(false);
@@ -66,8 +67,13 @@ void AudioPipelineManager::teardown() {
 }
 
 void AudioPipelineManager::setMicEnabled(bool enabled) {
+#ifndef CONFIG_WAVESHARE_WAKEWORD_ENABLE
     if (m_mic_task) m_mic_task->setEnabled(enabled);
     LOGI_AUDIO("Mic pipeline %s (Hardware Task)", enabled ? "ENABLED" : "SOFT-DISABLED");
+#else
+    (void)enabled;
+    LOGI_AUDIO("Mic pipeline control bypassed (WakeWordEngine owns mic feed)");
+#endif
 }
 
 void AudioPipelineManager::setRtpEnabled(bool enabled) {

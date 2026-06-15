@@ -15,11 +15,10 @@ public:
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
 protected:
-    void run() override;
 
 private:
     void handleStateTransition(AssistantState oldState, AssistantState newState, const SystemState& snap);
-    void transitionTo(AssistantState newState);
+    void transitionTo(AssistantState newState, const SystemState* snap_ptr = nullptr);
     void publishMusicCommand(AssistantState oldState, AssistantState newState);
 
     static void connectTimeoutCallback(void* arg);

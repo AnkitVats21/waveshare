@@ -12,6 +12,8 @@
 #include "freertos/task.h"
 #include <cstring>
 
+static auto &sysdb = EmbeddedSysDb::getInstance();
+
 GeminiAudioPump::GeminiAudioPump(const Config& cfg)
     : TaskBase(cfg)
 {
@@ -33,15 +35,20 @@ GeminiAudioPump& GeminiAudioPump::getInstance() {
     return instance;
 }
 
+bool GeminiAudioPump::start() {
+    if (!TaskBase::start()) {
+        return false;
+    }
+    sysdb.registerReactor(COMP::PIPELINE | COMP::ASSISTANT, m_task_handle);
+    return true;
+}
+
 void GeminiAudioPump::run() {
     LOGI_AUDIO("GeminiAudioPump running on Core %d", xPortGetCoreID());
 
-    // Register as a reactor for changes to pipeline and assistant states
-    EmbeddedSysDb::getInstance().registerReactor(COMP::PIPELINE | COMP::ASSISTANT, m_task_handle);
-
     // Initialize cache
-    m_cached_ws_state = EmbeddedSysDb::getInstance().wsState();
-    m_cached_pipeline_mode = EmbeddedSysDb::getInstance().pipelineMode();
+    m_cached_ws_state = sysdb.wsState();
+    m_cached_pipeline_mode = sysdb.pipelineMode();
 
     while (m_running) {
         bool processed = processUplink();
@@ -65,8 +72,8 @@ bool GeminiAudioPump::processUplink() {
         
         // Check for state change notifications from EmbeddedSysDb (zero-lock check)
         if (ulTaskNotifyTake(pdTRUE, 0) != 0) {
-            m_cached_ws_state = EmbeddedSysDb::getInstance().wsState();
-            m_cached_pipeline_mode = EmbeddedSysDb::getInstance().pipelineMode();
+            m_cached_ws_state = sysdb.wsState();
+            m_cached_pipeline_mode = sysdb.pipelineMode();
         }
 
         bool ws_connected = (m_cached_ws_state == WsState::CONNECTED);

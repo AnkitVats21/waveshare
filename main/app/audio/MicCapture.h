@@ -13,17 +13,25 @@
 DECLARE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
 DECLARE_BUFFER(RTP_MIC_BUF, "rtp_mic", 64 * 1024)
 
+#include "common/TaskBase.h"
+#include "common/thread_config.h"
+
 class AudioHal;
 
 /**
  * @brief Task for capturing audio from the microphone and sending it to a ring
  * buffer
  */
-class MicCaptureTask {
+class MicCaptureTask : public TaskBase {
 public:
   explicit MicCaptureTask(AudioHal& hal)
-      : m_hal(hal), m_handle(nullptr), m_task_handle(nullptr),
-        m_is_running(false) {}
+      : TaskBase({
+            "mic_capture_task",
+            8 * 1024,
+            ThreadConfig::Priority::MIC_CAPTURE,
+            ThreadConfig::CORE_AUDIO
+        })
+      , m_hal(hal), m_handle(nullptr) {}
 
   /**
    * @brief Start the microphone capture task
@@ -34,32 +42,27 @@ public:
   /**
    * @brief Cleanly stops the microphone capture task loop and frees memory
    */
-  void stop();
+  void stop() override;
 
   /**
    * @brief Soft enable/disable of the capture loop
    */
   void setEnabled(bool enabled) { m_is_enabled = enabled; }
 
+protected:
+  /**
+   * @brief Actual object-oriented worker thread execution loop
+   */
+  void run() override;
+
 private:
+  bool processCapture(int16_t* raw_buffer, int16_t* pcm_buffer, size_t raw_bytes, size_t chunk_bytes, int feed_ch, size_t samples_per_chunk);
+
   AudioHal&         m_hal;
   i2s_chan_handle_t m_handle;
-  TaskHandle_t m_task_handle;
-  volatile bool m_is_running;
   volatile bool m_is_enabled = true;
   float *m_lms_coeffs;
   float *m_lms_delay_line;
   static constexpr int LMS_FILTER_SIZE = 128; // Adjust for echo tail length
   static constexpr float LMS_LEARNING_RATE = 0.05f;
-
-  /**
-   * @brief Static bridge required by FreeRTOS to jump into the C++ instance
-   * context
-   */
-  static void worker_bridge(void *pvParameters);
-
-  /**
-   * @brief Actual object-oriented worker thread execution loop
-   */
-  void worker();
 };

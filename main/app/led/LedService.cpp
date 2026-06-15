@@ -147,7 +147,8 @@ void LedService::run() {
         }
 
         uint32_t changed_bits = 0;
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(delay_ms));
+        TickType_t wait_ticks = (cmd.mode == LedMode::OFF || cmd.mode == LedMode::SOLID) ? portMAX_DELAY : pdMS_TO_TICKS(delay_ms);
+        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, wait_ticks);
         if (!m_running) break;
 
         if (notified == pdTRUE && changed_bits > 0) {

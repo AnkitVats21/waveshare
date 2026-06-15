@@ -6,6 +6,7 @@
 class GeminiAudioPump : public TaskBase {
 public:
     static GeminiAudioPump& getInstance();
+    bool start();
 
 protected:
     void run() override;

@@ -45,24 +45,7 @@ bool AppController::begin() {
 }
 
 void AppController::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // Handled directly in run loop via xTaskNotifyWait
-}
-
-void AppController::run() {
-    LOGI_SYSTEM("AppController supervisor thread active.");
-
-    while (m_running) {
-        uint32_t changed_bits = 0;
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(100));
-        if (!m_running) break;
-
-        if (notified == pdTRUE && changed_bits > 0) {
-            m_last_changed = changed_bits;
-            SystemState snap = EmbeddedSysDb::getInstance().snapshot();
-            onStateChanged(m_last_changed, snap);
-        }
-
-        auto snap = EmbeddedSysDb::getInstance().snapshot();
+    if (changed & BIT_SYSTEM::WIFI_CONNECTED) {
         bool wifi_ok = snap.system.wifi_connected;
 
         if (wifi_ok && !m_wifi_connected) {

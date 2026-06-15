@@ -17,6 +17,8 @@ static constexpr const char *MQTT_CLIENT_ID    = CONFIG_WAVESHARE_MQTT_CLIENT_ID
 static constexpr const char *TOPIC_CONFIG      = "device/waveshare/config";
 static constexpr const char *TOPIC_DYNAMIC_SUB = "device/subscribe/topic";
 
+static auto &sysdb = EmbeddedSysDb::getInstance();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction & Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,21 +64,7 @@ bool MqttService::publish(const char* topic, const char* payload, int qos, int r
 // ─────────────────────────────────────────────────────────────────────────────
 
 void MqttService::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // Handled directly in run loop via xTaskNotify (sent by EmbeddedSysDb)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Background Thread Loop
-// ─────────────────────────────────────────────────────────────────────────────
-
-void MqttService::run() {
-    ESP_LOGI(TAG, "MqttService supervisor task active.");
-
-    while (m_running) {
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
-        if (!m_running) break;
-
-        auto snap = EmbeddedSysDb::getInstance().snapshot();
+    if (changed & BIT_SYSTEM::WIFI_CONNECTED) {
         bool wifi_ok = snap.system.wifi_connected;
 
         // 1. React to WiFi Connectivity
@@ -109,16 +97,11 @@ void MqttService::run() {
             esp_mqtt_client_destroy(m_mqtt_handle);
             m_mqtt_handle = nullptr;
             m_connected = false;
-            EmbeddedSysDb::getInstance().mutate(COMP::MQTT, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.mqtt.connected = false;
             });
         }
-
     }
-
-    esp_mqtt_client_stop(m_mqtt_handle);
-    esp_mqtt_client_destroy(m_mqtt_handle);
-    m_mqtt_handle = nullptr;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,7 +123,7 @@ void MqttService::handleMqttEvent(int32_t event_id, esp_mqtt_event_handle_t even
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG, 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_DYNAMIC_SUB, 0);
             
-            EmbeddedSysDb::getInstance().mutate(COMP::MQTT, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.mqtt.connected = true;
             });
             break;
@@ -149,7 +132,7 @@ void MqttService::handleMqttEvent(int32_t event_id, esp_mqtt_event_handle_t even
             ESP_LOGW(TAG, "Disconnected from MQTT broker.");
             m_connected = false;
             
-            EmbeddedSysDb::getInstance().mutate(COMP::MQTT, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.mqtt.connected = false;
             });
             break;
@@ -218,7 +201,7 @@ void MqttService::handleAudioConfig(const std::string& key, const std::string& v
         if (key == "speaker_volume") {
             int vol = std::stoi(val);
             if (vol >= 0 && vol <= 100) {
-                EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [vol](SystemState& s) {
+                sysdb.mutate([vol](SystemState& s) {
                     s.audio.speaker_volume = vol;
                 });
                 ESP_LOGI(TAG, "Parsed config: speaker_volume = %d", vol);
@@ -226,20 +209,20 @@ void MqttService::handleAudioConfig(const std::string& key, const std::string& v
         } else if (key == "mic_volume") {
             float gain = std::stof(val);
             if (gain >= 0.0f && gain <= 100.0f) {
-                EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [gain](SystemState& s) {
+                sysdb.mutate([gain](SystemState& s) {
                     s.audio.mic_gain_db = gain;
                 });
                 ESP_LOGI(TAG, "Parsed config: mic_gain_db = %.1f dB", gain);
             }
         } else if (key == "sample_rate") {
             uint32_t sample_rate = std::stoi(val);
-            EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [sample_rate](SystemState& s) {
+            sysdb.mutate([sample_rate](SystemState& s) {
                 s.audio.sample_rate = sample_rate;
             });
             ESP_LOGI(TAG, "Parsed config: sample_rate = %d Hz", (int)sample_rate);
         } else if (key == "mic_enabled") {
             bool enabled = (val == "1" || val == "true");
-            EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [enabled](SystemState& s) {
+            sysdb.mutate([enabled](SystemState& s) {
                 s.audio.mic_enabled = enabled;
             });
             ESP_LOGI(TAG, "Parsed config: mic_enabled = %d", enabled);
@@ -252,7 +235,7 @@ void MqttService::handleAudioConfig(const std::string& key, const std::string& v
 void MqttService::handleLedConfig(const std::string& val) {
     int r, g, b;
     if (sscanf(val.c_str(), "%d,%d,%d", &r, &g, &b) == 3) {
-        EmbeddedSysDb::getInstance().mutate(COMP::LED, [r, g, b](SystemState& s) {
+        sysdb.mutate([r, g, b](SystemState& s) {
             s.led.mode = LedMode::SOLID;
             s.led.color = { (uint8_t)r, (uint8_t)g, (uint8_t)b };
         });

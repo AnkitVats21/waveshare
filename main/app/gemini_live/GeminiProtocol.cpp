@@ -20,6 +20,8 @@
 static const char* const GEMINI_LIVE_BASE_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=";
 static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 24576; // 24KB ceiling
 
+static auto& sysdb = EmbeddedSysDb::getInstance();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction & Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,7 +32,7 @@ GeminiProtocol::GeminiProtocol()
           ThreadConfig::StackSize::STACK_GEMINI,
           ThreadConfig::Priority::GEMINI_PROTOCOL,
           ThreadConfig::CORE_NETWORK,
-          COMP::ASSISTANT
+          COMP::ASSISTANT | COMP::SYSTEM
       })
 {
 
@@ -56,49 +58,24 @@ GeminiProtocol& GeminiProtocol::getInstance() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // Handled directly in run loop via xTaskNotifyWait
-}
+    bool requested = snap.assistant.connect_requested;
+    bool wifi_ok = snap.system.wifi_connected;
+    auto ws = snap.assistant.ws_state;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Background Task Connection Loop
-// ─────────────────────────────────────────────────────────────────────────────
-
-void GeminiProtocol::run() {
-    LOGI_NET("GeminiProtocol active on Core %d", xPortGetCoreID());
-
-    while (m_running) {
-        uint32_t changed_bits = 0;
-        // Wait for a state change notification or 100ms tick
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(100));
-        if (!m_running) break;
-
-        if (notified == pdTRUE && changed_bits > 0) {
-            m_last_changed = changed_bits;
-            SystemState snap = EmbeddedSysDb::getInstance().snapshot();
-            onStateChanged(m_last_changed, snap);
+    if (requested && wifi_ok && (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE)) {
+        if (ensureClientInitialized()) {
+            startClientConnection();
+        } else {
+            LOGE_NET("WebSocket client initialization failed.");
+            // Write disconnected state directly into SysDb — no EventBus
+            sysdb.mutate([](SystemState& s) {
+                s.assistant.ws_state = WsState::ERROR_STATE;
+                s.assistant.connect_requested = false;
+            });
         }
-
-        auto snap = EmbeddedSysDb::getInstance().snapshot();
-        bool requested = snap.assistant.connect_requested;
-        bool wifi_ok = snap.system.wifi_connected;
-        auto ws = snap.assistant.ws_state;
-
-        if (requested && wifi_ok && (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE)) {
-            if (ensureClientInitialized()) {
-                startClientConnection();
-            } else {
-                LOGE_NET("WebSocket client initialization failed.");
-                EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
-                    s.assistant.ws_state = WsState::ERROR_STATE;
-                    s.assistant.connect_requested = false;
-                });
-            }
-        } else if ((!requested || !wifi_ok) && (ws == WsState::CONNECTED || ws == WsState::CONNECTING)) {
-            closeConnection();
-        }
+    } else if ((!requested || !wifi_ok) && (ws == WsState::CONNECTED || ws == WsState::CONNECTING)) {
+        closeConnection();
     }
-
-    m_client.destroy();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,7 +128,7 @@ bool GeminiProtocol::startClientConnection() {
 
     LOGI_NET("Connecting WebSocket client...");
     
-    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+    sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::CONNECTING;
     });
 
@@ -159,7 +136,7 @@ bool GeminiProtocol::startClientConnection() {
     esp_err_t err = m_client.start();
     if (err != ESP_OK) {
         LOGE_NET("esp_websocket_client_start failed: 0x%x", (unsigned)err);
-        EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+        sysdb.mutate([](SystemState& s) {
             s.assistant.ws_state = WsState::ERROR_STATE;
             s.assistant.connect_requested = false;
         });
@@ -175,17 +152,16 @@ void GeminiProtocol::closeConnection() {
         m_client.close(pdMS_TO_TICKS(1000));
         m_client.stop();
     }
-    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT | COMP::AUDIO, [](SystemState& s) {
+    sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::DISCONNECTED;
         s.audio.assistant_speaking = false;
     });
 }
 
 void GeminiProtocol::connect() {
-    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+    sysdb.mutate([](SystemState& s) {
         s.assistant.connect_requested = true;
     });
-    xTaskNotifyGive(m_task_handle);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,7 +210,7 @@ void GeminiProtocol::transmitAudioUplink(const char* base64_pcm) {
     if (!m_client || !m_client.isConnected() || !base64_pcm) return;
     
     // Suppress uplink if assistant is speaking
-    if (EmbeddedSysDb::getInstance().assistantSpeaking()) {
+    if (sysdb.assistantSpeaking()) {
         return;
     }
     
@@ -264,7 +240,7 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
         case WEBSOCKET_EVENT_CONNECTED:
             LOGI_NET("WebSocket established.");
             self->transmitSetupHandshake();
-            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::CONNECTED;
             });
             break;
@@ -288,14 +264,14 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             
         case WEBSOCKET_EVENT_DISCONNECTED:
             LOGW_NET("WebSocket disconnected.");
-            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::DISCONNECTED;
             });
             break;
             
         case WEBSOCKET_EVENT_ERROR:
             LOGE_NET("WebSocket socket error.");
-            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::ERROR_STATE;
             });
             break;
@@ -327,10 +303,10 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 size_t written = 0;
                 if (mbedtls_base64_decode(m_static_pcm_scratch_arena, pcm_out_len, &written, reinterpret_cast<const unsigned char*>(data_start), b64_len) == 0) {
                     if (written > 0) {
-                        // If transitioning to speaking, flush stale 16kHz data and update DB (notifies reactors once)
-                        if (!EmbeddedSysDb::getInstance().assistantSpeaking()) {
+                        // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
+                        if (!sysdb.assistantSpeaking()) {
                             BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-                            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT | COMP::AUDIO, [](SystemState& s) {
+                            sysdb.mutate([](SystemState& s) {
                                 s.assistant.session_state = AssistantState::AssistantSpeaking;
                                 s.assistant.visual_state  = AssistantVisualState::Speaking;
                                 s.audio.assistant_speaking = true;
@@ -350,21 +326,21 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             bool turn_complete = strstr(payload, "\"turnComplete\": true") || strstr(payload, "\"turnComplete\":true") || !doc["turnComplete"].isNull();
             if (turn_complete) {
                 LOGI_NET("Assistant turn complete");
-                EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
+                sysdb.mutate([](SystemState& s) {
                     s.audio.turn_complete_pending = true;
                 });
             }
 
             if (!doc["error"].isNull() || strstr(payload, "\"error\"")) {
                 LOGE_NET("Gemini API server error in frame!");
-                EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+                sysdb.mutate([](SystemState& s) {
                     s.assistant.session_state = AssistantState::ErrorCooldown;
                 });
             }
 
             if (!doc["goAway"].isNull() || strstr(payload, "\"goAway\"")) {
                 LOGW_NET("Gemini Live Engine: Received 'goAway' signal.");
-                EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+                sysdb.mutate([](SystemState& s) {
                     s.assistant.ws_state = WsState::GOING_AWAY;
                 });
                 if (m_client) m_client.close(pdMS_TO_TICKS(1500));
