@@ -102,10 +102,10 @@ bool GeminiProtocol::ensureClientInitialized() {
 
     esp_websocket_client_config_t ws_cfg = {};
     ws_cfg.uri = m_ws_uri.c_str();
-    ws_cfg.buffer_size = 4096;
+    ws_cfg.buffer_size = 8192;
     ws_cfg.reconnect_timeout_ms = 10000;
     ws_cfg.network_timeout_ms = 10000;
-    ws_cfg.task_stack = 10240;
+    ws_cfg.task_stack = 8192;
     ws_cfg.task_prio = ThreadConfig::Priority::GEMINI_PROTOCOL;
     ws_cfg.task_core_id = ThreadConfig::CORE_NETWORK;
     ws_cfg.task_core_id_set = true;
@@ -218,7 +218,10 @@ void GeminiProtocol::transmitAudioUplink(const char* base64_pcm) {
                                "{\"realtimeInput\":{\"audio\":{\"mimeType\":\"audio/pcm;rate=16000\",\"data\":\"%s\"}}}", 
                                base64_pcm);
     if (payload_len > 0 && payload_len < 4096) {
-        m_client.sendText(m_static_payload_arena, payload_len, pdMS_TO_TICKS(2000));
+        int ret = m_client.sendText(m_static_payload_arena, payload_len, pdMS_TO_TICKS(2000));
+        if (ret < 0) {
+            LOGW_NET("Failed to send audio uplink chunk, err=%d", ret);
+        }
     }
 }
 
