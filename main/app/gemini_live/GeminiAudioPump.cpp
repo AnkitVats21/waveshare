@@ -8,6 +8,8 @@
 #include "app/audio/SpeakerPlayback.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "mbedtls/base64.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <cstring>
 
 GeminiAudioPump::GeminiAudioPump(const Config& cfg)
@@ -34,9 +36,18 @@ GeminiAudioPump& GeminiAudioPump::getInstance() {
 void GeminiAudioPump::run() {
     LOGI_AUDIO("GeminiAudioPump running on Core %d", xPortGetCoreID());
 
+    // Register as a reactor for changes to pipeline and assistant states
+    EmbeddedSysDb::getInstance().registerReactor(COMP::PIPELINE | COMP::ASSISTANT, m_task_handle);
+
+    // Initialize cache
+    m_cached_ws_state = EmbeddedSysDb::getInstance().wsState();
+    m_cached_pipeline_mode = EmbeddedSysDb::getInstance().pipelineMode();
+
     while (m_running) {
         bool processed = processUplink();
-        vTaskDelay(pdMS_TO_TICKS(processed ? 30 : 10));
+        if (!processed) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 }
 
@@ -44,17 +55,22 @@ bool GeminiAudioPump::processUplink() {
     auto& bm = BufferManager::getInstance();
     size_t chunk_size = 0;
 
-    // Non-blocking read from Mic capture buffer
+    // Block on receive with a 100ms timeout
     uint8_t* pcm_data = static_cast<uint8_t*>(
-        bm.receive(Buffers::MIC_TX_BUF, &chunk_size, 0, 1024));
+        bm.receive(Buffers::MIC_TX_BUF, &chunk_size, pdMS_TO_TICKS(100), 1024));
 
     if (pcm_data != nullptr) {
         static int pump_read_count = 0;
         bool streaming = WakeWordEngine::getInstance().isStreamingActive();
         
-        auto snap = EmbeddedSysDb::getInstance().snapshot();
-        bool ws_connected = (snap.assistant.ws_state == WsState::CONNECTED);
-        bool live_mode = (snap.pipeline.mode == PipelineMode::GEMINI_LIVE);
+        // Check for state change notifications from EmbeddedSysDb (zero-lock check)
+        if (ulTaskNotifyTake(pdTRUE, 0) != 0) {
+            m_cached_ws_state = EmbeddedSysDb::getInstance().wsState();
+            m_cached_pipeline_mode = EmbeddedSysDb::getInstance().pipelineMode();
+        }
+
+        bool ws_connected = (m_cached_ws_state == WsState::CONNECTED);
+        bool live_mode    = (m_cached_pipeline_mode == PipelineMode::GEMINI_LIVE);
 
         if (++pump_read_count % 200 == 1) {
             LOGI_AUDIO("AudioPump: chunk=%d bytes, streaming=%d, ws=%d, live_mode=%d",
@@ -79,3 +95,4 @@ bool GeminiAudioPump::processUplink() {
     }
     return false;
 }
+

@@ -81,6 +81,7 @@ public:
     bool           micEnabled()       const;
     AssistantState sessionState()     const;
     PipelineMode   pipelineMode()     const;
+    WsState        wsState()          const;
 
     // ── Reactor registration ──────────────────────────────────────────────────
 

@@ -57,6 +57,7 @@ bool AudioService::begin() {
 #endif
 
     m_initialized = true;
+    m_last_applied_session_active = snap.audio.session_active;
     LOGI_AUDIO("AudioService operational at %lu Hz.", (unsigned long)snap.audio.sample_rate);
     return true;
 }
@@ -159,9 +160,6 @@ void AudioService::enterAssistantPlaybackModeNow() {
     ww.setAssistantActive(true);
     ww.setVadDeferred(true);
 
-    // Flush stale 16kHz RTP data from speaker buffer before switching sample rate
-    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-
     if (m_hal.getSampleRate() != 24000) {
         LOGI_AUDIO("Switching hardware to 24kHz for assistant playback.");
         AudioPipelineManager::pauseSpeaker();
@@ -247,10 +245,15 @@ void AudioService::run() {
         }
 
         // Transition B: Return to 16kHz wake mode when session becomes Idle/Closing
-        if ((session == AssistantState::Idle || session == AssistantState::Closing) &&
-            (snap.audio.session_active || m_hal.getSampleRate() != 16000)) {
-            
+        bool session_ended = (m_last_applied_session_active && !snap.audio.session_active);
+        bool needs_16k_restore = (session == AssistantState::Idle || session == AssistantState::Closing) &&
+                                 (m_hal.getSampleRate() != 16000);
+
+        if (session_ended || needs_16k_restore) {
             returnToWakeMode16k();
+            m_last_applied_session_active = snap.audio.session_active;
+        } else if (snap.audio.session_active != m_last_applied_session_active) {
+            m_last_applied_session_active = snap.audio.session_active;
         }
 
         // Transition C: Turn-complete buffer drain (revert to 16kHz once speaker is empty)

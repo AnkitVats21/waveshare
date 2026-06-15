@@ -129,6 +129,9 @@ bool GeminiProtocol::ensureClientInitialized() {
     ws_cfg.reconnect_timeout_ms = 10000;
     ws_cfg.network_timeout_ms = 10000;
     ws_cfg.task_stack = 10240;
+    ws_cfg.task_prio = ThreadConfig::Priority::GEMINI_PROTOCOL;
+    ws_cfg.task_core_id = ThreadConfig::CORE_NETWORK;
+    ws_cfg.task_core_id_set = true;
     ws_cfg.cert_pem = nullptr;
     ws_cfg.crt_bundle_attach = nullptr;
     ws_cfg.skip_cert_common_name_check = true;
@@ -324,15 +327,17 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 size_t written = 0;
                 if (mbedtls_base64_decode(m_static_pcm_scratch_arena, pcm_out_len, &written, reinterpret_cast<const unsigned char*>(data_start), b64_len) == 0) {
                     if (written > 0) {
+                        // If transitioning to speaking, flush stale 16kHz data and update DB (notifies reactors once)
+                        if (!EmbeddedSysDb::getInstance().assistantSpeaking()) {
+                            BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+                            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT | COMP::AUDIO, [](SystemState& s) {
+                                s.assistant.session_state = AssistantState::AssistantSpeaking;
+                                s.assistant.visual_state  = AssistantVisualState::Speaking;
+                                s.audio.assistant_speaking = true;
+                            });
+                        }
+
                         BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20));
-                        
-                        // Mutate audio state to Speaking
-                        EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT | COMP::AUDIO, [](SystemState& s) {
-                            s.assistant.session_state = AssistantState::AssistantSpeaking;
-                            s.assistant.visual_state = AssistantVisualState::Speaking;
-                            s.audio.assistant_speaking = true;
-                            s.audio.last_activity_ms = esp_timer_get_time() / 1000;
-                        });
                     }
                 }
             }
