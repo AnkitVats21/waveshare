@@ -47,7 +47,7 @@ void RtpTransceiver::run() {
     while (m_running) {
         auto snap = EmbeddedSysDb::getInstance().snapshot();
         bool tx_active = (m_socket >= 0 && snap.pipeline.rtp_tx_en);
-        TickType_t wait_ticks = tx_active ? 0 : pdMS_TO_TICKS(100);
+        TickType_t wait_ticks = tx_active ? 0 : portMAX_DELAY;
 
         ulTaskNotifyTake(pdTRUE, wait_ticks);
         if (!m_running) break;

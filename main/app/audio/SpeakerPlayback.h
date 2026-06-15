@@ -13,13 +13,18 @@
 // ---------------------------------------------------------------------------
 DECLARE_BUFFER(SPK_RX_BUF, "spk_rx", 64 * 1024)
 
-/**
- * @brief Task for taking audio from a ring buffer and playing it through the
- * speaker
- */
-class SpeakerPlaybackTask {
+#include "common/TaskBase.h"
+#include "common/thread_config.h"
+
+class SpeakerPlaybackTask : public TaskBase {
 public:
-  SpeakerPlaybackTask() : m_task_handle(nullptr), m_is_running(false) {}
+  SpeakerPlaybackTask()
+      : TaskBase({
+            "speaker_playback_task",
+            8 * 1024,
+            ThreadConfig::Priority::SPEAKER_PLAYBACK,
+            ThreadConfig::CORE_AUDIO
+        }) {}
 
   /**
    * @brief Start the speaker playback task
@@ -30,7 +35,7 @@ public:
   /**
    * @brief Cleanly stop the task
    */
-  void stop();
+  void stop() override;
 
   /**
    * @brief Pause/resume physical speaker playback calls during clock switches
@@ -38,20 +43,24 @@ public:
   void pauseHardware()  { m_hw_valid = false; }
   void resumeHardware() { m_hw_valid = true;  }
 
-private:
-  TaskHandle_t m_task_handle;
-  volatile bool m_is_running;
-  volatile bool m_hw_valid = true;
-
-  struct TaskParam {
-    SpeakerPlaybackTask* self;
-    uint32_t sample_rate;
-    esp_codec_dev_handle_t device;
-  };
-
+protected:
   /**
    * @brief Internal worker thread for playing audio
    */
-  static void worker_bridge(void *pvParameters);
-  void worker(uint32_t sample_rate, esp_codec_dev_handle_t device);
+  void run() override;
+
+private:
+  bool processPlayback(int16_t* dma_safe_buffer, int32_t* expanded_buffer, int32_t* silence_buffer);
+
+  static constexpr size_t PREBUFFER_THRESHOLD = 8000;
+  static constexpr uint32_t EMPTY_THRESHOLD = 40;
+  static constexpr size_t SILENCE_SAMPLES = 320;
+  static constexpr size_t MAX_AUDIO_CHUNK_SAMPLES = 1024;
+  static constexpr size_t MAX_AUDIO_CHUNK_BYTES = MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t);
+  static constexpr size_t EXPANDED_BUF_BYTES = MAX_AUDIO_CHUNK_SAMPLES * 2 * sizeof(int32_t);
+
+  volatile bool m_hw_valid = true;
+  esp_codec_dev_handle_t m_device = nullptr;
+  bool m_is_prebuffering = true;
+  uint32_t m_consecutive_empty = 0;
 };

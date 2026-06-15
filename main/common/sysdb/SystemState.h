@@ -18,13 +18,13 @@ using ComponentMask = uint32_t;
  * ReactorTask::Config::interest to declare what a reactor cares about.
  */
 namespace COMP {
-    static constexpr ComponentMask SYSTEM    = (1u << 0); ///< WiFi, server IP
-    static constexpr ComponentMask AUDIO     = (1u << 1); ///< Sample rate, volume, mic
-    static constexpr ComponentMask PIPELINE  = (1u << 2); ///< PipelineMode, RTP gates
-    static constexpr ComponentMask ASSISTANT = (1u << 3); ///< Session + visual state
-    static constexpr ComponentMask LED       = (1u << 4); ///< LED animation commands
-    static constexpr ComponentMask MQTT      = (1u << 5); ///< Broker connectivity
-    static constexpr ComponentMask ALL       = 0xFFFFFFFFu;
+    static constexpr ComponentMask SYSTEM    = (1u << 16); ///< WiFi, server IP
+    static constexpr ComponentMask AUDIO     = (1u << 17); ///< Sample rate, volume, mic
+    static constexpr ComponentMask PIPELINE  = (1u << 18); ///< PipelineMode, RTP gates
+    static constexpr ComponentMask ASSISTANT = (1u << 19); ///< Session + visual state
+    static constexpr ComponentMask LED       = (1u << 20); ///< LED animation commands
+    static constexpr ComponentMask MQTT      = (1u << 21); ///< Broker connectivity
+    static constexpr ComponentMask ALL       = 0xFFFF0000u;
 }
 
 // Per-field bits — used by onStateChanged() for fine-grained reactions
@@ -67,6 +67,47 @@ namespace BIT_MQTT {
 // SystemState — the single shared in-memory database
 // ─────────────────────────────────────────────────────────────────────────────
 
+#define SYSTEM_FIELDS \
+    X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED) \
+    X_STR(server_ip, 32, "192.168.1.18", BIT_SYSTEM::SERVER_IP) \
+    X(int, wifi_max_retries, 5, 0)
+
+#define AUDIO_FIELDS \
+    X(uint32_t, sample_rate, 16000, BIT_AUDIO::SAMPLE_RATE) \
+    X(uint32_t, current_hardware_rate, 16000, BIT_AUDIO::HW_RATE) \
+    X(float, mic_gain_db, 60.0f, BIT_AUDIO::MIC_GAIN) \
+    X(int, speaker_volume, 80, BIT_AUDIO::SPEAKER_VOLUME) \
+    X(bool, mic_enabled, true, BIT_AUDIO::MIC_ENABLED) \
+    X(bool, assistant_speaking, false, BIT_AUDIO::ASST_SPEAKING) \
+    X(bool, session_active, false, BIT_AUDIO::SESSION_ACTIVE) \
+    X(bool, turn_complete_pending, false, BIT_AUDIO::TURN_COMPLETE) \
+    X(uint64_t, last_activity_ms, 0, BIT_AUDIO::LAST_ACTIVITY) \
+    X(uint32_t, buffer_size, 131072, 0) \
+    X(uint16_t, rtp_tx_port, 5005, 0) \
+    X(uint16_t, rtp_rx_port, 5005, 0) \
+    X(AudioStreamFormat, stream_format, AudioStreamFormat::PCM_S16LE, 0)
+
+#define PIPELINE_FIELDS \
+    X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE) \
+    X(bool, rtp_tx_en, false, BIT_PIPELINE::RTP_TX) \
+    X(bool, rtp_rx_en, false, BIT_PIPELINE::RTP_RX) \
+    X(bool, rtp_enabled, false, 0)
+
+#define ASSISTANT_FIELDS \
+    X(AssistantState, session_state, AssistantState::Idle, BIT_ASSISTANT::SESSION_STATE) \
+    X(AssistantVisualState, visual_state, AssistantVisualState::Offline, BIT_ASSISTANT::VISUAL_STATE) \
+    X(bool, connect_requested, false, BIT_ASSISTANT::CONNECT_REQ) \
+    X(WsState, ws_state, WsState::DISCONNECTED, BIT_ASSISTANT::WS_STATE)
+
+#define LED_FIELDS \
+    X(LedMode, mode, LedMode::OFF, BIT_LED::MODE) \
+    X_COLOR(color, OFF_LED, BIT_LED::COLOR) \
+    X(uint32_t, speed_ms, 500, BIT_LED::SPEED) \
+    X(uint8_t, repeat, 0, 0)
+
+#define MQTT_FIELDS \
+    X(bool, connected, false, BIT_MQTT::CONNECTED)
+
 /**
  * @brief Complete, flat snapshot of all mutable application state.
  *
@@ -79,59 +120,41 @@ namespace BIT_MQTT {
  *  - Hot-path readers may use the typed getter helpers on EmbeddedSysDb.
  */
 struct SystemState {
+    #define X(type, name, def, bit) type name = def;
+    #define X_STR(name, size, def, bit) char name[size] = def;
+    #define X_COLOR(name, def, bit) RgbColor name = def;
 
     // ── COMP::SYSTEM ─────────────────────────────────────────────────────────
     struct {
-        bool        wifi_connected   = false;
-        char        server_ip[32]    = "192.168.1.18";
-        int         wifi_max_retries = 5;
+        SYSTEM_FIELDS
     } system;
 
     // ── COMP::AUDIO ──────────────────────────────────────────────────────────
     struct {
-        uint32_t          sample_rate           = 16000;
-        uint32_t          current_hardware_rate = 16000;
-        float             mic_gain_db           = 60.0f;
-        int               speaker_volume        = 80;
-        bool              mic_enabled           = true;
-        bool              assistant_speaking    = false;
-        bool              session_active        = false;
-        bool              turn_complete_pending = false;
-        uint64_t          last_activity_ms      = 0;
-
-        // Boot-time Kconfig values — future: overridable via MQTT
-        uint32_t          buffer_size           = 131072;
-        uint16_t          rtp_tx_port           = 5005;
-        uint16_t          rtp_rx_port           = 5005;
-        AudioStreamFormat stream_format         = AudioStreamFormat::PCM_S16LE;
+        AUDIO_FIELDS
     } audio;
 
     // ── COMP_PIPELINE ───────────────────────────────────
     struct {
-        PipelineMode mode           = PipelineMode::WAKE_IDLE;
-        bool         rtp_tx_en      = false;
-        bool         rtp_rx_en      = false;
-        bool         rtp_enabled    = false; // Unified gate for RtpTransceiver
+        PIPELINE_FIELDS
     } pipeline;
 
     // ── COMP::ASSISTANT ──────────────────────────────────────────────────────
     struct {
-        AssistantState       session_state    = AssistantState::Idle;
-        AssistantVisualState visual_state     = AssistantVisualState::Offline;
-        bool                 connect_requested = false;
-        WsState              ws_state          = WsState::DISCONNECTED;
+        ASSISTANT_FIELDS
     } assistant;
 
     // ── COMP::LED ────────────────────────────────────────────────────────────
     struct {
-        LedMode  mode     = LedMode::OFF;
-        RgbColor color    = OFF_LED;
-        uint32_t speed_ms = 500;
-        uint8_t  repeat   = 0;
+        LED_FIELDS
     } led;
 
     // ── COMP::MQTT ───────────────────────────────────────────────────────────
     struct {
-        bool connected = false;
+        MQTT_FIELDS
     } mqtt;
+
+    #undef X
+    #undef X_STR
+    #undef X_COLOR
 };

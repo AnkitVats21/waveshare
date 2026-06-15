@@ -49,17 +49,20 @@ public:
     // ── Writer API ────────────────────────────────────────────────────────────
 
     /**
-     * @brief Atomically mutate state and notify interested reactors.
+     * @brief Atomically mutate state, automatically diff it, and notify interested reactors.
      *
-     * @param comp  OR'd COMP:: bitmask indicating which components are touched.
      * @param fn    Lambda / function pointer that receives a writable SystemState&.
      *              Must return quickly — runs inside the write lock.
      */
     template <typename Fn>
-    void mutate(ComponentMask comp, Fn&& fn) {
+    void mutate(Fn&& fn) {
         acquireWrite();
+        SystemState old_state = m_state;
         fn(m_state);
-        notifyReactors_locked(comp);
+        ComponentMask changed = diffState(old_state, m_state);
+        if (changed > 0) {
+            notifyReactors_locked(changed);
+        }
         releaseWrite();
     }
 
@@ -82,6 +85,7 @@ public:
     AssistantState sessionState()     const;
     PipelineMode   pipelineMode()     const;
     WsState        wsState()          const;
+    bool           turnCompletePending() const;
 
     // ── Reactor registration ──────────────────────────────────────────────────
 
@@ -130,6 +134,8 @@ private:
      *        registered reactors whose interest mask overlaps @p changed.
      */
     void notifyReactors_locked(ComponentMask changed);
+
+    static ComponentMask diffState(const SystemState& old_s, const SystemState& new_s);
 
     static constexpr const char* TAG = "SysDb";
 };

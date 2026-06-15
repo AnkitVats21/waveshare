@@ -8,6 +8,8 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+    
+static auto& sysdb = EmbeddedSysDb::getInstance();
 
 // Helper: play an audio alert on a tiny fire-and-forget FreeRTOS task.
 static void playAlertTask(void* arg) {
@@ -43,17 +45,17 @@ void AssistantService::cooldownTimeoutCallback(void* arg) {
 
 void AssistantService::handleConnectTimeout() {
     m_connect_timeout_pending = true;
-    xTaskNotifyGive(m_task_handle);
+    xTaskNotify(m_task_handle, COMP::ASSISTANT, eSetBits);
 }
 
 void AssistantService::handleIdleTimeout() {
     m_idle_timeout_pending = true;
-    xTaskNotifyGive(m_task_handle);
+    xTaskNotify(m_task_handle, COMP::ASSISTANT, eSetBits);
 }
 
 void AssistantService::handleCooldownElapsed() {
     m_cooldown_elapsed_pending = true;
-    xTaskNotifyGive(m_task_handle);
+    xTaskNotify(m_task_handle, COMP::ASSISTANT, eSetBits);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,10 +118,10 @@ bool AssistantService::begin() {
 
     // Initialize state to Idle
     m_current_state = AssistantState::Idle;
-    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    auto snap = sysdb.snapshot();
     bool wifi_ok = snap.system.wifi_connected;
 
-    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [wifi_ok](SystemState& s) {
+    sysdb.mutate([wifi_ok](SystemState& s) {
         s.assistant.session_state = AssistantState::Idle;
         s.assistant.visual_state = wifi_ok ? AssistantVisualState::Idle : AssistantVisualState::Offline;
         s.assistant.connect_requested = false;
@@ -134,7 +136,102 @@ bool AssistantService::begin() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AssistantService::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // Handled directly in run loop via xTaskNotifyWait
+    // 1. Process timer events
+    if (m_connect_timeout_pending) {
+        m_connect_timeout_pending = false;
+        ESP_LOGW(TAG, "Connection timeout elapsed.");
+        transitionTo(AssistantState::ErrorCooldown, &snap);
+        return;
+    }
+    if (m_idle_timeout_pending) {
+        m_idle_timeout_pending = false;
+        ESP_LOGW(TAG, "Idle timeout elapsed.");
+        transitionTo(AssistantState::Closing, &snap);
+        return;
+    }
+    if (m_cooldown_elapsed_pending) {
+        m_cooldown_elapsed_pending = false;
+        ESP_LOGI(TAG, "Error cooldown elapsed.");
+        transitionTo(AssistantState::Idle, &snap);
+        return;
+    }
+
+    // Get snapshot components
+    auto session = snap.assistant.session_state;
+    auto ws = snap.assistant.ws_state;
+    bool wifi_ok = snap.system.wifi_connected;
+
+    // 2. Synchronize current state shadow
+    if (session != m_current_state) {
+        handleStateTransition(m_current_state, session, snap);
+    }
+
+    // 3. React to state machine condition triggers
+    switch (m_current_state) {
+        case AssistantState::Idle:
+            // If Wi-Fi link went down, update the visual state to Offline
+            if (!wifi_ok && snap.assistant.visual_state != AssistantVisualState::Offline) {
+                sysdb.mutate([](SystemState& s) {
+                    s.assistant.visual_state = AssistantVisualState::Offline;
+                });
+            } else if (wifi_ok && snap.assistant.visual_state == AssistantVisualState::Offline) {
+                sysdb.mutate([](SystemState& s) {
+                    s.assistant.visual_state = AssistantVisualState::Idle;
+                });
+            }
+            break;
+
+        case AssistantState::StartingSession:
+            if (!wifi_ok) {
+                LOGW_SYSTEM("StartingSession: Wi-Fi reported down.");
+                playAlertAsync(AudioAlertPlayer::playOffline);
+                transitionTo(AssistantState::ErrorCooldown, &snap);
+            } else {
+                if (ws == WsState::CONNECTED) {
+                    LOGI_SYSTEM("StartingSession: Persistent connection active. Skipping Connecting.");
+                    transitionTo(AssistantState::StreamingUserAudio, &snap);
+                } else {
+                    transitionTo(AssistantState::Connecting, &snap);
+                }
+            }
+            break;
+
+        case AssistantState::Connecting:
+            if (ws == WsState::CONNECTED) {
+                transitionTo(AssistantState::StreamingUserAudio, &snap);
+            } else if (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE) {
+                ESP_LOGE(TAG, "Connecting: WebSocket failed or disconnected.");
+                transitionTo(AssistantState::Idle, &snap);
+            }
+            break;
+
+        case AssistantState::StreamingUserAudio:
+            if (snap.audio.assistant_speaking) {
+                transitionTo(AssistantState::AssistantSpeaking, &snap);
+            } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
+                ESP_LOGW(TAG, "StreamingUserAudio: WebSocket closed or error.");
+                transitionTo(AssistantState::Closing, &snap);
+            }
+            break;
+
+        case AssistantState::AssistantSpeaking:
+            if (snap.audio.turn_complete_pending || !snap.audio.assistant_speaking) {
+                transitionTo(AssistantState::WaitingForFollowup, &snap);
+            } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
+                ESP_LOGW(TAG, "AssistantSpeaking: WebSocket closed or error.");
+                transitionTo(AssistantState::Closing, &snap);
+            }
+            break;
+
+        case AssistantState::WaitingForFollowup:
+            if (ws == WsState::DISCONNECTED) {
+                transitionTo(AssistantState::Idle, &snap);
+            }
+            break;
+
+        default:
+            break;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,8 +252,13 @@ static const char* assistantStateToString(AssistantState state) {
     }
 }
 
-void AssistantService::transitionTo(AssistantState newState) {
-    auto snap = EmbeddedSysDb::getInstance().snapshot();
+void AssistantService::transitionTo(AssistantState newState, const SystemState* snap_ptr) {
+    SystemState local_snap;
+    if (!snap_ptr) {
+        local_snap = sysdb.snapshot();
+        snap_ptr = &local_snap;
+    }
+    const SystemState& snap = *snap_ptr;
     AssistantState oldState = snap.assistant.session_state;
     if (oldState == newState) {
         return;
@@ -189,7 +291,7 @@ void AssistantService::transitionTo(AssistantState newState) {
     switch (newState) {
         case AssistantState::Idle:
             visState = wifi_connected ? AssistantVisualState::Idle : AssistantVisualState::Offline;
-            EmbeddedSysDb::getInstance().mutate(COMP::PIPELINE | COMP::AUDIO, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
             });
@@ -201,7 +303,7 @@ void AssistantService::transitionTo(AssistantState newState) {
 
         case AssistantState::Connecting:
             visState = AssistantVisualState::Connecting;
-            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.assistant.connect_requested = true;
             });
             if (m_connect_timer) {
@@ -211,7 +313,7 @@ void AssistantService::transitionTo(AssistantState newState) {
 
         case AssistantState::StreamingUserAudio:
             visState = AssistantVisualState::Listening;
-            EmbeddedSysDb::getInstance().mutate(COMP::PIPELINE | COMP::AUDIO, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.pipeline.mode = PipelineMode::GEMINI_LIVE;
                 s.audio.session_active = true;
                 s.audio.mic_enabled = true;
@@ -220,7 +322,7 @@ void AssistantService::transitionTo(AssistantState newState) {
 
         case AssistantState::AssistantSpeaking:
             visState = AssistantVisualState::Speaking;
-            EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.audio.assistant_speaking = true;
                 s.audio.mic_enabled = false;
             });
@@ -234,7 +336,7 @@ void AssistantService::transitionTo(AssistantState newState) {
             break;
 
         case AssistantState::Closing:
-            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT | COMP::PIPELINE | COMP::AUDIO, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.assistant.connect_requested = false;
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
@@ -244,7 +346,7 @@ void AssistantService::transitionTo(AssistantState newState) {
 
         case AssistantState::ErrorCooldown:
             visState = AssistantVisualState::Error;
-            EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT | COMP::PIPELINE | COMP::AUDIO, [](SystemState& s) {
+            sysdb.mutate([](SystemState& s) {
                 s.assistant.connect_requested = false;
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
@@ -256,7 +358,7 @@ void AssistantService::transitionTo(AssistantState newState) {
     }
 
     // Apply session and visual states to SysDb
-    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [newState, visState](SystemState& s) {
+    sysdb.mutate([newState, visState](SystemState& s) {
         s.assistant.session_state = newState;
         s.assistant.visual_state = visState;
         if (newState == AssistantState::Idle) {
@@ -331,127 +433,7 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Background State Machine Supervisor
-// ─────────────────────────────────────────────────────────────────────────────
 
-void AssistantService::run() {
-    LOGI_SYSTEM("AssistantService supervisor task active.");
-
-    while (m_running) {
-        uint32_t changed_bits = 0;
-        // Wait for a state update or periodic 100ms supervisor check
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(100));
-        if (!m_running) break;
-
-        if (notified == pdTRUE && changed_bits > 0) {
-            m_last_changed = changed_bits;
-            SystemState snap = EmbeddedSysDb::getInstance().snapshot();
-            onStateChanged(m_last_changed, snap);
-        }
-
-        // Take snapshot
-        auto snap = EmbeddedSysDb::getInstance().snapshot();
-
-        // 1. Process timer events
-        if (m_connect_timeout_pending) {
-            m_connect_timeout_pending = false;
-            ESP_LOGW(TAG, "Connection timeout elapsed.");
-            transitionTo(AssistantState::ErrorCooldown);
-            continue;
-        }
-        if (m_idle_timeout_pending) {
-            m_idle_timeout_pending = false;
-            ESP_LOGW(TAG, "Idle timeout elapsed.");
-            transitionTo(AssistantState::Closing);
-            continue;
-        }
-        if (m_cooldown_elapsed_pending) {
-            m_cooldown_elapsed_pending = false;
-            ESP_LOGI(TAG, "Error cooldown elapsed.");
-            transitionTo(AssistantState::Idle);
-            continue;
-        }
-
-        // Get snapshot components
-        auto session = snap.assistant.session_state;
-        auto ws = snap.assistant.ws_state;
-        bool wifi_ok = snap.system.wifi_connected;
-
-        // 2. Synchronize current state shadow
-        if (session != m_current_state) {
-            handleStateTransition(m_current_state, session, snap);
-            continue;
-        }
-
-        // 3. React to state machine condition triggers
-        switch (session) {
-            case AssistantState::Idle:
-                // If Wi-Fi link went down, update the visual state to Offline
-                if (!wifi_ok && snap.assistant.visual_state != AssistantVisualState::Offline) {
-                    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
-                        s.assistant.visual_state = AssistantVisualState::Offline;
-                    });
-                } else if (wifi_ok && snap.assistant.visual_state == AssistantVisualState::Offline) {
-                    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
-                        s.assistant.visual_state = AssistantVisualState::Idle;
-                    });
-                }
-                break;
-
-            case AssistantState::StartingSession:
-                if (!wifi_ok) {
-                    LOGW_SYSTEM("StartingSession: Wi-Fi reported down.");
-                    playAlertAsync(AudioAlertPlayer::playOffline);
-                    transitionTo(AssistantState::ErrorCooldown);
-                } else {
-                    if (ws == WsState::CONNECTED) {
-                        LOGI_SYSTEM("StartingSession: Persistent connection active. Skipping Connecting.");
-                        transitionTo(AssistantState::StreamingUserAudio);
-                    } else {
-                        transitionTo(AssistantState::Connecting);
-                    }
-                }
-                break;
-
-            case AssistantState::Connecting:
-                if (ws == WsState::CONNECTED) {
-                    transitionTo(AssistantState::StreamingUserAudio);
-                } else if (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE) {
-                    ESP_LOGE(TAG, "Connecting: WebSocket failed or disconnected.");
-                    transitionTo(AssistantState::Idle);
-                }
-                break;
-
-            case AssistantState::StreamingUserAudio:
-                if (snap.audio.assistant_speaking) {
-                    transitionTo(AssistantState::AssistantSpeaking);
-                } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
-                    ESP_LOGW(TAG, "StreamingUserAudio: WebSocket closed or error.");
-                    transitionTo(AssistantState::Closing);
-                }
-                break;
-
-            case AssistantState::AssistantSpeaking:
-                if (snap.audio.turn_complete_pending || !snap.audio.assistant_speaking) {
-                    transitionTo(AssistantState::WaitingForFollowup);
-                } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
-                    ESP_LOGW(TAG, "AssistantSpeaking: WebSocket closed or error.");
-                    transitionTo(AssistantState::Closing);
-                }
-                break;
-
-            case AssistantState::WaitingForFollowup:
-                if (ws == WsState::DISCONNECTED) {
-                    transitionTo(AssistantState::Idle);
-                }
-                break;
-
-            default:
-                break;
-        }
-    }
-}
 
 void AssistantService::publishMusicCommand(AssistantState oldState, AssistantState newState) {
     if (newState == AssistantState::StartingSession) {

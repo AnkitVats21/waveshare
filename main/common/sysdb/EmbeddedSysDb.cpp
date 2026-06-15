@@ -119,6 +119,13 @@ WsState EmbeddedSysDb::wsState() const {
     return v;
 }
 
+bool EmbeddedSysDb::turnCompletePending() const {
+    acquireRead();
+    bool v = m_state.audio.turn_complete_pending;
+    releaseRead();
+    return v;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Reactor registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,11 +145,77 @@ void EmbeddedSysDb::registerReactor(ComponentMask interest, TaskHandle_t handle)
 // ─────────────────────────────────────────────────────────────────────────────
 
 void EmbeddedSysDb::notifyReactors_locked(ComponentMask changed) {
+    uint32_t changed_comp = changed & 0xFFFF0000;
     for (size_t i = 0; i < m_reactor_count; ++i) {
-        if (m_reactors[i].mask & changed) {
+        if (m_reactors[i].mask & changed_comp) {
             // xTaskNotify is safe from task context.
             // Use eSetBits to combine changed masks so the reactor knows what changed.
             xTaskNotify(m_reactors[i].handle, changed, eSetBits);
         }
     }
+}
+
+ComponentMask EmbeddedSysDb::diffState(const SystemState& old_s, const SystemState& new_s) {
+    ComponentMask changed = 0;
+
+    // SYSTEM_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.system.name != new_s.system.name) changed |= (COMP::SYSTEM | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.system.name, new_s.system.name) != 0) changed |= (COMP::SYSTEM | bit);
+    SYSTEM_FIELDS
+    #undef X
+    #undef X_STR
+
+    // AUDIO_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.audio.name != new_s.audio.name) changed |= (COMP::AUDIO | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.audio.name, new_s.audio.name) != 0) changed |= (COMP::AUDIO | bit);
+    AUDIO_FIELDS
+    #undef X
+    #undef X_STR
+
+    // PIPELINE_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.pipeline.name != new_s.pipeline.name) changed |= (COMP::PIPELINE | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.pipeline.name, new_s.pipeline.name) != 0) changed |= (COMP::PIPELINE | bit);
+    PIPELINE_FIELDS
+    #undef X
+    #undef X_STR
+
+    // ASSISTANT_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.assistant.name != new_s.assistant.name) changed |= (COMP::ASSISTANT | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.assistant.name, new_s.assistant.name) != 0) changed |= (COMP::ASSISTANT | bit);
+    ASSISTANT_FIELDS
+    #undef X
+    #undef X_STR
+
+    // LED_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.led.name != new_s.led.name) changed |= (COMP::LED | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.led.name, new_s.led.name) != 0) changed |= (COMP::LED | bit);
+    #define X_COLOR(name, def, bit) \
+        if (bit != 0 && (old_s.led.name.r != new_s.led.name.r || \
+                         old_s.led.name.g != new_s.led.name.g || \
+                         old_s.led.name.b != new_s.led.name.b)) changed |= (COMP::LED | bit);
+    LED_FIELDS
+    #undef X
+    #undef X_STR
+    #undef X_COLOR
+
+    // MQTT_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.mqtt.name != new_s.mqtt.name) changed |= (COMP::MQTT | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.mqtt.name, new_s.mqtt.name) != 0) changed |= (COMP::MQTT | bit);
+    MQTT_FIELDS
+    #undef X
+    #undef X_STR
+
+    return changed;
 }

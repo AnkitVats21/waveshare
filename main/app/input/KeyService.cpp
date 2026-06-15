@@ -4,6 +4,8 @@
 #include "common/thread_config.h"
 #include <algorithm>
 
+static auto& sysdb = EmbeddedSysDb::getInstance();
+
 KeyService::KeyService(ExpanderKeyInput &input)
     : ReactorTask({
           "key_svc",
@@ -44,13 +46,13 @@ void KeyService::run() {
                     ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
 
                     if (keys[i] == KeyId::KEY_3) {
-                        EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
+                        sysdb.mutate([](SystemState& s) {
                             int old_vol = s.audio.speaker_volume;
                             s.audio.speaker_volume = std::min(old_vol + 5, 100);
                             ESP_LOGI("KeySvc", "Volume increase request: %d -> %d", old_vol, s.audio.speaker_volume);
                         });
                     } else if (keys[i] == KeyId::KEY_5) {
-                        EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
+                        sysdb.mutate([](SystemState& s) {
                             int old_vol = s.audio.speaker_volume;
                             s.audio.speaker_volume = std::max(old_vol - 5, 0);
                             ESP_LOGI("KeySvc", "Volume decrease request: %d -> %d", old_vol, s.audio.speaker_volume);

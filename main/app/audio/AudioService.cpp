@@ -11,7 +11,7 @@
 #include "services/BufferManager.h"
 #include "esp_timer.h"
 
-
+static auto &sysdb = EmbeddedSysDb::getInstance();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction
@@ -36,7 +36,7 @@ AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles)
 bool AudioService::begin() {
     if (m_initialized) return true;
 
-    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    auto snap = sysdb.snapshot();
 
     if (!AudioPipelineManager::initialize(snap.audio.sample_rate, m_hal, m_handles)) {
         LOGE_AUDIO("Failed to initialize AudioPipelineManager.");
@@ -58,6 +58,13 @@ bool AudioService::begin() {
 
     m_initialized = true;
     m_last_applied_session_active = snap.audio.session_active;
+    
+    // Sync initial hardware levels to match boot SysDb values
+    m_hal.setPlayVolume(snap.audio.speaker_volume);
+    m_hal.setRecordGain(snap.audio.mic_gain_db);
+    AudioPipelineManager::setMicEnabled(snap.audio.mic_enabled);
+    m_last_applied_mic_enabled = snap.audio.mic_enabled;
+
     LOGI_AUDIO("AudioService operational at %lu Hz.", (unsigned long)snap.audio.sample_rate);
     return true;
 }
@@ -67,7 +74,88 @@ bool AudioService::begin() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // Handled directly in run loop via xTaskNotifyWait & reconciliation
+    // 1. Reconcile Playback Volume
+    if ((changed & BIT_AUDIO::SPEAKER_VOLUME) || (changed == 0)) {
+        int target_vol = snap.audio.speaker_volume;
+        if (m_hal.getPlayVolume() != target_vol) {
+            m_hal.setPlayVolume(target_vol);
+            LOGI_AUDIO("Volume applied: %d", target_vol);
+        }
+    }
+
+    // 2. Reconcile Mic Record Gain
+    if ((changed & BIT_AUDIO::MIC_GAIN) || (changed == 0)) {
+        float target_gain = snap.audio.mic_gain_db;
+        if (m_hal.getRecordGain() != target_gain) {
+            m_hal.setRecordGain(target_gain);
+            LOGI_AUDIO("Mic gain applied: %.1f dB", target_gain);
+        }
+    }
+
+    // 3. Reconcile Mic Enablement
+    if ((changed & BIT_AUDIO::MIC_ENABLED) || (changed == 0)) {
+        if (snap.audio.mic_enabled != m_last_applied_mic_enabled) {
+            AudioPipelineManager::setMicEnabled(snap.audio.mic_enabled);
+            m_last_applied_mic_enabled = snap.audio.mic_enabled;
+        }
+    }
+
+    // 4. Reconcile Pipeline Mode
+    if ((changed & BIT_PIPELINE::MODE) || (changed == 0)) {
+        if (snap.pipeline.mode != m_current_pipeline_mode) {
+            applyPipelineModeSwitch(snap.pipeline.mode);
+        }
+    }
+
+    // 5. Reconcile Sample Rate / Audio Mode Clock Switches
+    auto session = snap.assistant.session_state;
+    bool session_changed = (changed & BIT_ASSISTANT::SESSION_STATE) || 
+                           (changed & BIT_AUDIO::SESSION_ACTIVE) ||
+                           (changed & BIT_AUDIO::ASST_SPEAKING) ||
+                           (changed & BIT_AUDIO::TURN_COMPLETE) ||
+                           (changed == 0);
+
+    if (session_changed) {
+        // Transition A: Enter 24kHz assistant speaking playback
+        if (session == AssistantState::AssistantSpeaking && 
+            !snap.audio.turn_complete_pending && 
+            m_hal.getSampleRate() != 24000) {
+            
+            enterAssistantPlaybackModeNow();
+        }
+
+        // Transition B: Return to 16kHz wake mode when session becomes Idle/Closing
+        bool session_ended = (m_last_applied_session_active && !snap.audio.session_active);
+        bool needs_16k_restore = (session == AssistantState::Idle || session == AssistantState::Closing) &&
+                                 (m_hal.getSampleRate() != 16000);
+
+        if (session_ended || needs_16k_restore) {
+            returnToWakeMode16k();
+            m_last_applied_session_active = snap.audio.session_active;
+        } else if (snap.audio.session_active != m_last_applied_session_active) {
+            m_last_applied_session_active = snap.audio.session_active;
+        }
+    }
+
+    // Transition C: Turn-complete cleanup (revert to 16kHz once speaker is empty)
+    if ((changed & BIT_AUDIO::TURN_COMPLETE) && !snap.audio.turn_complete_pending) {
+        // Revert to 16kHz clock
+        if (m_hal.getSampleRate() != 16000) {
+            AudioPipelineManager::pauseSpeaker();
+            m_hal.setHardwareSampleRate(16000);
+            AudioPipelineManager::resumeSpeaker();
+        }
+        
+        auto& ww = WakeWordEngine::getInstance();
+        ww.setAssistantActive(false);
+        ww.setVadDeferred(false);
+        ww.resumeHardware();
+        AudioPipelineManager::setRtpRxInterrupted(false);
+        
+        sysdb.mutate([](SystemState& s) {
+            s.pipeline.rtp_enabled = true;
+        });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,7 +164,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
 
 void AudioService::onWakeWord(uint8_t channel) {
     LOGI_AUDIO("Wake word (ch %d) — mutating SysDb COMP_ASSISTANT.", channel);
-    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+    sysdb.mutate([](SystemState& s) {
         s.assistant.session_state  = AssistantState::StartingSession;
         s.assistant.visual_state   = AssistantVisualState::Thinking;
         s.assistant.connect_requested = true;
@@ -85,7 +173,7 @@ void AudioService::onWakeWord(uint8_t channel) {
 
 void AudioService::onVadTimeout() {
     LOGI_AUDIO("VAD timeout — returning to Idle.");
-    EmbeddedSysDb::getInstance().mutate(COMP::ASSISTANT, [](SystemState& s) {
+    sysdb.mutate([](SystemState& s) {
         if (s.assistant.session_state == AssistantState::StreamingUserAudio ||
             s.assistant.session_state == AssistantState::WaitingForFollowup) {
             s.assistant.session_state = AssistantState::Idle;
@@ -146,9 +234,9 @@ void AudioService::applyPipelineModeSwitch(PipelineMode mode) {
             break;
     }
     
-    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    auto snap = sysdb.snapshot();
     if (snap.pipeline.rtp_tx_en != tx || snap.pipeline.rtp_rx_en != rx) {
-        EmbeddedSysDb::getInstance().mutate(COMP::PIPELINE, [tx, rx](SystemState& s) {
+        sysdb.mutate([tx, rx](SystemState& s) {
             s.pipeline.rtp_tx_en = tx;
             s.pipeline.rtp_rx_en = rx;
         });
@@ -177,110 +265,12 @@ void AudioService::returnToWakeMode16k() {
         LOGW_AUDIO("Restoring 16kHz idle clock...");
         AudioPipelineManager::pauseSpeaker();
         m_hal.setHardwareSampleRate(16000);
-        ww.setAssistantActive(false);
-        ww.setVadDeferred(false);
-        ww.resumeHardware();
         AudioPipelineManager::resumeSpeaker();
     }
+    
+    ww.setAssistantActive(false);
+    ww.setVadDeferred(false);
+    ww.resumeHardware();
     AudioPipelineManager::setRtpRxInterrupted(false);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Background supervisor run() loop
-// ─────────────────────────────────────────────────────────────────────────────
-
-void AudioService::run() {
-    LOGI_AUDIO("AudioService supervisor task active.");
-
-    while (m_running) {
-        uint32_t changed_bits = 0;
-        
-        // Dynamic wait time: poll every 20ms ONLY when turn is complete & buffer is draining.
-        // Otherwise, sleep indefinitely (portMAX_DELAY) until a state mutation notification occurs.
-        auto snap = EmbeddedSysDb::getInstance().snapshot();
-        TickType_t wait_ticks = snap.audio.turn_complete_pending ? pdMS_TO_TICKS(20) : portMAX_DELAY;
-
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, wait_ticks);
-        (void)notified;
-        if (!m_running) break;
-
-        // Take a fresh snapshot to read latest assistant state
-        snap = EmbeddedSysDb::getInstance().snapshot();
-
-        // 1. Reconcile Playback Volume
-        int target_vol = snap.audio.speaker_volume;
-        if (m_hal.getPlayVolume() != target_vol) {
-            m_hal.setPlayVolume(target_vol);
-            LOGI_AUDIO("Volume applied: %d", target_vol);
-        }
-
-        // 2. Reconcile Mic Record Gain
-        float target_gain = snap.audio.mic_gain_db;
-        if (m_hal.getRecordGain() != target_gain) {
-            m_hal.setRecordGain(target_gain);
-            LOGI_AUDIO("Mic gain applied: %.1f dB", target_gain);
-        }
-
-        // 3. Reconcile Mic Enablement
-        if (snap.audio.mic_enabled != m_last_applied_mic_enabled) {
-            AudioPipelineManager::setMicEnabled(snap.audio.mic_enabled);
-            m_last_applied_mic_enabled = snap.audio.mic_enabled;
-        }
-
-        // 4. Reconcile Pipeline Mode
-        if (snap.pipeline.mode != m_current_pipeline_mode) {
-            applyPipelineModeSwitch(snap.pipeline.mode);
-        }
-
-        // 5. Reconcile Sample Rate / Audio Mode Clock Switches
-        auto session = snap.assistant.session_state;
-        
-        // Transition A: Enter 24kHz assistant speaking playback
-        if (session == AssistantState::AssistantSpeaking && 
-            !snap.audio.turn_complete_pending && 
-            m_hal.getSampleRate() != 24000) {
-            
-            enterAssistantPlaybackModeNow();
-        }
-
-        // Transition B: Return to 16kHz wake mode when session becomes Idle/Closing
-        bool session_ended = (m_last_applied_session_active && !snap.audio.session_active);
-        bool needs_16k_restore = (session == AssistantState::Idle || session == AssistantState::Closing) &&
-                                 (m_hal.getSampleRate() != 16000);
-
-        if (session_ended || needs_16k_restore) {
-            returnToWakeMode16k();
-            m_last_applied_session_active = snap.audio.session_active;
-        } else if (snap.audio.session_active != m_last_applied_session_active) {
-            m_last_applied_session_active = snap.audio.session_active;
-        }
-
-        // Transition C: Turn-complete buffer drain (revert to 16kHz once speaker is empty)
-        if (snap.audio.turn_complete_pending) {
-            if (BufferManager::getInstance().getUsedBytes(Buffers::SPK_RX_BUF) == 0) {
-                // Mutate DB to clear turn_complete_pending and assistant_speaking
-                EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
-                    s.audio.turn_complete_pending = false;
-                    s.audio.assistant_speaking    = false;
-                });
-                
-                // Revert to 16kHz clock
-                if (m_hal.getSampleRate() != 16000) {
-                    auto& ww = WakeWordEngine::getInstance();
-                    AudioPipelineManager::pauseSpeaker();
-                    m_hal.setHardwareSampleRate(16000);
-                    ww.setAssistantActive(false);
-                    ww.setVadDeferred(false);
-                    ww.resumeHardware();
-                    AudioPipelineManager::resumeSpeaker();
-                    AudioPipelineManager::setRtpRxInterrupted(false);
-                }
-                
-                EmbeddedSysDb::getInstance().mutate(COMP::PIPELINE, [](SystemState& s) {
-                    s.pipeline.rtp_enabled = true;
-                });
-            }
-        }
-    }
 }

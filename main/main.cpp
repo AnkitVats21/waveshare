@@ -29,16 +29,18 @@ extern "C" void app_main(void) {
     LOGI_SYSTEM("Initializing System Application Layer...");
 
     // 2. Boot SysDb with Kconfig defaults
-    EmbeddedSysDb::getInstance().mutate(COMP::SYSTEM | COMP::AUDIO, [](SystemState& s) {
-        strncpy(s.system.server_ip, CONFIG_WAVESHARE_SERVER_IP, sizeof(s.system.server_ip) - 1);
-        s.system.server_ip[sizeof(s.system.server_ip) - 1] = '\0';
-        s.audio.sample_rate       = 16000;
-        s.audio.speaker_volume    = 80;
-        s.audio.mic_gain_db       = 60.0f;
-        s.audio.rtp_tx_port       = CONFIG_WAVESHARE_RTP_TX_PORT;
-        s.audio.rtp_rx_port       = CONFIG_WAVESHARE_RTP_RX_PORT;
-        s.audio.buffer_size       = 131072;
-    });
+    EmbeddedSysDb::getInstance().mutate(
+        [](SystemState& s) {
+            strncpy(s.system.server_ip, CONFIG_WAVESHARE_SERVER_IP, sizeof(s.system.server_ip) - 1);
+            s.system.server_ip[sizeof(s.system.server_ip) - 1] = '\0';
+            s.audio.sample_rate       = 16000;
+            s.audio.speaker_volume    = 80;
+            s.audio.mic_gain_db       = 60.0f;
+            s.audio.rtp_tx_port       = CONFIG_WAVESHARE_RTP_TX_PORT;
+            s.audio.rtp_rx_port       = CONFIG_WAVESHARE_RTP_RX_PORT;
+            s.audio.buffer_size       = 131072;
+        }
+    );
 
     // 2.5 Initialize Ring Buffers in PSRAM
     if (!BufferManager::getInstance().initAll()) {

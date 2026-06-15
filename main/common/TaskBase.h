@@ -49,7 +49,7 @@ public:
     /**
      * @brief Stop and delete the task.
      */
-    void stop() {
+    virtual void stop() {
         if (m_task_handle != nullptr) {
             m_running = false;
             vTaskDelete(m_task_handle);

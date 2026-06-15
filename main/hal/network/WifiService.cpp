@@ -72,7 +72,7 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
         } else {
             LOGW_WIFI("Max retries reached — marking wifi_connected = false");
             // Write disconnected state directly into SysDb — no EventBus
-            EmbeddedSysDb::getInstance().mutate(COMP::SYSTEM, [](SystemState& s) {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                 s.system.wifi_connected = false;
             });
         }
@@ -83,7 +83,7 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
         self->m_retry_cnt = 0;
 
         // Write connected state directly into SysDb — ReactorTasks wake automatically
-        EmbeddedSysDb::getInstance().mutate(COMP::SYSTEM, [](SystemState& s) {
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.system.wifi_connected = true;
         });
     }

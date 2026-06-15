@@ -41,7 +41,6 @@ public:
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
 protected:
-    void run() override;
 
 private:
     AudioHal&             m_hal;
