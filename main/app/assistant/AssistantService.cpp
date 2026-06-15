@@ -411,8 +411,14 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
             break;
     }
 
-    // Start appropriate timers if updated externally
+    // Start appropriate timers or sync database if updated externally
     switch (newState) {
+        case AssistantState::Idle:
+            sysdb.mutate([](SystemState& s) {
+                s.pipeline.mode = PipelineMode::WAKE_IDLE;
+                s.audio.session_active = false;
+            });
+            break;
         case AssistantState::Connecting:
             if (m_connect_timer) {
                 esp_timer_start_once(m_connect_timer, 10ULL * 1000 * 1000);
@@ -423,7 +429,19 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
                 esp_timer_start_once(m_idle_timer, 30ULL * 1000 * 1000);
             }
             break;
+        case AssistantState::Closing:
+            sysdb.mutate([](SystemState& s) {
+                s.assistant.connect_requested = false;
+                s.pipeline.mode = PipelineMode::WAKE_IDLE;
+                s.audio.session_active = false;
+            });
+            break;
         case AssistantState::ErrorCooldown:
+            sysdb.mutate([](SystemState& s) {
+                s.assistant.connect_requested = false;
+                s.pipeline.mode = PipelineMode::WAKE_IDLE;
+                s.audio.session_active = false;
+            });
             if (m_cooldown_timer) {
                 esp_timer_start_once(m_cooldown_timer, 5ULL * 1000 * 1000);
             }

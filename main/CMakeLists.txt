@@ -96,12 +96,10 @@ idf_component_register(
             "app/mqtt"
             "app/wake_word"
             "app/led"
-            "app/event"
             "app/assistant"
             # Services / common
             "services"
             "common"
-            "common/events"
             "common/sysdb"
             "hal/input"
 

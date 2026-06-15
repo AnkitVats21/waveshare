@@ -78,7 +78,9 @@ bool SpeakerPlaybackTask::processPlayback(int16_t* dma_safe_buffer, int32_t* exp
 
   if (m_is_prebuffering) {
     size_t fill_bytes = bm.getUsedBytes(Buffers::SPK_RX_BUF);
-    if (fill_bytes < PREBUFFER_THRESHOLD) {
+    bool assistant_speaking = EmbeddedSysDb::getInstance().assistantSpeaking();
+    size_t threshold = assistant_speaking ? PREBUFFER_THRESHOLD : 320;
+    if (fill_bytes < threshold) {
       vTaskDelay(pdMS_TO_TICKS(20));
       return false;
     }
@@ -87,7 +89,7 @@ bool SpeakerPlaybackTask::processPlayback(int16_t* dma_safe_buffer, int32_t* exp
 
   size_t rx_chunk_bytes = 0;
   void *rx_data_ptr = bm.receive(Buffers::SPK_RX_BUF, &rx_chunk_bytes,
-                                 pdMS_TO_TICKS(100), MAX_AUDIO_CHUNK_BYTES);
+                                 pdMS_TO_TICKS(20), MAX_AUDIO_CHUNK_BYTES);
 
   if (rx_data_ptr == nullptr || rx_chunk_bytes == 0) {
     // Write silence to keep the codec DMA clock running — never re-enter

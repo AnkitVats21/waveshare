@@ -52,7 +52,7 @@ protected:
 private:
   bool processPlayback(int16_t* dma_safe_buffer, int32_t* expanded_buffer, int32_t* silence_buffer);
 
-  static constexpr size_t PREBUFFER_THRESHOLD = 8000;
+  static constexpr size_t PREBUFFER_THRESHOLD = 24000;
   static constexpr uint32_t EMPTY_THRESHOLD = 40;
   static constexpr size_t SILENCE_SAMPLES = 320;
   static constexpr size_t MAX_AUDIO_CHUNK_SAMPLES = 1024;

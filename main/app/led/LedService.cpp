@@ -125,49 +125,7 @@ void LedService::run() {
             last_mode   = cmd.mode;
         }
 
-        uint32_t delay_ms = 100;
-        switch (cmd.mode) {
-            case LedMode::OFF:
-                delay_ms = 200;
-                break;
-            case LedMode::SOLID:
-                delay_ms = 200;
-                break;
-            case LedMode::BLINK:
-                delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 500;
-                break;
-            case LedMode::BREATH:
-                delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30;
-                break;
-            case LedMode::RAINBOW:
-                delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30;
-                break;
-            default:
-                break;
-        }
-
-        uint32_t changed_bits = 0;
-        TickType_t wait_ticks = (cmd.mode == LedMode::OFF || cmd.mode == LedMode::SOLID) ? portMAX_DELAY : pdMS_TO_TICKS(delay_ms);
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, wait_ticks);
-        if (!m_running) break;
-
-        if (notified == pdTRUE && changed_bits > 0) {
-            m_last_changed = changed_bits;
-            SystemState snap = EmbeddedSysDb::getInstance().snapshot();
-            onStateChanged(m_last_changed, snap);
-
-            if (m_cmd_mutex && xSemaphoreTake(m_cmd_mutex, portMAX_DELAY) == pdTRUE) {
-                cmd = m_current_command;
-                xSemaphoreGive(m_cmd_mutex);
-            }
-            if (cmd.mode != last_mode) {
-                step        = 0;
-                blink_state = false;
-                breath_val  = 0.0f;
-                last_mode   = cmd.mode;
-            }
-        }
-
+        // 1. Physically apply/draw the current LED state first
         switch (cmd.mode) {
             case LedMode::OFF:
                 m_leds.clear();
@@ -186,6 +144,7 @@ void LedService::run() {
                         xSemaphoreGive(m_cmd_mutex);
                     }
                     last_mode = LedMode::OFF;
+                    cmd.mode = LedMode::OFF;
                     break;
                 }
                 if (blink_state) {
@@ -218,6 +177,7 @@ void LedService::run() {
                             xSemaphoreGive(m_cmd_mutex);
                         }
                         last_mode = LedMode::OFF;
+                        cmd.mode = LedMode::OFF;
                     }
                 }
                 break;
@@ -243,6 +203,28 @@ void LedService::run() {
 
             default:
                 break;
+        }
+
+        // 2. Calculate delay and wait for the next frame or database notification
+        uint32_t delay_ms = 100;
+        switch (cmd.mode) {
+            case LedMode::OFF:        delay_ms = 200; break;
+            case LedMode::SOLID:      delay_ms = 200; break;
+            case LedMode::BLINK:      delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 500; break;
+            case LedMode::BREATH:     delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30; break;
+            case LedMode::RAINBOW:    delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30; break;
+            default: break;
+        }
+
+        uint32_t changed_bits = 0;
+        TickType_t wait_ticks = (cmd.mode == LedMode::OFF || cmd.mode == LedMode::SOLID) ? portMAX_DELAY : pdMS_TO_TICKS(delay_ms);
+        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, wait_ticks);
+        if (!m_running) break;
+
+        if (notified == pdTRUE && changed_bits > 0) {
+            m_last_changed = changed_bits;
+            SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+            onStateChanged(m_last_changed, snap);
         }
     }
 }
