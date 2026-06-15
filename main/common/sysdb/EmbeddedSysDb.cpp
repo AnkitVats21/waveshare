@@ -112,6 +112,13 @@ PipelineMode EmbeddedSysDb::pipelineMode() const {
     return v;
 }
 
+WsState EmbeddedSysDb::wsState() const {
+    acquireRead();
+    WsState v = m_state.assistant.ws_state;
+    releaseRead();
+    return v;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Reactor registration
 // ─────────────────────────────────────────────────────────────────────────────

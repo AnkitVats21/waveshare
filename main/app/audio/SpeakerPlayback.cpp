@@ -98,7 +98,7 @@ void SpeakerPlaybackTask::worker(uint32_t sample_rate,
 
     size_t rx_chunk_bytes = 0;
     void *rx_data_ptr = bm.receive(Buffers::SPK_RX_BUF, &rx_chunk_bytes,
-                                   pdMS_TO_TICKS(10), MAX_AUDIO_CHUNK_BYTES);
+                                   pdMS_TO_TICKS(100), MAX_AUDIO_CHUNK_BYTES);
 
     if (rx_data_ptr == nullptr || rx_chunk_bytes == 0) {
       // Write silence to keep the codec DMA clock running — never re-enter

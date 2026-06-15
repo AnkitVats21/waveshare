@@ -30,9 +30,8 @@ extern "C" void app_main(void) {
 
     // 2. Boot SysDb with Kconfig defaults
     EmbeddedSysDb::getInstance().mutate(COMP::SYSTEM | COMP::AUDIO, [](SystemState& s) {
-        s.system.wifi_ssid        = CONFIG_WAVESHARE_WIFI_SSID;
-        s.system.wifi_password    = CONFIG_WAVESHARE_WIFI_PASSWORD;
-        s.system.server_ip        = CONFIG_WAVESHARE_SERVER_IP;
+        strncpy(s.system.server_ip, CONFIG_WAVESHARE_SERVER_IP, sizeof(s.system.server_ip) - 1);
+        s.system.server_ip[sizeof(s.system.server_ip) - 1] = '\0';
         s.audio.sample_rate       = 16000;
         s.audio.speaker_volume    = 80;
         s.audio.mic_gain_db       = 60.0f;
@@ -103,8 +102,8 @@ extern "C" void app_main(void) {
 
     // 7. Start WiFi service event bridge
     WifiService::Config wifi_cfg = {
-        .ssid        = EmbeddedSysDb::getInstance().snapshot().system.wifi_ssid,
-        .password    = EmbeddedSysDb::getInstance().snapshot().system.wifi_password,
+        .ssid        = CONFIG_WAVESHARE_WIFI_SSID,
+        .password    = CONFIG_WAVESHARE_WIFI_PASSWORD,
         .max_retries = 5,
     };
     static WifiService wifi(wifi_cfg);

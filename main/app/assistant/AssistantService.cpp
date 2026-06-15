@@ -1,5 +1,6 @@
 #include "AssistantService.h"
 #include "app/audio/AudioAlertPlayer.h"
+#include "app/mqtt/MqttService.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
@@ -163,6 +164,8 @@ void AssistantService::transitionTo(AssistantState newState) {
 
     LOGI_SYSTEM("Assistant transition request: %s ──> %s", assistantStateToString(oldState), assistantStateToString(newState));
 
+    publishMusicCommand(oldState, newState);
+
     // 1. Cleanup timers/actions of the old state
     switch (oldState) {
         case AssistantState::Connecting:
@@ -288,6 +291,8 @@ void AssistantService::transitionTo(AssistantState newState) {
 void AssistantService::handleStateTransition(AssistantState oldState, AssistantState newState, const SystemState& snap) {
     m_current_state = newState;
     LOGI_SYSTEM("Syncing local state machine from external change: %s ──> %s", assistantStateToString(oldState), assistantStateToString(newState));
+
+    publishMusicCommand(oldState, newState);
 
     // Sync timers and internal variables
     switch (oldState) {
@@ -445,5 +450,15 @@ void AssistantService::run() {
             default:
                 break;
         }
+    }
+}
+
+void AssistantService::publishMusicCommand(AssistantState oldState, AssistantState newState) {
+    if (newState == AssistantState::StartingSession) {
+        MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_pause\"}");
+    }
+    if (oldState != AssistantState::Idle &&
+        (newState == AssistantState::Idle || newState == AssistantState::Closing || newState == AssistantState::ErrorCooldown)) {
+        MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_play\"}");
     }
 }

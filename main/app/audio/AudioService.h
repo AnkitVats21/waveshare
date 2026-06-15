@@ -50,6 +50,7 @@ private:
 
     PipelineMode m_current_pipeline_mode  = PipelineMode::WAKE_IDLE;
     bool                  m_last_applied_mic_enabled = true;
+    bool                  m_last_applied_session_active = false;
 
     void applyPipelineModeSwitch(PipelineMode mode);
     void enterAssistantPlaybackModeNow();

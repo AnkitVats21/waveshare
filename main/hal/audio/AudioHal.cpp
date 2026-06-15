@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "hal/Board_defs.h"
+#include "hal/Board.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -131,27 +132,30 @@ esp_err_t AudioHal::reinit(uint32_t sample_rate) {
 esp_err_t AudioHal::setHardwareSampleRate(uint32_t sample_rate) {
   if (!m_initialized) return ESP_FAIL;
 
-  // 1. Digitally mute playback to prevent any pops/clicks during clock switch
-  esp_codec_dev_set_out_mute(m_play_dev, true);
-  vTaskDelay(pdMS_TO_TICKS(15)); // PA discharges
+  // 1. Turn off Power Amplifier via IO Expander to completely block DAC bias ramp clicks/pops
+  Board::getInstance().getIoExpanderInstance().setPowerRail(false);
+  vTaskDelay(pdMS_TO_TICKS(10)); // Allow PA output capacitors to fully discharge
 
-  // 2. Close codec streams to cleanly release I2S locks & stop active DMA (automatically disables I2S channels!)
+  // 2. Digitally mute playback
+  esp_codec_dev_set_out_mute(m_play_dev, true);
+
+  // 3. Close codec streams to cleanly release I2S locks & stop active DMA
   esp_codec_dev_close(m_record_dev);
   esp_codec_dev_close(m_play_dev);
 
-  // 3. Reconfigure physical clock registers (zero heap allocations!)
+  // 4. Reconfigure physical clock registers (zero heap allocations!)
   i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
   esp_err_t ret = i2s_channel_reconfig_std_clock(m_tx_handle, &clk_cfg);
   ret |= i2s_channel_reconfig_std_clock(m_rx_handle, &clk_cfg);
 
-  // 4. Re-open codec streams with the new sample rate (automatically re-enables I2S channels!)
-  // Crucial: play_fs must match the hardware's 2-channel 32-bit slot width configured on boot.
-  // Mismatches slow down physical I2S clocks, causing slow, low-pitch audio and watchdog triggers.
-  esp_codec_dev_sample_info_t record_fs = {};
-  record_fs.sample_rate = sample_rate;
-  record_fs.channel = 2; // Verified ES7210 32-bit stereo dual-interleaved configuration
-  record_fs.bits_per_sample = 32;
-  esp_codec_dev_open(m_record_dev, &record_fs);
+  // 5. Re-open codec streams with the new sample rate
+  if (sample_rate != 24000) {
+    esp_codec_dev_sample_info_t record_fs = {};
+    record_fs.sample_rate = sample_rate;
+    record_fs.channel = 2; // Verified ES7210 32-bit stereo dual-interleaved configuration
+    record_fs.bits_per_sample = 32;
+    esp_codec_dev_open(m_record_dev, &record_fs);
+  }
 
   esp_codec_dev_sample_info_t play_fs = {};
   play_fs.sample_rate = sample_rate;
@@ -160,15 +164,20 @@ esp_err_t AudioHal::setHardwareSampleRate(uint32_t sample_rate) {
   esp_codec_dev_open(m_play_dev, &play_fs);
 
   // Re-apply record volume and play volume
-  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
-  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), (float)m_record_volume);
-  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), (float)m_record_volume);
-  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3), (float)m_record_volume);
+  if (sample_rate != 24000) {
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), (float)m_record_volume);
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), (float)m_record_volume);
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3), (float)m_record_volume);
+  }
   esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
-
-  // 5. Unmute playback (clocks are locked stably now!)
-  vTaskDelay(pdMS_TO_TICKS(35));
   esp_codec_dev_set_out_mute(m_play_dev, false);
+
+  // 6. Wait for DAC internal bias voltage to fully ramp up and stabilize (while PA is disabled)
+  vTaskDelay(pdMS_TO_TICKS(50));
+
+  // 7. Enable the Power Amplifier now that bias is stable (completely click-free!)
+  Board::getInstance().getIoExpanderInstance().setPowerRail(true);
 
   m_sample_rate = sample_rate;
   ESP_LOGI(TAG, "I2S hardware clock and codec states successfully switched to %lu Hz", (unsigned long)sample_rate);

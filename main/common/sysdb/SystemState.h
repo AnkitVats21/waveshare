@@ -83,9 +83,7 @@ struct SystemState {
     // ── COMP::SYSTEM ─────────────────────────────────────────────────────────
     struct {
         bool        wifi_connected   = false;
-        std::string server_ip        = "192.168.1.18";
-        std::string wifi_ssid;
-        std::string wifi_password;
+        char        server_ip[32]    = "192.168.1.18";
         int         wifi_max_retries = 5;
     } system;
 
