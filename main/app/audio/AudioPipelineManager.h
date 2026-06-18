@@ -45,6 +45,12 @@ public:
     static void pauseSpeaker();
     static void resumeSpeaker();
 
+    /**
+     * @brief Return the raw SpeakerPlaybackTask pointer so callers can poll
+     *        isHardwarePaused() before reconfiguring the I2S clock.
+     */
+    static SpeakerPlaybackTask* getSpeakerTask() { return m_speaker_task; }
+
 private:
     static MicCaptureTask*      m_mic_task;
     static SpeakerPlaybackTask* m_speaker_task;
