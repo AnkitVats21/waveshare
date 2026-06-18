@@ -37,11 +37,11 @@ namespace ThreadConfig {
     // ── Stack sizes (bytes) ────────────────────────────────────────────────
     enum StackSize : uint32_t {
         STACK_SMALL   = 3 * 1024,
-        STACK_NORMAL  = 4 * 1024,
+        STACK_NORMAL  = 3 * 1024,
         STACK_MEDIUM  = 6 * 1024,
         STACK_LARGE   = 8 * 1024,
-        STACK_GEMINI  = 4 * 1024,  ///< GeminiProtocol (cJSON + WssClient)
-        STACK_WW_FEED = 8 * 1024,
+        STACK_GEMINI  = 3 * 1024,  ///< GeminiProtocol (WssClient)
+        STACK_WW_FEED = 3 * 1024,
         STACK_WW_DET  = 8 * 1024,
     };
 
