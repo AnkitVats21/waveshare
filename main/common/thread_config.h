@@ -40,7 +40,7 @@ namespace ThreadConfig {
         STACK_NORMAL  = 3 * 1024,
         STACK_MEDIUM  = 6 * 1024,
         STACK_LARGE   = 8 * 1024,
-        STACK_GEMINI  = 3 * 1024,  ///< GeminiProtocol (WssClient)
+        STACK_GEMINI  = 8 * 1024,  ///< GeminiProtocol — needs room for ArduinoJson tool-call serialization
         STACK_WW_FEED = 3 * 1024,
         STACK_WW_DET  = 8 * 1024,
     };
