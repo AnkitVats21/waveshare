@@ -35,7 +35,6 @@ GeminiProtocol::GeminiProtocol()
           COMP::ASSISTANT | COMP::SYSTEM
       })
 {
-
     // Boot-time allocation of PSRAM scrap arena
     m_static_pcm_scratch_arena = static_cast<uint8_t*>(
         heap_caps_malloc(STATIC_PCM_ARENA_MAX_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
@@ -46,6 +45,29 @@ GeminiProtocol::GeminiProtocol()
         heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
     );
     assert(m_static_payload_arena != nullptr);
+
+    m_assembly_scratch = static_cast<uint8_t*>(
+        heap_caps_malloc(MAX_INCOMING_FRAME_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+    );
+    assert(m_assembly_scratch != nullptr);
+
+    m_incoming_psram_rb = xRingbufferCreateWithCaps(PSRAM_RB_SIZE, RINGBUF_TYPE_NOSPLIT, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    assert(m_incoming_psram_rb != nullptr);
+}
+
+GeminiProtocol::~GeminiProtocol() {
+    if (m_incoming_psram_rb) {
+        vRingbufferDelete(m_incoming_psram_rb);
+    }
+    if (m_assembly_scratch) {
+        heap_caps_free(m_assembly_scratch);
+    }
+    if (m_static_pcm_scratch_arena) {
+        heap_caps_free(m_static_pcm_scratch_arena);
+    }
+    if (m_static_payload_arena) {
+        heap_caps_free(m_static_payload_arena);
+    }
 }
 
 GeminiProtocol& GeminiProtocol::getInstance() {
@@ -102,10 +124,10 @@ bool GeminiProtocol::ensureClientInitialized() {
 
     esp_websocket_client_config_t ws_cfg = {};
     ws_cfg.uri = m_ws_uri.c_str();
-    ws_cfg.buffer_size = 8192;
+    ws_cfg.buffer_size = 65536;
     ws_cfg.reconnect_timeout_ms = 10000;
     ws_cfg.network_timeout_ms = 10000;
-    ws_cfg.task_stack = 8192;
+    ws_cfg.task_stack = 6144;
     ws_cfg.task_prio = ThreadConfig::Priority::GEMINI_PROTOCOL;
     ws_cfg.task_core_id = ThreadConfig::CORE_NETWORK;
     ws_cfg.task_core_id_set = true;
@@ -251,16 +273,33 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
         case WEBSOCKET_EVENT_DATA:
             if (data->op_code == 1 || data->data_len > 0) {
                 if (data->payload_offset == 0) {
-                    self->m_incoming_assembly_buffer.clear();
+                    self->m_assembly_idx = 0;
                 }
 
-                size_t current_size = self->m_incoming_assembly_buffer.size();
-                self->m_incoming_assembly_buffer.resize(current_size + data->data_len);
-                std::memcpy(self->m_incoming_assembly_buffer.data() + current_size, data->data_ptr, data->data_len);
+                if (self->m_assembly_idx + data->data_len < MAX_INCOMING_FRAME_SIZE) {
+                    std::memcpy(self->m_assembly_scratch + self->m_assembly_idx, data->data_ptr, data->data_len);
+                    self->m_assembly_idx += data->data_len;
+                } else {
+                    LOGE_NET("Incoming frame oversized for assembly buffer!");
+                }
 
                 if (data->payload_offset + data->data_len >= data->payload_len) {
-                    self->m_incoming_assembly_buffer.push_back('\0');
-                    self->processIncomingFrame(self->m_incoming_assembly_buffer.data(), self->m_incoming_assembly_buffer.size() - 1);
+                    if (self->m_assembly_idx < MAX_INCOMING_FRAME_SIZE) {
+                        self->m_assembly_scratch[self->m_assembly_idx] = '\0';
+                        BaseType_t ok = xRingbufferSend(self->m_incoming_psram_rb,
+                                                        self->m_assembly_scratch,
+                                                        self->m_assembly_idx + 1,
+                                                        pdMS_TO_TICKS(20));
+                        if (ok == pdTRUE) {
+                            if (self->getHandle() != nullptr) {
+                                xTaskNotify(self->getHandle(), (1u << 15), eSetBits);
+                            }
+                        } else {
+                            LOGE_NET("PSRAM Ring Buffer Full! Dropped Gemini frame of size %d", (int)self->m_assembly_idx);
+                        }
+                    } else {
+                        LOGE_NET("Frame assembly exceeded max size, dropping frame");
+                    }
                 }
             }
             break;
@@ -378,6 +417,41 @@ void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {
             LOGI_NET("Tool request: %s", name);
             if (m_tool_handler) {
                 m_tool_handler(m_static_skill_event_slot, m_tool_ctx);
+            }
+        }
+    }
+}
+
+void GeminiProtocol::run() {
+    LOGI_NET("Gemini Protocol background PSRAM parsing task actively running.");
+    
+    static constexpr uint32_t NOTIFY_RINGBUF_BIT = (1u << 15);
+
+    while (m_running) {
+        uint32_t changed_bits = 0;
+        // Block until we get a notification (either database changes or new ring buffer items)
+        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, portMAX_DELAY);
+        if (!m_running) break;
+
+        if (notified == pdTRUE) {
+            // 1. Process all available items in the ring buffer
+            if (changed_bits & NOTIFY_RINGBUF_BIT) {
+                size_t frame_size = 0;
+                char* frame_data;
+                while ((frame_data = static_cast<char*>(xRingbufferReceive(m_incoming_psram_rb, &frame_size, 0))) != nullptr) {
+                    if (frame_size > 1) {
+                        processIncomingFrame(frame_data, frame_size - 1);
+                    }
+                    vRingbufferReturnItem(m_incoming_psram_rb, frame_data);
+                }
+            }
+
+            // 2. Process database state changes
+            uint32_t db_changed = changed_bits & ~NOTIFY_RINGBUF_BIT;
+            if (db_changed > 0) {
+                m_last_changed = db_changed;
+                SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+                onStateChanged(m_last_changed, snap);
             }
         }
     }

@@ -4,32 +4,11 @@
 #include "WssClient.h"
 #include "gemini_skills_generated.h"
 #include "esp_heap_caps.h"
-#include <vector>
+#include "freertos/FreeRTOS.h"
+#include "freertos/ringbuf.h"
 #include <new>
 #include <mutex>
 #include <string>
-
-// Custom Allocator to force std::vector dynamic reallocations directly into external 8MB PSRAM
-template <typename T>
-struct PsramAllocator {
-    using value_type = T;
-    PsramAllocator() = default;
-    template <class U> constexpr PsramAllocator(const PsramAllocator<U>&) noexcept {}
-    T* allocate(std::size_t n) {
-        if (n > std::size_t(-1) / sizeof(T)) throw std::bad_alloc();
-        T* p = static_cast<T*>(heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-        if (!p) throw std::bad_alloc();
-        return p;
-    }
-    void deallocate(T* p, std::size_t) noexcept {
-        heap_caps_free(p);
-    }
-};
-
-template <typename T, typename U>
-bool operator==(const PsramAllocator<T>&, const PsramAllocator<U>&) { return true; }
-template <typename T, typename U>
-bool operator!=(const PsramAllocator<T>&, const PsramAllocator<U>&) { return false; }
 
 class GeminiProtocol : public ReactorTask {
 public:
@@ -55,10 +34,11 @@ public:
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
 protected:
+    void run() override;
 
 private:
     GeminiProtocol();
-    ~GeminiProtocol() override = default;
+    ~GeminiProtocol() override;
 
     bool ensureClientInitialized();
     void transmitSetupHandshake();
@@ -81,8 +61,13 @@ private:
     static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 24576; // 24KB max decoded output ceiling
     GeminiSkills::DecodedSkillCall m_static_skill_event_slot;
 
-    // Fragment assembly buffer explicitly stored in PSRAM
-    std::vector<char, PsramAllocator<char>> m_incoming_assembly_buffer;
+    // Fixed-size memory management variables in PSRAM
+    static constexpr size_t PSRAM_RB_SIZE = 256 * 1024;      // 256KB static ring buffer pool
+    static constexpr size_t MAX_INCOMING_FRAME_SIZE = 98304; // 96KB max single frame staging space
+
+    RingbufHandle_t m_incoming_psram_rb = nullptr;
+    uint8_t* m_assembly_scratch = nullptr;
+    size_t m_assembly_idx = 0;
 
     static constexpr const char* TAG = "GeminiProto";
 };

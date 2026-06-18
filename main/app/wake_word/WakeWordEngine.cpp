@@ -113,10 +113,10 @@ bool WakeWordEngine::begin() {
     }
 
     // 4. Launch tasks (detect on Core 1, feed on Core 0)
-    xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", 8 * 1024,
-                            afe_data, 5, nullptr, 1);
-    xTaskCreatePinnedToCore(feedTaskBridge,   "ww_feed",   8 * 1024,
-                            afe_data, 6, nullptr, 1);
+    xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", ThreadConfig::StackSize::STACK_WW_DET,
+                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, 1);
+    xTaskCreatePinnedToCore(feedTaskBridge,   "ww_feed",   ThreadConfig::StackSize::STACK_WW_FEED,
+                            afe_data, ThreadConfig::Priority::WAKE_WORD_FEED, nullptr, 1);
 
     LOGI_SYSTEM("WakeWordEngine started (feed: %s)", input_format);
     return true;
@@ -206,7 +206,13 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         if (!m_task_flag) break;
 
         // Sole hardware reader — MicCaptureTask must stay soft-disabled
-        m_feed_source->readFeedData(i2s_buff, buf_bytes);
+        esp_err_t err = m_feed_source->readFeedData(i2s_buff, buf_bytes);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "readFeedData failed (err=0x%x) — backing off", err);
+            vTaskDelay(pdMS_TO_TICKS(10));
+            esp_task_wdt_reset();
+            continue;
+        }
 
         if (warmup_chunks > 0) {
             --warmup_chunks;
