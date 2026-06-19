@@ -18,7 +18,7 @@
 #include <vector>
 
 static const char* const GEMINI_LIVE_BASE_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=";
-static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 24576; // 24KB ceiling
+static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 65536; // 64KB ceiling
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
@@ -95,7 +95,7 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
                 s.assistant.connect_requested = false;
             });
         }
-    } else if ((!requested || !wifi_ok) && (ws == WsState::CONNECTED || ws == WsState::CONNECTING)) {
+    } else if (!requested || !wifi_ok) {
         closeConnection();
     }
 }
@@ -150,11 +150,13 @@ bool GeminiProtocol::startClientConnection() {
 
     LOGI_NET("Connecting WebSocket client...");
     
+    // Stop first to ensure any asynchronous disconnect events are cleared before mutating state to CONNECTING
+    m_client.stop();
+    
     sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::CONNECTING;
     });
 
-    m_client.stop();
     esp_err_t err = m_client.start();
     if (err != ESP_OK) {
         LOGE_NET("esp_websocket_client_start failed: 0x%x", (unsigned)err);
@@ -264,6 +266,10 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED:
             LOGI_NET("WebSocket established.");
+            self->m_rx_frames = 0;
+            self->m_rx_dropped_frames = 0;
+            self->m_rx_audio_bytes = 0;
+            self->m_frame_overflowed = false;
             self->transmitSetupHandshake();
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::CONNECTED;
@@ -274,38 +280,53 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             if (data->op_code == 1 || data->data_len > 0) {
                 if (data->payload_offset == 0) {
                     self->m_assembly_idx = 0;
+                    self->m_frame_overflowed = false;
                 }
 
-                if (self->m_assembly_idx + data->data_len < MAX_INCOMING_FRAME_SIZE) {
-                    std::memcpy(self->m_assembly_scratch + self->m_assembly_idx, data->data_ptr, data->data_len);
-                    self->m_assembly_idx += data->data_len;
-                } else {
-                    LOGE_NET("Incoming frame oversized for assembly buffer!");
+                if (!self->m_frame_overflowed) {
+                    if (self->m_assembly_idx + data->data_len < MAX_INCOMING_FRAME_SIZE) {
+                        std::memcpy(self->m_assembly_scratch + self->m_assembly_idx, data->data_ptr, data->data_len);
+                        self->m_assembly_idx += data->data_len;
+                    } else {
+                        self->m_frame_overflowed = true;
+                        self->m_rx_dropped_frames++;
+                        LOGE_NET("Incoming frame oversized for assembly buffer! Expected size: %d, current idx: %u, extra chunk len: %d",
+                                 (int)data->payload_len, (unsigned)self->m_assembly_idx, (int)data->data_len);
+                    }
                 }
 
                 if (data->payload_offset + data->data_len >= data->payload_len) {
-                    if (self->m_assembly_idx < MAX_INCOMING_FRAME_SIZE) {
+                    if (!self->m_frame_overflowed && self->m_assembly_idx < MAX_INCOMING_FRAME_SIZE) {
                         self->m_assembly_scratch[self->m_assembly_idx] = '\0';
                         BaseType_t ok = xRingbufferSend(self->m_incoming_psram_rb,
                                                         self->m_assembly_scratch,
                                                         self->m_assembly_idx + 1,
                                                         pdMS_TO_TICKS(20));
                         if (ok == pdTRUE) {
+                            self->m_rx_frames++;
                             if (self->getHandle() != nullptr) {
                                 xTaskNotify(self->getHandle(), (1u << 15), eSetBits);
                             }
                         } else {
+                            self->m_rx_dropped_frames++;
                             LOGE_NET("PSRAM Ring Buffer Full! Dropped Gemini frame of size %d", (int)self->m_assembly_idx);
                         }
                     } else {
-                        LOGE_NET("Frame assembly exceeded max size, dropping frame");
+                        if (self->m_frame_overflowed) {
+                            LOGE_NET("Frame assembly overflowed, discarding frame of size %d", (int)data->payload_len);
+                        } else {
+                            self->m_rx_dropped_frames++;
+                            LOGE_NET("Frame assembly exceeded max size, dropping frame");
+                        }
                     }
+                    self->m_frame_overflowed = false; // Reset for next frame
                 }
             }
             break;
             
         case WEBSOCKET_EVENT_DISCONNECTED:
-            LOGW_NET("WebSocket disconnected.");
+            LOGW_NET("WebSocket disconnected. Stats: rx_frames=%u, rx_dropped=%u, rx_audio_bytes=%u",
+                     (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::DISCONNECTED;
             });
@@ -337,27 +358,32 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         if (data_end) {
             *data_end = '\0';
             size_t b64_len = data_end - data_start;
-            size_t pcm_out_len = 0;
+            size_t written = 0;
 
-            mbedtls_base64_decode(nullptr, 0, &pcm_out_len, reinterpret_cast<const unsigned char*>(data_start), b64_len);
-            
-            if (pcm_out_len > 0 && pcm_out_len <= STATIC_PCM_ARENA_MAX_SIZE) {
-                size_t written = 0;
-                if (mbedtls_base64_decode(m_static_pcm_scratch_arena, pcm_out_len, &written, reinterpret_cast<const unsigned char*>(data_start), b64_len) == 0) {
-                    if (written > 0) {
-                        // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
-                        if (!sysdb.assistantSpeaking()) {
-                            BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-                            sysdb.mutate([](SystemState& s) {
-                                s.assistant.session_state = AssistantState::AssistantSpeaking;
-                                s.assistant.visual_state  = AssistantVisualState::Speaking;
-                                s.audio.assistant_speaking = true;
-                            });
-                        }
+            // Single-pass base64 decode using the maximum static PCM arena size limit
+            int decode_res = mbedtls_base64_decode(m_static_pcm_scratch_arena, STATIC_PCM_ARENA_MAX_SIZE, &written,
+                                                   reinterpret_cast<const unsigned char*>(data_start), b64_len);
+            if (decode_res == 0) {
+                if (written > 0) {
+                    m_rx_audio_bytes += written;
 
-                        BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20));
+                    // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
+                    if (!sysdb.assistantSpeaking()) {
+                        BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+                        sysdb.mutate([](SystemState& s) {
+                            s.assistant.session_state = AssistantState::AssistantSpeaking;
+                            s.assistant.visual_state  = AssistantVisualState::Speaking;
+                            s.audio.assistant_speaking = true;
+                        });
+                    }
+
+                    if (!BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20))) {
+                        m_rx_dropped_frames++;
+                        LOGW_NET("Audio drop: SPK_RX_BUF is full!");
                     }
                 }
+            } else {
+                LOGE_NET("Base64 decode failed! err=-0x%04X, b64_len=%d", -decode_res, (int)b64_len);
             }
             *data_end = '"';
         }
@@ -365,7 +391,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, payload);
         if (!err) {
-            bool turn_complete = strstr(payload, "\"turnComplete\": true") || strstr(payload, "\"turnComplete\":true") || !doc["turnComplete"].isNull();
+            bool turn_complete = doc["serverContent"]["turnComplete"].as<bool>() || doc["turnComplete"].as<bool>();
             if (turn_complete) {
                 LOGI_NET("Assistant turn complete");
                 sysdb.mutate([](SystemState& s) {
@@ -373,14 +399,14 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 });
             }
 
-            if (!doc["error"].isNull() || strstr(payload, "\"error\"")) {
+            if (!doc["error"].isNull()) {
                 LOGE_NET("Gemini API server error in frame!");
                 sysdb.mutate([](SystemState& s) {
                     s.assistant.session_state = AssistantState::ErrorCooldown;
                 });
             }
 
-            if (!doc["goAway"].isNull() || strstr(payload, "\"goAway\"")) {
+            if (!doc["goAway"].isNull()) {
                 LOGW_NET("Gemini Live Engine: Received 'goAway' signal.");
                 sysdb.mutate([](SystemState& s) {
                     s.assistant.ws_state = WsState::GOING_AWAY;
@@ -400,23 +426,24 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
 
 void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {
     JsonArrayConst functionCalls = toolCall["functionCalls"];
-    if (functionCalls.isNull() || functionCalls.size() == 0) return;
+    if (functionCalls.isNull()) return;
 
-    JsonObjectConst funcCall = functionCalls[0];
-    if (funcCall.isNull()) return;
+    for (JsonObjectConst funcCall : functionCalls) {
+        if (funcCall.isNull()) continue;
 
-    const char* name = funcCall["name"];
-    const char* id = funcCall["id"];
-    JsonObjectConst argsObj = funcCall["args"];
-    
-    if (name && id && !argsObj.isNull()) {
-        std::memset(&m_static_skill_event_slot, 0, sizeof(m_static_skill_event_slot));
-        std::strncpy(m_static_skill_event_slot.call_id, id, sizeof(m_static_skill_event_slot.call_id) - 1);
+        const char* name = funcCall["name"];
+        const char* id = funcCall["id"];
+        JsonObjectConst argsObj = funcCall["args"];
         
-        if (GeminiSkills::decode_incoming_arguments(name, argsObj, m_static_skill_event_slot)) {
-            LOGI_NET("Tool request: %s", name);
-            if (m_tool_handler) {
-                m_tool_handler(m_static_skill_event_slot, m_tool_ctx);
+        if (name && id && !argsObj.isNull()) {
+            std::memset(&m_static_skill_event_slot, 0, sizeof(m_static_skill_event_slot));
+            std::strncpy(m_static_skill_event_slot.call_id, id, sizeof(m_static_skill_event_slot.call_id) - 1);
+            
+            if (GeminiSkills::decode_incoming_arguments(name, argsObj, m_static_skill_event_slot)) {
+                LOGI_NET("Tool request: %s", name);
+                if (m_tool_handler) {
+                    m_tool_handler(m_static_skill_event_slot, m_tool_ctx);
+                }
             }
         }
     }

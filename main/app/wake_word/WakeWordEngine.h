@@ -83,7 +83,7 @@ private:
     volatile bool m_assistant_active       = false;
     volatile bool m_interruption_triggered = false;
 
-    static constexpr int VAD_SILENCE_TIMEOUT_MS = 5000;
+    static constexpr int VAD_SILENCE_TIMEOUT_MS = 3000;
     static constexpr const char* TAG = "WakeWordEngine";
 };
 

@@ -16,6 +16,22 @@
     }
   },
   {
+    "name": "queue",
+    "description": "Appends a track to the end of the current queue. Playback starts immediately if nothing is currently playing.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "query": {
+          "type": "STRING",
+          "description": "A plain text search query (e.g., 'Lofi hip hop mix')."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
     "name": "play_next",
     "description": "Queues a track at the very front of the queue to be played immediately after the current song finishes.",
     "parameters": {
@@ -106,6 +122,22 @@
   {
     "name": "mute",
     "description": "Toggles the mute state on or off.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "shuffle",
+    "description": "Randomizes the order of all tracks currently in the manual play queue.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "clear",
+    "description": "Clears all tracks from the manual play queue.",
     "parameters": {
       "type": "OBJECT",
       "properties": {}

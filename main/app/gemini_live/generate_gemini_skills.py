@@ -83,8 +83,19 @@ bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, 
     setup_native = {
         "setup": {
             "model": "models/gemini-3.1-flash-live-preview",
-            "generationConfig": { "responseModalities": ["AUDIO"] },
-            "tools": [{ "functionDeclarations": tools }]
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": {
+                            "voiceName": "Sulafat" 
+                        }
+                    }
+                }
+            },
+            "tools": [
+                { "functionDeclarations": tools,},
+            ]
         }
     }
 

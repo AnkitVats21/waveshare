@@ -58,7 +58,7 @@ private:
     // Persistent Zero-Allocation Arenas for Audio & Skill Tool execution
     uint8_t* m_static_pcm_scratch_arena = nullptr;
     char* m_static_payload_arena = nullptr;
-    static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 24576; // 24KB max decoded output ceiling
+    // static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 65536; // 64KB max decoded output ceiling
     GeminiSkills::DecodedSkillCall m_static_skill_event_slot;
 
     // Fixed-size memory management variables in PSRAM
@@ -68,6 +68,12 @@ private:
     RingbufHandle_t m_incoming_psram_rb = nullptr;
     uint8_t* m_assembly_scratch = nullptr;
     size_t m_assembly_idx = 0;
+    bool m_frame_overflowed = false;
+
+    // Session-specific diagnostics statistics
+    uint32_t m_rx_frames = 0;
+    uint32_t m_rx_dropped_frames = 0;
+    uint32_t m_rx_audio_bytes = 0;
 
     static constexpr const char* TAG = "GeminiProto";
 };
