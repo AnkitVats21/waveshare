@@ -331,7 +331,7 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
         case AssistantState::WaitingForFollowup:
             visState = AssistantVisualState::Thinking;
             if (m_idle_timer) {
-                esp_timer_start_once(m_idle_timer, 30ULL * 1000 * 1000); // 30s window
+                esp_timer_start_once(m_idle_timer, 60ULL * 1000 * 1000); // 60s window
             }
             break;
 
@@ -417,6 +417,7 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
             sysdb.mutate([](SystemState& s) {
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
+                s.assistant.connect_requested = false;
             });
             break;
         case AssistantState::Connecting:
