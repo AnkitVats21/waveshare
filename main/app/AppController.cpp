@@ -48,20 +48,22 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
     if (changed & BIT_SYSTEM::WIFI_CONNECTED) {
         bool wifi_ok = snap.system.wifi_connected;
 
-        if (wifi_ok && !m_wifi_connected) {
-            m_wifi_connected = true;
-            LOGI_SYSTEM("Network connected. Initializing net logging...");
-            AsyncNetLogger::getInstance().init(snap.system.server_ip, 5006);
-            AsyncNetLogger::getInstance().startWorker();
-            LogRouter::getInstance().setNetworkStreamingState(
-                LogRouter::State::ROUTE_CONSOLE_AND_NETWORK);
-        } else if (!wifi_ok && m_wifi_connected) {
-            m_wifi_connected = false;
-            LOGW_SYSTEM("Network disconnected. Stopping net logging...");
-            LogRouter::getInstance().setNetworkStreamingState(
-                LogRouter::State::ROUTE_CONSOLE_ONLY);
-            AsyncNetLogger::getInstance().stopWorker();
-        }
+        /* Disabling the network logging for now */
+        
+        // if (wifi_ok && !m_wifi_connected) {
+        //     m_wifi_connected = true;
+        //     LOGI_SYSTEM("Network connected. Initializing net logging...");
+        //     // AsyncNetLogger::getInstance().init(snap.system.server_ip, 5006);
+        //     // AsyncNetLogger::getInstance().startWorker();
+        //     LogRouter::getInstance().setNetworkStreamingState(
+        //         LogRouter::State::ROUTE_CONSOLE_ONLY);
+        // } else if (!wifi_ok && m_wifi_connected) {
+        //     m_wifi_connected = false;
+        //     LOGW_SYSTEM("Network disconnected. Stopping net logging...");
+        //     LogRouter::getInstance().setNetworkStreamingState(
+        //         LogRouter::State::ROUTE_CONSOLE_ONLY);
+        //     AsyncNetLogger::getInstance().stopWorker();
+        // }
     }
 }
 
