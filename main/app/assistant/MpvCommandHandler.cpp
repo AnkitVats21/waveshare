@@ -13,11 +13,6 @@ bool MpvCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call,
             mqtt_doc["query"] = skill_call.args.play->query;
             break;
             
-        case GeminiSkills::SkillType::QUEUE:
-            cmd_name = "queue";
-            mqtt_doc["query"] = skill_call.args.queue->query;
-            break;
-            
         case GeminiSkills::SkillType::PLAY_NEXT:
             cmd_name = "play_next";
             mqtt_doc["query"] = skill_call.args.play_next->query;
@@ -55,14 +50,6 @@ bool MpvCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call,
             
         case GeminiSkills::SkillType::MUTE:
             cmd_name = "mute";
-            break;
-            
-        case GeminiSkills::SkillType::SHUFFLE:
-            cmd_name = "shuffle";
-            break;
-            
-        case GeminiSkills::SkillType::CLEAR:
-            cmd_name = "clear";
             break;
             
         case GeminiSkills::SkillType::AUTOPLAY:
