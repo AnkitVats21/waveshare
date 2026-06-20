@@ -216,7 +216,14 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
 
         case AssistantState::AssistantSpeaking:
             if (snap.audio.turn_complete_pending || !snap.audio.assistant_speaking) {
-                transitionTo(AssistantState::WaitingForFollowup, &snap);
+                if (snap.assistant.mpv_pending_idle) {
+                    if (!snap.audio.turn_complete_pending) {
+                        ESP_LOGI(TAG, "MPV command was executed and speech playback completed. Transitioning directly to Closing to bypass VAD.");
+                        transitionTo(AssistantState::Closing, &snap);
+                    }
+                } else {
+                    transitionTo(AssistantState::WaitingForFollowup, &snap);
+                }
             } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
                 ESP_LOGW(TAG, "AssistantSpeaking: WebSocket closed or error.");
                 transitionTo(AssistantState::Closing, &snap);
@@ -224,7 +231,10 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
             break;
 
         case AssistantState::WaitingForFollowup:
-            if (ws == WsState::DISCONNECTED) {
+            if (snap.assistant.mpv_pending_idle) {
+                ESP_LOGI(TAG, "MPV command was executed. Transitioning directly to Closing from WaitingForFollowup.");
+                transitionTo(AssistantState::Closing, &snap);
+            } else if (ws == WsState::DISCONNECTED) {
                 transitionTo(AssistantState::Idle, &snap);
             }
             break;
@@ -294,6 +304,7 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
             sysdb.mutate([](SystemState& s) {
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
+                s.assistant.mpv_pending_idle = false;
             });
             break;
 
@@ -418,6 +429,7 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
                 s.assistant.connect_requested = false;
+                s.assistant.mpv_pending_idle = false;
             });
             break;
         case AssistantState::Connecting:

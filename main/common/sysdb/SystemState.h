@@ -95,7 +95,8 @@ namespace BIT_MQTT {
     X(uint16_t, rtp_rx_port, 5005, 0) \
     X(AudioStreamFormat, stream_format, AudioStreamFormat::PCM_S16LE, 0) \
     X(bool, wav_playing, false, BIT_AUDIO::WAV_PLAYING) \
-    X(uint32_t, wav_sample_rate, 16000, 0)
+    X(uint32_t, wav_sample_rate, 16000, 0) \
+    X(bool, wav_prefetched, false, 0)
 
 #define PIPELINE_FIELDS \
     X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE) \
@@ -107,7 +108,8 @@ namespace BIT_MQTT {
     X(AssistantState, session_state, AssistantState::Idle, BIT_ASSISTANT::SESSION_STATE) \
     X(AssistantVisualState, visual_state, AssistantVisualState::Offline, BIT_ASSISTANT::VISUAL_STATE) \
     X(bool, connect_requested, false, BIT_ASSISTANT::CONNECT_REQ) \
-    X(WsState, ws_state, WsState::DISCONNECTED, BIT_ASSISTANT::WS_STATE)
+    X(WsState, ws_state, WsState::DISCONNECTED, BIT_ASSISTANT::WS_STATE) \
+    X(bool, mpv_pending_idle, false, 0)
 
 #define LED_FIELDS \
     X(LedMode, mode, LedMode::OFF, BIT_LED::MODE) \

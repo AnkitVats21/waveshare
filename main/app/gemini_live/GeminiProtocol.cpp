@@ -97,8 +97,10 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
                 s.assistant.connect_requested = false;
             });
         }
-    } else if (!requested || !wifi_ok) {
-        closeConnection();
+    } else if (!wifi_ok) {
+        if (ws != WsState::DISCONNECTED) {
+            closeConnection();
+        }
     }
 }
 
@@ -190,6 +192,9 @@ bool GeminiProtocol::startClientConnection() {
 }
 
 void GeminiProtocol::closeConnection() {
+    if (sysdb.snapshot().assistant.ws_state == WsState::DISCONNECTED) {
+        return;
+    }
     LOGI_NET("Closing WebSocket connection...");
     if (m_client) {
         m_client.close(pdMS_TO_TICKS(1000));
@@ -410,6 +415,18 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         char* data_end = strchr(data_start, '"');
         if (data_end) {
             *data_end = '\0';
+
+            // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
+            // Do this BEFORE base64 decoding so the clock switch runs in parallel with decoding!
+            if (!sysdb.assistantSpeaking()) {
+                BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+                sysdb.mutate([](SystemState& s) {
+                    s.assistant.session_state = AssistantState::AssistantSpeaking;
+                    s.assistant.visual_state  = AssistantVisualState::Speaking;
+                    s.audio.assistant_speaking = true;
+                });
+            }
+
             size_t b64_len = data_end - data_start;
             size_t written = 0;
 
@@ -419,16 +436,6 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             if (decode_res == 0) {
                 if (written > 0) {
                     m_rx_audio_bytes += written;
-
-                    // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
-                    if (!sysdb.assistantSpeaking()) {
-                        BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-                        sysdb.mutate([](SystemState& s) {
-                            s.assistant.session_state = AssistantState::AssistantSpeaking;
-                            s.assistant.visual_state  = AssistantVisualState::Speaking;
-                            s.audio.assistant_speaking = true;
-                        });
-                    }
 
                     if (!BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20))) {
                         m_rx_dropped_frames++;

@@ -12,10 +12,23 @@ WavPlayer& WavPlayer::getInstance() {
     return instance;
 }
 
-WavPlayer::WavPlayer() {}
+#include "esp_heap_caps.h"
+
+WavPlayer::WavPlayer() {
+    m_prefetch_buffer = (uint8_t*)heap_caps_malloc(1024 * 1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (m_prefetch_buffer == nullptr) {
+        ESP_LOGE(TAG, "Failed to pre-allocate 1MB PSRAM prefetch buffer arena!");
+    } else {
+        ESP_LOGI(TAG, "Successfully pre-allocated 1MB PSRAM prefetch buffer arena.");
+    }
+}
 
 WavPlayer::~WavPlayer() {
     stop();
+    if (m_prefetch_buffer != nullptr) {
+        heap_caps_free(m_prefetch_buffer);
+        m_prefetch_buffer = nullptr;
+    }
 }
 
 bool WavPlayer::readWavInfo(FILE* f, WavInfo& out_info) {
@@ -140,14 +153,38 @@ bool WavPlayer::playAsync(const char* filepath) {
         return false;
     }
 
+    // Check if file size is small enough to prefetch into preallocated PSRAM
+    if (m_info.data_size <= 1024 * 1024 && m_prefetch_buffer != nullptr) {
+        ESP_LOGI(TAG, "Prefetching WAV file into PSRAM (%lu bytes)...", (unsigned long)m_info.data_size);
+        size_t bytes_read = fread(m_prefetch_buffer, 1, m_info.data_size, f);
+        fclose(f);
+        m_file_handle = nullptr;
+
+        if (bytes_read < m_info.data_size) {
+            ESP_LOGW(TAG, "Read only %zu of %lu bytes from file. Adjusting data size.", bytes_read, (unsigned long)m_info.data_size);
+            m_info.data_size = bytes_read;
+        }
+
+        m_is_prefetched = true;
+        m_prefetch_offset = 0;
+    } else {
+        if (m_info.data_size > 1024 * 1024) {
+            ESP_LOGI(TAG, "WAV file too large for prefetching (%lu bytes). Streaming from SD card.", (unsigned long)m_info.data_size);
+        } else {
+            ESP_LOGW(TAG, "Prefetch buffer unavailable. Streaming from SD card.");
+        }
+        m_file_handle = f;
+        m_is_prefetched = false;
+    }
+
     // Print parsed audio details as requested by the user
     ESP_LOGI(TAG, "WAV metadata successfully parsed:");
     ESP_LOGI(TAG, "  Sample Rate:     %lu Hz", (unsigned long)m_info.sample_rate);
     ESP_LOGI(TAG, "  Channel Count:   %u", m_info.num_channels);
     ESP_LOGI(TAG, "  Bits per Sample: %u bits", m_info.bits_per_sample);
     ESP_LOGI(TAG, "  Data Size:       %lu bytes", (unsigned long)m_info.data_size);
+    ESP_LOGI(TAG, "  Memory Prefetch: %s", m_is_prefetched ? "YES" : "NO");
 
-    m_file_handle = f;
     strncpy(m_filepath, filepath, sizeof(m_filepath) - 1);
     m_filepath[sizeof(m_filepath) - 1] = '\0';
     m_playing = true;
@@ -157,8 +194,10 @@ bool WavPlayer::playAsync(const char* filepath) {
     BaseType_t ret = xTaskCreate(playbackTaskBridge, "wav_play_task", 4096, this, 6, &m_task_handle);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create WAV playback task");
-        fclose(f);
-        m_file_handle = nullptr;
+        if (m_file_handle != nullptr) {
+            fclose(m_file_handle);
+            m_file_handle = nullptr;
+        }
         m_playing = false;
         m_task_handle = nullptr;
         return false;
@@ -185,12 +224,12 @@ void WavPlayer::playbackTaskBridge(void* pvParameters) {
 }
 
 void WavPlayer::playbackTask() {
-    ESP_LOGI(TAG, "Playback task started. Streaming samples [Rate: %lu Hz, Channels: %u, Bits: %u, Size: %lu bytes]",
-             (unsigned long)m_info.sample_rate, m_info.num_channels, m_info.bits_per_sample, (unsigned long)m_info.data_size);
+    ESP_LOGI(TAG, "Playback task started. Streaming samples [Rate: %lu Hz, Channels: %u, Bits: %u, Size: %lu bytes, Memory: %s]",
+             (unsigned long)m_info.sample_rate, m_info.num_channels, m_info.bits_per_sample, (unsigned long)m_info.data_size,
+             m_is_prefetched ? "YES" : "NO");
 
-    FILE* f = m_file_handle;
-    if (f == nullptr) {
-        ESP_LOGE(TAG, "Null file handle in playback task!");
+    if (!m_is_prefetched && m_file_handle == nullptr) {
+        ESP_LOGE(TAG, "Null file handle in non-prefetched playback task!");
         m_playing = false;
         m_task_handle = nullptr;
         vTaskDelete(NULL);
@@ -200,6 +239,7 @@ void WavPlayer::playbackTask() {
     // 1. Notify the state database that a WAV file is starting, reactively triggers AudioService rate switch
     EmbeddedSysDb::getInstance().mutate([this](SystemState& s) {
         s.audio.wav_sample_rate = m_info.sample_rate;
+        s.audio.wav_prefetched = m_is_prefetched;
         s.audio.wav_playing = true;
     });
 
@@ -210,10 +250,13 @@ void WavPlayer::playbackTask() {
     uint8_t* buffer = (uint8_t*)malloc(chunk_size);
     if (buffer == nullptr) {
         ESP_LOGE(TAG, "Failed to allocate WAV chunk buffer");
-        fclose(f);
-        m_file_handle = nullptr;
+        if (m_file_handle != nullptr) {
+            fclose(m_file_handle);
+            m_file_handle = nullptr;
+        }
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.audio.wav_playing = false;
+            s.audio.wav_prefetched = false;
         });
         m_playing = false;
         m_task_handle = nullptr;
@@ -224,7 +267,20 @@ void WavPlayer::playbackTask() {
     auto &bm = BufferManager::getInstance();
 
     while (m_playing && !m_stop_requested) {
-        size_t bytes_read = fread(buffer, 1, chunk_size, f);
+        size_t bytes_read = 0;
+        if (m_is_prefetched) {
+            size_t remaining = m_info.data_size - m_prefetch_offset;
+            bytes_read = (remaining < chunk_size) ? remaining : chunk_size;
+            if (bytes_read > 0) {
+                memcpy(buffer, m_prefetch_buffer + m_prefetch_offset, bytes_read);
+                m_prefetch_offset += bytes_read;
+            }
+        } else {
+            if (m_file_handle != nullptr) {
+                bytes_read = fread(buffer, 1, chunk_size, m_file_handle);
+            }
+        }
+
         if (bytes_read == 0) {
             // EOF reached
             break;
@@ -248,8 +304,10 @@ void WavPlayer::playbackTask() {
     }
 
     free(buffer);
-    fclose(f);
-    m_file_handle = nullptr;
+    if (m_file_handle != nullptr) {
+        fclose(m_file_handle);
+        m_file_handle = nullptr;
+    }
 
     // 2. Wait until the ringbuffer has been completely drained by SpeakerPlaybackTask.
     // This serves as the event-driven trigger that the audio output is fully complete.
@@ -260,6 +318,7 @@ void WavPlayer::playbackTask() {
     // 3. Clear WAV playing state, which reactively restores the 16 kHz clock and re-arms wake-word
     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
         s.audio.wav_playing = false;
+        s.audio.wav_prefetched = false;
     });
 
     m_playing = false;

@@ -100,14 +100,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         }
     }
 
-    // 4. Reconcile Pipeline Mode
-    if ((changed & BIT_PIPELINE::MODE) || (changed == 0)) {
-        if (snap.pipeline.mode != m_current_pipeline_mode) {
-            applyPipelineModeSwitch(snap.pipeline.mode);
-        }
-    }
-
-    // 5. Reconcile Sample Rate / Audio Mode Clock Switches
+    // 4. Reconcile Sample Rate / Audio Mode Clock Switches (runs before pipeline mode to ensure hardware clock is ready)
     auto session = snap.assistant.session_state;
     bool session_changed = (changed & BIT_ASSISTANT::SESSION_STATE) || 
                            (changed & BIT_AUDIO::SESSION_ACTIVE) ||
@@ -137,6 +130,13 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         }
     }
 
+    // 5. Reconcile Pipeline Mode (runs after clock configuration)
+    if ((changed & BIT_PIPELINE::MODE) || (changed == 0)) {
+        if (snap.pipeline.mode != m_current_pipeline_mode) {
+            applyPipelineModeSwitch(snap.pipeline.mode);
+        }
+    }
+
     // Transition C: Turn-complete cleanup (revert to 16kHz once speaker is empty)
     if ((changed & BIT_AUDIO::TURN_COMPLETE) && !snap.audio.turn_complete_pending) {
         // Revert to 16kHz clock
@@ -161,10 +161,15 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
     if ((changed & BIT_AUDIO::WAV_PLAYING) || (changed == 0)) {
         auto& ww = WakeWordEngine::getInstance();
         if (snap.audio.wav_playing) {
+            // ONLY pause wake-word processing during WAV playback if it's NOT memory-prefetched
+            if (!snap.audio.wav_prefetched) {
+                ww.pauseHardware();
+            } else {
+                LOGI_AUDIO("WAV is memory prefetched. Keeping wake-word engine active during playback.");
+            }
             if (m_hal.getSampleRate() != snap.audio.wav_sample_rate) {
                 LOGI_AUDIO("Switching hardware to %lu Hz for WAV playback.", (unsigned long)snap.audio.wav_sample_rate);
                 AudioPipelineManager::pauseSpeaker();
-                ww.pauseHardware();
                 m_hal.setHardwareSampleRate(snap.audio.wav_sample_rate);
                 AudioPipelineManager::resumeSpeaker();
             }
@@ -174,8 +179,9 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
                 AudioPipelineManager::pauseSpeaker();
                 m_hal.setHardwareSampleRate(16000);
                 AudioPipelineManager::resumeSpeaker();
-                ww.resumeHardware();
             }
+            // ALWAYS resume wake-word processing when WAV playback stops
+            ww.resumeHardware();
         }
     }
 }

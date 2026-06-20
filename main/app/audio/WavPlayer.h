@@ -62,5 +62,10 @@ private:
     WavInfo m_info = {};
     FILE* m_file_handle = nullptr;
 
+    // Prefetch arena in PSRAM
+    uint8_t* m_prefetch_buffer = nullptr;
+    bool m_is_prefetched = false;
+    size_t m_prefetch_offset = 0;
+
     static constexpr const char* TAG = "WavPlayer";
 };
