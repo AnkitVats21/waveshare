@@ -7,6 +7,8 @@
 #include "app/assistant/AssistantService.h"
 #include "app/mqtt/MqttService.h"
 #include "app/assistant/MpvCommandHandler.h"
+#include "app/assistant/DeviceCommandHandler.h"
+#include "services/time/TimeSyncHelper.h"
 
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
@@ -48,7 +50,14 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
     if (changed & BIT_SYSTEM::WIFI_CONNECTED) {
         bool wifi_ok = snap.system.wifi_connected;
 
-        /* Disabling the network logging for now */
+        if (wifi_ok && !m_time_synced) {
+            m_time_synced = true;
+            LOGI_SYSTEM("Wi-Fi connected. Spawning background NTP synchronization task...");
+            xTaskCreate([](void* arg) {
+                Services::TimeSyncHelper::synchronizeTimeAndCleanup();
+                vTaskDelete(NULL);
+            }, "ntp_sync", 3072, NULL, 4, NULL);
+        }
         
         // if (wifi_ok && !m_wifi_connected) {
         //     m_wifi_connected = true;
@@ -77,9 +86,12 @@ void AppController::handleGeminiToolCall(const GeminiSkills::DecodedSkillCall& s
 void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_call) {
     JsonDocument response_doc;
 
-    if (!MpvCommandHandler::handle(skill_call, response_doc)) {
-        response_doc["status"] = "error";
-        response_doc["message"] = "Unsupported tool skill";
+    // Try device/local commands first; if not handled, fall back to MPV command handler
+    if (!DeviceCommandHandler::handle(skill_call, response_doc)) {
+        if (!MpvCommandHandler::handle(skill_call, response_doc)) {
+            response_doc["status"] = "error";
+            response_doc["message"] = "Unsupported tool skill";
+        }
     }
 
     std::string feedback_string;

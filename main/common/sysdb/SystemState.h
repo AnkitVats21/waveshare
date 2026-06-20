@@ -24,7 +24,14 @@ namespace COMP {
     static constexpr ComponentMask ASSISTANT = (1u << 19); ///< Session + visual state
     static constexpr ComponentMask LED       = (1u << 20); ///< LED animation commands
     static constexpr ComponentMask MQTT      = (1u << 21); ///< Broker connectivity
+    static constexpr ComponentMask ALARM     = (1u << 22); ///< Active alarm status/control
     static constexpr ComponentMask ALL       = 0xFFFF0000u;
+}
+
+// Per-field bits — used by onStateChanged() for fine-grained reactions
+namespace BIT_ALARM {
+    static constexpr ComponentMask PLAYING        = (1u << 0);
+    static constexpr ComponentMask STOP_REQUESTED = (1u << 1);
 }
 
 // Per-field bits — used by onStateChanged() for fine-grained reactions
@@ -42,6 +49,7 @@ namespace BIT_AUDIO {
     static constexpr ComponentMask TURN_COMPLETE  = (1u << 6);
     static constexpr ComponentMask HW_RATE        = (1u << 7);
     static constexpr ComponentMask LAST_ACTIVITY  = (1u << 8);
+    static constexpr ComponentMask WAV_PLAYING    = (1u << 9);
 }
 namespace BIT_PIPELINE {
     static constexpr ComponentMask MODE           = (1u << 0);
@@ -85,7 +93,9 @@ namespace BIT_MQTT {
     X(uint32_t, buffer_size, 131072, 0) \
     X(uint16_t, rtp_tx_port, 5005, 0) \
     X(uint16_t, rtp_rx_port, 5005, 0) \
-    X(AudioStreamFormat, stream_format, AudioStreamFormat::PCM_S16LE, 0)
+    X(AudioStreamFormat, stream_format, AudioStreamFormat::PCM_S16LE, 0) \
+    X(bool, wav_playing, false, BIT_AUDIO::WAV_PLAYING) \
+    X(uint32_t, wav_sample_rate, 16000, 0)
 
 #define PIPELINE_FIELDS \
     X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE) \
@@ -107,6 +117,12 @@ namespace BIT_MQTT {
 
 #define MQTT_FIELDS \
     X(bool, connected, false, BIT_MQTT::CONNECTED)
+
+#define ALARM_FIELDS \
+    X(bool, playing, false, BIT_ALARM::PLAYING) \
+    X(bool, stop_requested, false, BIT_ALARM::STOP_REQUESTED) \
+    X(int, active_alarm_id, 0, 0)
+
 
 /**
  * @brief Complete, flat snapshot of all mutable application state.
@@ -153,6 +169,12 @@ struct SystemState {
     struct {
         MQTT_FIELDS
     } mqtt;
+
+    // ── COMP::ALARM ──────────────────────────────────────────────────────────
+    struct {
+        ALARM_FIELDS
+    } alarm;
+
 
     #undef X
     #undef X_STR

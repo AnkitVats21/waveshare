@@ -79,7 +79,12 @@ void SpeakerPlaybackTask::run() {
     // When AudioService calls pauseHardware() before a clock switch, we must
     // confirm we are out of esp_codec_dev_write() before the caller proceeds.
     if (!m_hw_valid) {
-      m_hw_paused_ack = true;    // Signal: safe to reconfigure I2S clock now
+      if (!m_hw_paused_ack) {
+        m_hw_paused_ack = true;    // Signal: safe to reconfigure I2S clock now
+        if (m_pause_sem) {
+          xSemaphoreGive(m_pause_sem);
+        }
+      }
       last_wake = xTaskGetTickCount(); // Re-anchor timer to avoid burst catch-up
       sustained_empty = 0;
       continue;

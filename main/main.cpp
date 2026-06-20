@@ -11,11 +11,48 @@
 #include "common/LogRouter.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "hal/Board.h"
+#include "services/alarm/AlarmService.h"
+#include "services/storage/StorageService.h"
+#include "services/storage/SysDbSyncReactor.h"
 #include "hal/input/ExpanderKeyInput.h"
+#include <sstream>
 #include "hal/network/WifiService.h"
 #include "services/BufferManager.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include "common/ParserUtils.h"
+
+#if CONFIG_WAVESHARE_SDCARD_ENABLE
+struct StateParseCtx {
+    int volume = 80;
+    float gain = 60.0f;
+    int r = 0, g = 0, b = 0;
+};
+
+static void onStatePair(const std::string& key, const std::string& val, void* ctx) {
+    auto* p = static_cast<StateParseCtx*>(ctx);
+    if (key == "speaker_volume") p->volume = std::stoi(val);
+    else if (key == "led_color") sscanf(val.c_str(), "%d,%d,%d", &p->r, &p->g, &p->b);
+}
+
+static void loadPersistentState() {
+    if (Services::StorageService::getInstance().fileExists("/sdcard/state_sync.txt")) {
+        std::string content = Services::StorageService::getInstance().readFile("/sdcard/state_sync.txt");
+        if (!content.empty()) {
+            StateParseCtx parseCtx;
+            Utils::ParserUtils::parseKeyValueStream(content, onStatePair, &parseCtx);
+            
+            EmbeddedSysDb::getInstance().mutate([parseCtx](SystemState& s) {
+                s.audio.speaker_volume = parseCtx.volume;
+                s.led.color = { (uint8_t)parseCtx.r, (uint8_t)parseCtx.g, (uint8_t)parseCtx.b };
+                s.led.mode = LedMode::SOLID;
+            });
+            LOGI_SYSTEM("Persistent state loaded from SD card: vol=%d, color=%d,%d,%d",
+                        parseCtx.volume, parseCtx.r, parseCtx.g, parseCtx.b);
+        }
+    }
+}
+#endif
 
 extern "C" void app_main(void) {
     // 1. Initialize Foundational Network Stack & Log Routing
@@ -54,6 +91,14 @@ extern "C" void app_main(void) {
         LOGE_SYSTEM("Fatal: Failed to initialize board hardware!");
     } else {
         LOGI_SYSTEM("Board hardware and NVS ready.");
+#if CONFIG_WAVESHARE_SDCARD_ENABLE
+        if (board.initSdCard(CONFIG_WAVESHARE_SDCARD_MOUNT_POINT, 5) != ESP_OK) {
+            LOGE_SYSTEM("Failed to mount SD card!");
+        } else {
+            LOGI_SYSTEM("SD Card mounted successfully at %s", CONFIG_WAVESHARE_SDCARD_MOUNT_POINT);
+            loadPersistentState();
+        }
+#endif
     }
 
     // 4. Extract typed HAL references (Dependency Injection)
@@ -78,6 +123,8 @@ extern "C" void app_main(void) {
     (void)gemini_proto; // Suppress unused warning since task auto-spawns on instantiation
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
+    static Services::AlarmService& alarm_svc = Services::AlarmService::getInstance();
+    static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
 
     // Start services
     audio_svc.begin();
@@ -86,6 +133,9 @@ extern "C" void app_main(void) {
     // rtp_trans.begin();
     gemini_pump.start();
     app_ctrl.begin();
+    alarm_svc.begin();
+    sync_reactor.begin();
+
 
     // 6. Initialize Key Input service
     static ExpanderKeyInput key_input(io_exp);
@@ -101,6 +151,9 @@ extern "C" void app_main(void) {
     gemini_proto.start();
     app_ctrl.start();
     key_svc.start();
+    alarm_svc.start();
+    sync_reactor.start();
+
 
     // 7. Start WiFi service event bridge
     WifiService::Config wifi_cfg = {

@@ -123,5 +123,150 @@
         }
       }
     }
+  },
+  {
+    "name": "write_file",
+    "description": "Writes text content to a local file on the device SD Card storage.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "path": {
+          "type": "STRING",
+          "description": "Absolute file path on SD Card starting with /sdcard/ (e.g., /sdcard/notes.txt)."
+        },
+        "content": {
+          "type": "STRING",
+          "description": "Text content to write into the file."
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "read_file",
+    "description": "Reads text content from a local file on the device SD Card storage.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "path": {
+          "type": "STRING",
+          "description": "Absolute file path on SD Card starting with /sdcard/ (e.g., /sdcard/notes.txt)."
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
+    "name": "restart_websocket_client",
+    "description": "Reinitializes and restarts the Gemini voice assistant WebSocket connection.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "set_device_volume",
+    "description": "Sets the physical hardware speaker volume level.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "level": {
+          "type": "NUMBER",
+          "description": "Target volume level percentage (0-100)."
+        }
+      },
+      "required": [
+        "level"
+      ]
+    }
+  },
+  {
+    "name": "set_led_strip",
+    "description": "Configures the solid status color of the RGB LED ring (for system idle states).",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "r": {
+          "type": "NUMBER",
+          "description": "Red component value (0-255)."
+        },
+        "g": {
+          "type": "NUMBER",
+          "description": "Green component value (0-255)."
+        },
+        "b": {
+          "type": "NUMBER",
+          "description": "Blue component value (0-255)."
+        }
+      },
+      "required": [
+        "r",
+        "g",
+        "b"
+      ]
+    }
+  },
+  {
+    "name": "mqtt_forward",
+    "description": "Forwards data/message payload to a custom MQTT topic.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "topic": {
+          "type": "STRING",
+          "description": "MQTT topic name to publish to."
+        },
+        "message": {
+          "type": "STRING",
+          "description": "Message payload string to send."
+        }
+      },
+      "required": [
+        "topic",
+        "message"
+      ]
+    }
+  },
+  {
+    "name": "stop_active_alarm",
+    "description": "Stops any active playing alarm tone on the device.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "set_alarm",
+    "description": "Sets or schedules an alarm on the device at a specific absolute hour and minute (24-hour format).",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "hour": {
+          "type": "INTEGER",
+          "description": "Hour of the day in 24-hour format (0-23)."
+        },
+        "minute": {
+          "type": "INTEGER",
+          "description": "Minute of the hour (0-59)."
+        },
+        "tone_file": {
+          "type": "STRING",
+          "description": "Path to the WAV sound file on the SD card (optional, defaults to /sdcard/alarms/soft_wake_up.wav)."
+        },
+        "enabled": {
+          "type": "BOOLEAN",
+          "description": "Whether the alarm is enabled (optional, defaults to true)."
+        }
+      },
+      "required": [
+        "hour",
+        "minute"
+      ]
+    }
   }
 ]

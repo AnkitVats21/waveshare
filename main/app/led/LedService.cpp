@@ -37,7 +37,7 @@ LedService::LedService(LedStripManager& leds)
 
 void LedService::onStateChanged(ComponentMask changed, const SystemState& snap) {
     if (changed & COMP::ASSISTANT) {
-        applyVisualState(snap.assistant.visual_state);
+        applyVisualState(snap.assistant.visual_state, snap);
     }
     if (changed & COMP::LED) {
         if (m_cmd_mutex && xSemaphoreTake(m_cmd_mutex, portMAX_DELAY) == pdTRUE) {
@@ -50,12 +50,14 @@ void LedService::onStateChanged(ComponentMask changed, const SystemState& snap) 
     }
 }
 
-void LedService::applyVisualState(AssistantVisualState state) {
+void LedService::applyVisualState(AssistantVisualState state, const SystemState& snap) {
     if (m_cmd_mutex && xSemaphoreTake(m_cmd_mutex, portMAX_DELAY) == pdTRUE) {
         switch (state) {
             case AssistantVisualState::Idle:
-                m_current_command = {LedMode::OFF, OFF_LED, 0, 0};
-                ESP_LOGI(TAG, "LED State: Idle (OFF)");
+                // Retain/restore the custom color set by tool calling or MQTT when Idle
+                m_current_command = {snap.led.mode, snap.led.color, snap.led.speed_ms, snap.led.repeat};
+                ESP_LOGI(TAG, "LED State: Idle (restoring color: R=%d, G=%d, B=%d, Mode=%d)", 
+                         snap.led.color.r, snap.led.color.g, snap.led.color.b, (int)snap.led.mode);
                 break;
             case AssistantVisualState::Listening:
                 m_current_command = {LedMode::SOLID, GREEN_LED, 0, 0};

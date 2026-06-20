@@ -30,9 +30,12 @@ private:
     void processIncomingData(esp_mqtt_event_handle_t event);
     void handleAudioConfig(const std::string& key, const std::string& val);
     void handleLedConfig(const std::string& val);
+    static void onMqttConfigPair(const std::string& key, const std::string& val, void* ctx);
 
     esp_mqtt_client_handle_t m_mqtt_handle = nullptr;
     bool m_connected = false;
+    std::string m_accumulated_payload;
+    std::string m_current_topic;
 
     static constexpr const char* TAG = "MqttSvc";
 };

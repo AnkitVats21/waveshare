@@ -86,6 +86,8 @@ public:
     PipelineMode   pipelineMode()     const;
     WsState        wsState()          const;
     bool           turnCompletePending() const;
+    bool           alarmPlaying()       const;
+    bool           alarmStopRequested() const;
 
     // ── Reactor registration ──────────────────────────────────────────────────
 

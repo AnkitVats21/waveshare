@@ -4,6 +4,8 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
+#include "services/storage/StorageService.h"
+#include <ArduinoJson.h>
 #include "sdkconfig.h"
 #include "esp_timer.h"
 
@@ -110,17 +112,34 @@ bool GeminiProtocol::ensureClientInitialized() {
         return true;
     }
 
-    m_ws_uri = GEMINI_LIVE_BASE_URL;
-#ifdef CONFIG_GEMINI_API_KEY
-    if (std::strlen(CONFIG_GEMINI_API_KEY) == 0) {
-        LOGE_NET("CONFIG_GEMINI_API_KEY is empty.");
-        return false;
+    std::string api_key = "";
+    if (Services::StorageService::getInstance().isMounted() &&
+        Services::StorageService::getInstance().fileExists("/sdcard/gemini_config.json")) {
+        std::string content = Services::StorageService::getInstance().readFile("/sdcard/gemini_config.json");
+        if (!content.empty()) {
+            JsonDocument doc;
+            DeserializationError err = deserializeJson(doc, content);
+            if (!err && !doc["api_key"].isNull()) {
+                api_key = doc["api_key"].as<std::string>();
+                LOGI_NET("Loaded Gemini API key dynamically from SD card.");
+            }
+        }
     }
-    m_ws_uri += CONFIG_GEMINI_API_KEY;
+
+    if (api_key.empty()) {
+#ifdef CONFIG_GEMINI_API_KEY
+        if (std::strlen(CONFIG_GEMINI_API_KEY) == 0) {
+            LOGE_NET("CONFIG_GEMINI_API_KEY is empty and no SD card key found.");
+            return false;
+        }
+        api_key = CONFIG_GEMINI_API_KEY;
 #else
-    LOGE_NET("CONFIG_GEMINI_API_KEY is missing.");
-    return false;
+        LOGE_NET("CONFIG_GEMINI_API_KEY is missing and no SD card key found.");
+        return false;
 #endif
+    }
+    m_ws_uri = GEMINI_LIVE_BASE_URL;
+    m_ws_uri += api_key;
 
     esp_websocket_client_config_t ws_cfg = {};
     ws_cfg.uri = m_ws_uri.c_str();

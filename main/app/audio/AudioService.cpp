@@ -11,20 +11,6 @@
 #include "services/BufferManager.h"
 #include "esp_timer.h"
 
-// ---------------------------------------------------------------------------
-// waitSpeakerPaused — spin-wait until SpeakerPlaybackTask confirms it has
-// exited esp_codec_dev_write().  Must be called between pauseSpeaker() and
-// any I2S clock reconfiguration to prevent a DMA-mid-transfer race.
-// Timeout: 50 ms (10 × 5 ms polls).  Safe to call even if the task is null.
-// ---------------------------------------------------------------------------
-static void waitSpeakerPaused() {
-    auto *spk = AudioPipelineManager::getSpeakerTask();
-    if (!spk) return;
-    for (int i = 0; i < 10 && !spk->isHardwarePaused(); ++i) {
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-}
-
 static auto &sysdb = EmbeddedSysDb::getInstance();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,7 +142,6 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         // Revert to 16kHz clock
         if (m_hal.getSampleRate() != 16000) {
             AudioPipelineManager::pauseSpeaker();
-            waitSpeakerPaused();              // wait for DMA-safe idle
             m_hal.setHardwareSampleRate(16000);
             AudioPipelineManager::resumeSpeaker();
         }
@@ -170,6 +155,28 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         sysdb.mutate([](SystemState& s) {
             s.pipeline.rtp_enabled = true;
         });
+    }
+
+    // Transition D: Reactive WAV format clock switching (e.g. for alarms)
+    if ((changed & BIT_AUDIO::WAV_PLAYING) || (changed == 0)) {
+        auto& ww = WakeWordEngine::getInstance();
+        if (snap.audio.wav_playing) {
+            if (m_hal.getSampleRate() != snap.audio.wav_sample_rate) {
+                LOGI_AUDIO("Switching hardware to %lu Hz for WAV playback.", (unsigned long)snap.audio.wav_sample_rate);
+                AudioPipelineManager::pauseSpeaker();
+                ww.pauseHardware();
+                m_hal.setHardwareSampleRate(snap.audio.wav_sample_rate);
+                AudioPipelineManager::resumeSpeaker();
+            }
+        } else {
+            if (m_hal.getSampleRate() != 16000) {
+                LOGI_AUDIO("WAV playback finished. Restoring 16kHz idle clock...");
+                AudioPipelineManager::pauseSpeaker();
+                m_hal.setHardwareSampleRate(16000);
+                AudioPipelineManager::resumeSpeaker();
+                ww.resumeHardware();
+            }
+        }
     }
 }
 
@@ -267,7 +274,6 @@ void AudioService::enterAssistantPlaybackModeNow() {
         LOGI_AUDIO("Switching hardware to 24kHz for assistant playback.");
         AudioPipelineManager::pauseSpeaker();
         ww.pauseHardware();
-        waitSpeakerPaused();              // wait for DMA-safe idle before clock switch
         m_hal.setHardwareSampleRate(24000);
         AudioPipelineManager::resumeSpeaker();
     }
@@ -280,7 +286,6 @@ void AudioService::returnToWakeMode16k() {
     if (m_hal.getSampleRate() != 16000) {
         LOGW_AUDIO("Restoring 16kHz idle clock...");
         AudioPipelineManager::pauseSpeaker();
-        waitSpeakerPaused();              // wait for DMA-safe idle before clock switch
         m_hal.setHardwareSampleRate(16000);
         AudioPipelineManager::resumeSpeaker();
     }

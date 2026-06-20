@@ -55,7 +55,10 @@ enum class SkillType {
                 elif ptype in ('NUMBER', 'FLOAT', 'DOUBLE'):
                     h_content += f"    float {param} = 0.0f;\n"
                 elif ptype in ('BOOLEAN', 'BOOL'):
-                    h_content += f"    bool {param} = false;\n"
+                    if param == 'enabled':
+                        h_content += f"    bool {param} = true;\n"
+                    else:
+                        h_content += f"    bool {param} = false;\n"
         h_content += "};\n\n"
 
     h_content += """struct DecodedSkillCall {

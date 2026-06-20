@@ -32,6 +32,7 @@ set(srcs
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
             "app/audio/AudioAlertPlayer.cpp"
+            "app/audio/WavPlayer.cpp"
             "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
 
@@ -44,10 +45,17 @@ set(srcs
             # Assistant Session Control
             "app/assistant/AssistantService.cpp"
             "app/assistant/MpvCommandHandler.cpp"
+            "app/assistant/DeviceCommandHandler.cpp"
 
 
             # Services
             "services/BufferManager.cpp"
+            "services/config_manager/config_manager.cpp"
+            "services/config_manager/config_generated.cpp"
+            "services/storage/StorageService.cpp"
+            "services/storage/SysDbSyncReactor.cpp"
+            "services/time/TimeSyncHelper.cpp"
+            "services/alarm/AlarmService.cpp"
 
             # Common utilities
             "common/LogRouter.cpp"

@@ -57,6 +57,13 @@ void KeyService::run() {
                             s.audio.speaker_volume = std::max(old_vol - 5, 0);
                             ESP_LOGI("KeySvc", "Volume decrease request: %d -> %d", old_vol, s.audio.speaker_volume);
                         });
+                    } else if (keys[i] == KeyId::KEY_2) {
+                        sysdb.mutate([](SystemState& s) {
+                            if (s.alarm.playing) {
+                                s.alarm.stop_requested = true;
+                                ESP_LOGI("KeySvc", "Alarm stop requested via Key 2");
+                            }
+                        });
                     }
                 } else {
                     ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);

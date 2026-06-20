@@ -1,11 +1,14 @@
 #include "MqttService.h"
 #include "sdkconfig.h"
 #include "common/AppLogger.h"
+#include "common/ParserUtils.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "mqtt_certificates.hpp"
+#include "services/storage/StorageService.h"
+#include "services/config_manager/config.h"
 #include <cstdint>
 #include <sstream>
 
@@ -16,6 +19,12 @@ static constexpr const char *MQTT_PASSWORD     = CONFIG_WAVESHARE_MQTT_PASSWORD;
 static constexpr const char *MQTT_CLIENT_ID    = CONFIG_WAVESHARE_MQTT_CLIENT_ID;
 static constexpr const char *TOPIC_CONFIG      = "device/waveshare/config";
 static constexpr const char *TOPIC_DYNAMIC_SUB = "device/subscribe/topic";
+static constexpr const char *TOPIC_CONFIG_GET  = "device/waveshare/config/get";
+static constexpr const char *TOPIC_CONFIG_SET  = "device/waveshare/config/set";
+static constexpr const char *TOPIC_CONFIG_STAT = "device/waveshare/config/status";
+static constexpr const char *TOPIC_GEMINI_GET  = "device/waveshare/gemini/get";
+static constexpr const char *TOPIC_GEMINI_SET  = "device/waveshare/gemini/set";
+static constexpr const char *TOPIC_GEMINI_STAT = "device/waveshare/gemini/status";
 
 static auto &sysdb = EmbeddedSysDb::getInstance();
 
@@ -122,6 +131,10 @@ void MqttService::handleMqttEvent(int32_t event_id, esp_mqtt_event_handle_t even
             esp_mqtt_client_subscribe(m_mqtt_handle, "device/esp32s3/commands", 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG, 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_DYNAMIC_SUB, 0);
+            esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG_GET, 0);
+            esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG_SET, 0);
+            esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_GEMINI_GET, 0);
+            esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_GEMINI_SET, 0);
             
             sysdb.mutate([](SystemState& s) {
                 s.mqtt.connected = true;
@@ -156,30 +169,69 @@ void MqttService::handleMqttEvent(int32_t event_id, esp_mqtt_event_handle_t even
 }
 
 void MqttService::processIncomingData(esp_mqtt_event_handle_t event) {
-    std::string topic(event->topic, event->topic_len);
-    std::string payload(event->data, event->data_len);
+    if (event->current_data_offset == 0) {
+        m_current_topic.assign(event->topic, event->topic_len);
+        m_accumulated_payload.clear();
+    }
+    m_accumulated_payload.append(event->data, event->data_len);
+
+    if (m_accumulated_payload.length() < event->total_data_len) {
+        return; // Wait for more chunks
+    }
+
+    // Assemble the complete topic and payload
+    std::string topic = m_current_topic;
+    std::string payload = m_accumulated_payload;
+    m_accumulated_payload.clear();
+    m_current_topic.clear();
 
     if (topic == TOPIC_CONFIG) {
         LOGI_SYSTEM("Processing inbound MQTTS config...");
-        std::stringstream ss(payload);
-        std::string line;
-        while (std::getline(ss, line)) {
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
+        Utils::ParserUtils::parseKeyValueStream(payload, onMqttConfigPair, this);
+    } else if (topic == TOPIC_CONFIG_GET) {
+        std::string config_content = "";
+        if (Services::StorageService::getInstance().isMounted() &&
+            Services::StorageService::getInstance().fileExists("/sdcard/settings.txt")) {
+            config_content = Services::StorageService::getInstance().readFile("/sdcard/settings.txt");
+        }
+        if (config_content.empty()) {
+            config_content = "# No settings.txt present on SD card\n";
+        }
+        publish(TOPIC_CONFIG_STAT, config_content.c_str());
+        ESP_LOGI(TAG, "Published configuration status via MQTT.");
+    } else if (topic == TOPIC_CONFIG_SET) {
+        if (Services::StorageService::getInstance().isMounted()) {
+            if (Services::StorageService::getInstance().writeFile("/sdcard/settings.txt", payload.c_str())) {
+                ESP_LOGI(TAG, "Updated settings.txt on SD card via MQTT.");
+                Services::LoadConfigFromSD(); // Reload config in config manager
+                publish(TOPIC_CONFIG_STAT, "SUCCESS: Settings updated. Restart required to apply changes.");
+            } else {
+                publish(TOPIC_CONFIG_STAT, "ERROR: Failed to write settings.txt to SD card.");
             }
-
-            size_t pos = line.find('=');
-            if (pos != std::string::npos) {
-                std::string key = line.substr(0, pos);
-                std::string val = line.substr(pos + 1);
-
-                if (key == "speaker_volume" || key == "mic_volume" ||
-                    key == "sample_rate" || key == "mic_enabled") {
-                    handleAudioConfig(key, val);
-                } else if (key == "led_color") {
-                    handleLedConfig(val);
-                }
+        } else {
+            publish(TOPIC_CONFIG_STAT, "ERROR: SD card not mounted.");
+        }
+    } else if (topic == TOPIC_GEMINI_GET) {
+        std::string gemini_content = "";
+        if (Services::StorageService::getInstance().isMounted() &&
+            Services::StorageService::getInstance().fileExists("/sdcard/gemini_config.json")) {
+            gemini_content = Services::StorageService::getInstance().readFile("/sdcard/gemini_config.json");
+        }
+        if (gemini_content.empty()) {
+            gemini_content = "{}";
+        }
+        publish(TOPIC_GEMINI_STAT, gemini_content.c_str());
+        ESP_LOGI(TAG, "Published gemini config status via MQTT.");
+    } else if (topic == TOPIC_GEMINI_SET) {
+        if (Services::StorageService::getInstance().isMounted()) {
+            if (Services::StorageService::getInstance().writeFile("/sdcard/gemini_config.json", payload.c_str())) {
+                ESP_LOGI(TAG, "Updated gemini_config.json on SD card via MQTT.");
+                publish(TOPIC_GEMINI_STAT, "SUCCESS: Gemini config updated. Restart required to apply changes.");
+            } else {
+                publish(TOPIC_GEMINI_STAT, "ERROR: Failed to write gemini_config.json to SD card.");
             }
+        } else {
+            publish(TOPIC_GEMINI_STAT, "ERROR: SD card not mounted.");
         }
     } else if (topic == TOPIC_DYNAMIC_SUB) {
         std::string new_topic = payload;
@@ -242,5 +294,15 @@ void MqttService::handleLedConfig(const std::string& val) {
         ESP_LOGI(TAG, "Parsed config: led_color = %d,%d,%d", r, g, b);
     } else {
         ESP_LOGW(TAG, "Invalid color syntax: %s", val.c_str());
+    }
+}
+
+void MqttService::onMqttConfigPair(const std::string& key, const std::string& val, void* ctx) {
+    auto* self = static_cast<MqttService*>(ctx);
+    if (key == "speaker_volume" || key == "mic_volume" ||
+        key == "sample_rate" || key == "mic_enabled") {
+        self->handleAudioConfig(key, val);
+    } else if (key == "led_color") {
+        self->handleLedConfig(val);
     }
 }

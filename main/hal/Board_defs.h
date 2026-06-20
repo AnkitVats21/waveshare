@@ -18,13 +18,13 @@
 // SD Card Hardware Pins
 #define FUNC_SDMMC_EN 1
 #define FUNC_SDSPI_EN 0
-#define SDMMC_BUS_WIDTH 4
+#define SDMMC_BUS_WIDTH 1
 #define GPIO_SDMMC_CLK 40
-#define GPIO_SDMMC_CMD 39
-#define GPIO_SDMMC_D0 38
-#define GPIO_SDMMC_D1 37
-#define GPIO_SDMMC_D2 2
-#define GPIO_SDMMC_D3 1
+#define GPIO_SDMMC_CMD 42
+#define GPIO_SDMMC_D0 41
+#define GPIO_SDMMC_D1 -1
+#define GPIO_SDMMC_D2 -1
+#define GPIO_SDMMC_D3 -1
 #define GPIO_SDMMC_DET -1
 
 #define MAX_FILE_NAME_SIZE 128

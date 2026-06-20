@@ -23,6 +23,7 @@ private:
     void executeToolCall(const GeminiSkills::DecodedSkillCall& skill_call);
 
     bool m_wifi_connected = false;
+    bool m_time_synced = false;
 
     static constexpr const char* TAG = "AppCtrl";
 };

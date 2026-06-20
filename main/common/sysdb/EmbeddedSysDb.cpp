@@ -126,6 +126,20 @@ bool EmbeddedSysDb::turnCompletePending() const {
     return v;
 }
 
+bool EmbeddedSysDb::alarmPlaying() const {
+    acquireRead();
+    bool v = m_state.alarm.playing;
+    releaseRead();
+    return v;
+}
+
+bool EmbeddedSysDb::alarmStopRequested() const {
+    acquireRead();
+    bool v = m_state.alarm.stop_requested;
+    releaseRead();
+    return v;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Reactor registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,6 +228,15 @@ ComponentMask EmbeddedSysDb::diffState(const SystemState& old_s, const SystemSta
     #define X_STR(name, size, def, bit) \
         if (bit != 0 && strcmp(old_s.mqtt.name, new_s.mqtt.name) != 0) changed |= (COMP::MQTT | bit);
     MQTT_FIELDS
+    #undef X
+    #undef X_STR
+
+    // ALARM_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.alarm.name != new_s.alarm.name) changed |= (COMP::ALARM | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.alarm.name, new_s.alarm.name) != 0) changed |= (COMP::ALARM | bit);
+    ALARM_FIELDS
     #undef X
     #undef X_STR
 

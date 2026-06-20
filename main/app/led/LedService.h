@@ -35,7 +35,7 @@ private:
     SemaphoreHandle_t m_cmd_mutex = nullptr;
     LedEventData      m_current_command{};
 
-    void applyVisualState(AssistantVisualState state);
+    void applyVisualState(AssistantVisualState state, const SystemState& snap);
 
     static constexpr const char* TAG = "LedSvc";
 };

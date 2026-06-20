@@ -5,6 +5,7 @@
 #include "esp_codec_dev.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "services/BufferManager.h"
 
 // ---------------------------------------------------------------------------
@@ -24,7 +25,15 @@ public:
             8 * 1024,
             ThreadConfig::Priority::SPEAKER_PLAYBACK,
             ThreadConfig::CORE_AUDIO
-        }) {}
+        }) {
+      m_pause_sem = xSemaphoreCreateBinary();
+  }
+
+  ~SpeakerPlaybackTask() override {
+      if (m_pause_sem) {
+          vSemaphoreDelete(m_pause_sem);
+      }
+  }
 
   /**
    * @brief Start the speaker playback task
@@ -39,10 +48,15 @@ public:
 
   /**
    * @brief Pause/resume physical speaker playback calls during clock switches.
-   *        pauseHardware() is non-blocking; callers should poll isHardwarePaused()
-   *        before touching the I2S clock to avoid a DMA-mid-transfer race.
+   *        pauseHardware() is synchronous and blocks until the player thread has acknowledged
+   *        the pause and exited the codec write block, preventing I2S DMA race conditions.
    */
-  void pauseHardware()  { m_hw_valid = false; }
+  void pauseHardware()  {
+      m_hw_valid = false;
+      if (m_pause_sem) {
+          xSemaphoreTake(m_pause_sem, pdMS_TO_TICKS(100)); // wait up to 100ms for ack
+      }
+  }
   void resumeHardware() { m_hw_paused_ack = false; m_hw_valid = true; }
 
   /**
@@ -84,4 +98,5 @@ private:
   volatile bool             m_hw_valid      = true;
   volatile bool             m_hw_paused_ack = false; ///< Set when task exits codec_dev_write
   esp_codec_dev_handle_t    m_device        = nullptr;
+  SemaphoreHandle_t         m_pause_sem     = nullptr;
 };
