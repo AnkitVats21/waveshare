@@ -4,6 +4,7 @@
 #include "app/audio/SpeakerPlayback.h"
 #include "app/audio/AudioPipelineManager.h"
 #include "app/audio/WavPlayer.h"
+#include "app/audio/AudioAlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
@@ -32,7 +33,7 @@ AlarmService::AlarmService()
           ThreadConfig::Priority::LOW,
           ThreadConfig::CORE_NETWORK,
           COMP::ALARM | COMP::AUDIO
-      })
+       })
 {}
 
 AlarmService::~AlarmService() {
@@ -138,6 +139,7 @@ void AlarmService::triggerAlarm(const Alarm& alarm) {
         return;
     }
     m_playing_alarm = true;
+    m_playing_fallback_alarm = false;
     strncpy(m_active_tone_file, alarm.tone_file, sizeof(m_active_tone_file) - 1);
 
     EmbeddedSysDb::getInstance().mutate([alarm](SystemState& s) {
@@ -146,13 +148,29 @@ void AlarmService::triggerAlarm(const Alarm& alarm) {
         s.alarm.stop_requested = false;
     });
 
-    if (!WavPlayer::getInstance().playAsync(alarm.tone_file)) {
-        ESP_LOGE(TAG, "Failed to start WAV playback for alarm");
-        m_playing_alarm = false;
-        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-            s.alarm.playing = false;
-            s.alarm.active_alarm_id = 0;
-        });
+    // Check WAV metadata upfront
+    WavInfo info = {};
+    bool is_wav_valid = WavPlayer::readWavInfo(alarm.tone_file, info);
+
+    if (is_wav_valid && info.sample_rate <= 16000) {
+        ESP_LOGI(TAG, "Triggering WAV alarm playback: %s (Sample Rate: %lu Hz)", alarm.tone_file, (unsigned long)info.sample_rate);
+        if (!WavPlayer::getInstance().playAsync(alarm.tone_file)) {
+            ESP_LOGE(TAG, "Failed to start WAV playback for alarm. Falling back to algorithmic alert.");
+            m_playing_fallback_alarm = true;
+            if (m_task_handle) {
+                xTaskNotifyGive(m_task_handle);
+            }
+        }
+    } else {
+        if (!is_wav_valid) {
+            ESP_LOGW(TAG, "Alarm tone WAV file invalid or missing: %s. Using fallback algorithmic alert.", alarm.tone_file);
+        } else {
+            ESP_LOGW(TAG, "Alarm sample rate too high (%lu Hz, limit 16 kHz). Using fallback algorithmic alert to prevent clock collision with wake-word engine.", (unsigned long)info.sample_rate);
+        }
+        m_playing_fallback_alarm = true;
+        if (m_task_handle) {
+            xTaskNotifyGive(m_task_handle);
+        }
     }
 }
 
@@ -160,11 +178,13 @@ void AlarmService::stopActiveAlarm() {
     if (m_playing_alarm) {
         WavPlayer::getInstance().stop();
         m_playing_alarm = false;
+        m_playing_fallback_alarm = false;
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.alarm.playing = false;
             s.alarm.stop_requested = true;
             s.alarm.active_alarm_id = 0;
         });
+        BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
     }
 }
 
@@ -176,8 +196,8 @@ void AlarmService::onStateChanged(ComponentMask changed, const SystemState& snap
         }
     }
     if (changed & COMP::AUDIO) {
-        // If we were playing an alarm and the WAV player finished (wav_playing transitioned to false)
-        if (m_playing_alarm && !snap.audio.wav_playing) {
+        // If we were playing a WAV alarm and it finished
+        if (m_playing_alarm && !m_playing_fallback_alarm && !snap.audio.wav_playing) {
             ESP_LOGI(TAG, "onStateChanged: WAV playback finished. Clearing alarm state.");
             m_playing_alarm = false;
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
@@ -194,14 +214,19 @@ void AlarmService::run() {
 
     while (m_running) {
         uint32_t changed_bits = 0;
-        // Check for updates every 5 seconds, or respond to DB changes immediately
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(5000));
+        TickType_t wait_ticks = m_playing_fallback_alarm ? pdMS_TO_TICKS(1500) : pdMS_TO_TICKS(5000);
+        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, wait_ticks);
         if (!m_running) break;
 
         if (notified == pdTRUE && changed_bits > 0) {
             m_last_changed = changed_bits;
             SystemState snap = EmbeddedSysDb::getInstance().snapshot();
             onStateChanged(m_last_changed, snap);
+        }
+
+        if (m_playing_fallback_alarm) {
+            ESP_LOGI(TAG, "Sounding fallback algorithmic alarm chime...");
+            AudioAlertPlayer::playError();
         }
 
         // Get system time

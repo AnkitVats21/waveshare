@@ -167,6 +167,35 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             return true;
         }
 
+        case SkillType::SAVE_TO_MEMORY: {
+            auto args = skill_call.args.save_to_memory;
+            if (args == nullptr) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Null save to memory arguments";
+                return true;
+            }
+            std::string path = "/sdcard/gemini_memory.txt";
+            bool too_large = false;
+            if (Services::StorageService::getInstance().fileExists(path.c_str())) {
+                std::string current = Services::StorageService::getInstance().readFile(path.c_str());
+                if (current.length() >= 16384) {
+                    too_large = true;
+                }
+            }
+
+            if (too_large) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Memory file is full (limit 16 KB). Please request the user to manage or clear memory.";
+                return true;
+            }
+
+            std::string line = args->text + "\n";
+            bool ok = Services::StorageService::getInstance().appendFile(path.c_str(), line.c_str());
+            response_doc["status"] = ok ? "success" : "error";
+            response_doc["message"] = ok ? "Information successfully saved to long-term memory." : "Failed to write to memory file.";
+            return true;
+        }
+
         case SkillType::STOP_ACTIVE_ALARM: {
             ESP_LOGI(TAG, "Tool request: Stopping active alarm tone...");
             Services::AlarmService::getInstance().stopActiveAlarm();

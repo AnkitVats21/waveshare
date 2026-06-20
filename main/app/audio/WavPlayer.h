@@ -27,6 +27,14 @@ public:
     bool playAsync(const char* filepath);
 
     /**
+     * @brief Read metadata details of a WAV file synchronously.
+     * @param filepath Path to the WAV file.
+     * @param out_info Structured info to fill.
+     * @return true if successfully parsed, false otherwise.
+     */
+    static bool readWavInfo(const char* filepath, WavInfo& out_info);
+
+    /**
      * @brief Stop the active playback immediately.
      */
     void stop();
@@ -42,6 +50,7 @@ private:
     WavPlayer(const WavPlayer&) = delete;
     WavPlayer& operator=(const WavPlayer&) = delete;
 
+    static bool readWavInfo(FILE* f, WavInfo& out_info);
     static void playbackTaskBridge(void* pvParameters);
     void playbackTask();
 

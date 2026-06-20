@@ -45,6 +45,31 @@ bool StorageService::writeFile(const char* path, const char* content) {
     return true;
 }
 
+bool StorageService::appendFile(const char* path, const char* content) {
+    if (!isMounted()) {
+        ESP_LOGE(TAG, "Cannot append to %s: SD card not mounted", path);
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_file_mutex);
+    FILE* f = fopen(path, "a");
+    if (f == nullptr) {
+        ESP_LOGE(TAG, "Failed to open file %s for appending", path);
+        return false;
+    }
+
+    int bytes_written = fprintf(f, "%s", content);
+    fclose(f);
+
+    if (bytes_written < 0) {
+        ESP_LOGE(TAG, "Failed to append content to %s", path);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Successfully appended %d bytes to %s", bytes_written, path);
+    return true;
+}
+
 std::string StorageService::readFile(const char* path) {
     if (!isMounted()) {
         ESP_LOGE(TAG, "Cannot read from %s: SD card not mounted", path);

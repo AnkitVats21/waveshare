@@ -268,5 +268,21 @@
         "minute"
       ]
     }
+  },
+  {
+    "name": "save_to_memory",
+    "description": "Appends the specified information to the device's persistent long-term memory file. Use this when the user explicitly asks you to remember something, or when you learn important personal facts, preferences, or notes about the user.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "text": {
+          "type": "STRING",
+          "description": "The exact fact, preference, or note to be appended to the memory file."
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
   }
 ]

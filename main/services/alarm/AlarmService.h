@@ -47,6 +47,7 @@ private:
     std::mutex m_alarms_mutex;
     
     bool m_playing_alarm = false;
+    bool m_playing_fallback_alarm = false;
     char m_active_tone_file[64] = {};
     
     static constexpr const char* TAG = "AlarmSvc";

@@ -15,6 +15,7 @@ public:
 
     // File operation APIs (thread-safe via internal mutex)
     bool writeFile(const char* path, const char* content);
+    bool appendFile(const char* path, const char* content);
     std::string readFile(const char* path);
     bool deleteFile(const char* path);
     bool fileExists(const char* path);

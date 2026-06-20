@@ -214,7 +214,41 @@ void GeminiProtocol::connect() {
 void GeminiProtocol::transmitSetupHandshake() {
     if (!m_client.isConnected()) return;
     
-    LOGI_NET("Uplinking JSON schema handshake compilation payload...");
+    LOGI_NET("Preparing JSON schema handshake payload...");
+    
+    // Check if memory file exists and read it
+    std::string memory_content = "";
+    if (Services::StorageService::getInstance().isMounted() &&
+        Services::StorageService::getInstance().fileExists("/sdcard/gemini_memory.txt")) {
+        memory_content = Services::StorageService::getInstance().readFile("/sdcard/gemini_memory.txt");
+    }
+
+    if (!memory_content.empty()) {
+        LOGI_NET("Memory content loaded. Injecting system instruction context...");
+        
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, GeminiSkills::SETUP_HANDSHAKE_JSON);
+        if (!err) {
+            JsonObject setup = doc["setup"].as<JsonObject>();
+            JsonObject systemInstruction = setup["systemInstruction"].to<JsonObject>();
+            JsonArray parts = systemInstruction["parts"].to<JsonArray>();
+            JsonObject part = parts.add<JsonObject>();
+            
+            std::string instruction = "You have access to the following long-term memory context containing facts, notes, or preferences about the user from previous conversations. Use it to inform your responses:\n" + memory_content;
+            part["text"] = instruction;
+            
+            std::string payload;
+            serializeJson(doc, payload);
+            LOGI_NET("Uplinking handshake with injected memory context (payload size: %zu bytes)...", payload.length());
+            m_client.sendText(payload.c_str(), payload.length(), pdMS_TO_TICKS(1000));
+            return;
+        } else {
+            LOGE_NET("Failed to deserialize SETUP_HANDSHAKE_JSON: %s. Falling back to static handshake.", err.c_str());
+        }
+    }
+
+    // Default fallback to static handshake
+    LOGI_NET("Uplinking static JSON schema handshake compilation payload...");
     m_client.sendText(GeminiSkills::SETUP_HANDSHAKE_JSON, 
                       strlen(GeminiSkills::SETUP_HANDSHAKE_JSON), 
                       pdMS_TO_TICKS(1000));

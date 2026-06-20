@@ -18,22 +18,10 @@ WavPlayer::~WavPlayer() {
     stop();
 }
 
-bool WavPlayer::playAsync(const char* filepath) {
-    ESP_LOGI(TAG, "playAsync requested for file: %s", filepath);
+bool WavPlayer::readWavInfo(FILE* f, WavInfo& out_info) {
+    if (f == nullptr) return false;
 
-    if (m_playing) {
-        ESP_LOGI(TAG, "Stopping active playback first.");
-        stop();
-    }
-
-    // 1. Open the file synchronously
-    FILE* f = fopen(filepath, "rb");
-    if (f == nullptr) {
-        ESP_LOGE(TAG, "Failed to open WAV file: %s", filepath);
-        return false;
-    }
-
-    // 2. Parse RIFF header (12 bytes)
+    // Parse RIFF header (12 bytes)
     struct RiffHeader {
         char riff[4];
         uint32_t riff_size;
@@ -42,17 +30,15 @@ bool WavPlayer::playAsync(const char* filepath) {
 
     if (fread(&riff_header, 1, 12, f) != 12) {
         ESP_LOGE(TAG, "Failed to read WAV RIFF header");
-        fclose(f);
         return false;
     }
 
     if (strncmp(riff_header.riff, "RIFF", 4) != 0 || strncmp(riff_header.wave, "WAVE", 4) != 0) {
         ESP_LOGE(TAG, "Invalid WAV format (RIFF/WAVE mismatch)");
-        fclose(f);
         return false;
     }
 
-    // 3. Scan subchunks sequentially to locate the "fmt " and "data" chunks
+    // Scan subchunks sequentially to locate the "fmt " and "data" chunks
     uint16_t num_channels = 0;
     uint32_t sample_rate = 0;
     uint16_t bits_per_sample = 0;
@@ -112,22 +98,55 @@ bool WavPlayer::playAsync(const char* filepath) {
 
     if (!found_fmt || !found_data) {
         ESP_LOGE(TAG, "Required chunks not found (fmt: %d, data: %d)", found_fmt, found_data);
+        return false;
+    }
+
+    out_info.num_channels = num_channels;
+    out_info.sample_rate = sample_rate;
+    out_info.bits_per_sample = bits_per_sample;
+    out_info.data_size = data_size;
+    return true;
+}
+
+bool WavPlayer::readWavInfo(const char* filepath, WavInfo& out_info) {
+    FILE* f = fopen(filepath, "rb");
+    if (f == nullptr) {
+        ESP_LOGE(TAG, "Failed to open WAV file for info: %s", filepath);
+        return false;
+    }
+    bool ok = readWavInfo(f, out_info);
+    fclose(f);
+    return ok;
+}
+
+bool WavPlayer::playAsync(const char* filepath) {
+    ESP_LOGI(TAG, "playAsync requested for file: %s", filepath);
+
+    if (m_playing) {
+        ESP_LOGI(TAG, "Stopping active playback first.");
+        stop();
+    }
+
+    // 1. Open the file synchronously
+    FILE* f = fopen(filepath, "rb");
+    if (f == nullptr) {
+        ESP_LOGE(TAG, "Failed to open WAV file: %s", filepath);
+        return false;
+    }
+
+    // 2. Read metadata (leaves file position at start of data)
+    if (!readWavInfo(f, m_info)) {
         fclose(f);
         return false;
     }
 
     // Print parsed audio details as requested by the user
     ESP_LOGI(TAG, "WAV metadata successfully parsed:");
-    ESP_LOGI(TAG, "  Sample Rate:     %lu Hz", (unsigned long)sample_rate);
-    ESP_LOGI(TAG, "  Channel Count:   %u", num_channels);
-    ESP_LOGI(TAG, "  Bits per Sample: %u bits", bits_per_sample);
-    ESP_LOGI(TAG, "  Data Size:       %lu bytes", (unsigned long)data_size);
+    ESP_LOGI(TAG, "  Sample Rate:     %lu Hz", (unsigned long)m_info.sample_rate);
+    ESP_LOGI(TAG, "  Channel Count:   %u", m_info.num_channels);
+    ESP_LOGI(TAG, "  Bits per Sample: %u bits", m_info.bits_per_sample);
+    ESP_LOGI(TAG, "  Data Size:       %lu bytes", (unsigned long)m_info.data_size);
 
-    // Cache the validated parameters
-    m_info.num_channels = num_channels;
-    m_info.sample_rate = sample_rate;
-    m_info.bits_per_sample = bits_per_sample;
-    m_info.data_size = data_size;
     m_file_handle = f;
     strncpy(m_filepath, filepath, sizeof(m_filepath) - 1);
     m_filepath[sizeof(m_filepath) - 1] = '\0';
