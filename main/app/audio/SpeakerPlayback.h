@@ -12,7 +12,7 @@
 // Buffer declaration — this subsystem owns the network→speaker ring buffer.
 // Size: 64 KB in PSRAM (holds ~1 s of 16-bit mono at 16 kHz).
 // ---------------------------------------------------------------------------
-DECLARE_BUFFER(SPK_RX_BUF, "spk_rx", 64 * 1024)
+DECLARE_BUFFER(SPK_RX_BUF, "spk_rx", 1024 * 1024)
 
 #include "common/TaskBase.h"
 #include "common/thread_config.h"
@@ -90,7 +90,7 @@ private:
   static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 4;
 
   // ── I/O chunk sizing ─────────────────────────────────────────────────────
-  static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 1024;
+  static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 480;
   static constexpr size_t   MAX_AUDIO_CHUNK_BYTES     = MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t);
   static constexpr size_t   EXPANDED_BUF_BYTES        = MAX_AUDIO_CHUNK_SAMPLES * 2 * sizeof(int32_t);
 

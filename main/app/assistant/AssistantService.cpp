@@ -1,5 +1,6 @@
 #include "AssistantService.h"
 #include "app/audio/AudioAlertPlayer.h"
+#include "app/gemini_live/GeminiProtocol.h"
 #include "app/mqtt/MqttService.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
@@ -187,12 +188,7 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
                 playAlertAsync(AudioAlertPlayer::playOffline);
                 transitionTo(AssistantState::ErrorCooldown, &snap);
             } else {
-                if (ws == WsState::CONNECTED) {
-                    LOGI_SYSTEM("StartingSession: Persistent connection active. Skipping Connecting.");
-                    transitionTo(AssistantState::StreamingUserAudio, &snap);
-                } else {
-                    transitionTo(AssistantState::Connecting, &snap);
-                }
+                transitionTo(AssistantState::Connecting, &snap);
             }
             break;
 
@@ -234,7 +230,8 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
             if (snap.assistant.mpv_pending_idle) {
                 ESP_LOGI(TAG, "MPV command was executed. Transitioning directly to Closing from WaitingForFollowup.");
                 transitionTo(AssistantState::Closing, &snap);
-            } else if (ws == WsState::DISCONNECTED) {
+            } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
+                ESP_LOGW(TAG, "WaitingForFollowup: WebSocket lost (state=%d). Returning to Idle.", (int)ws);
                 transitionTo(AssistantState::Idle, &snap);
             }
             break;
@@ -301,6 +298,7 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
     switch (newState) {
         case AssistantState::Idle:
             visState = wifi_connected ? AssistantVisualState::Idle : AssistantVisualState::Offline;
+            GeminiProtocol::getInstance().closeConnection();
             sysdb.mutate([](SystemState& s) {
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
@@ -425,6 +423,7 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
     // Start appropriate timers or sync database if updated externally
     switch (newState) {
         case AssistantState::Idle:
+            GeminiProtocol::getInstance().closeConnection();
             sysdb.mutate([](SystemState& s) {
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;

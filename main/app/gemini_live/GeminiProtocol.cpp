@@ -199,6 +199,7 @@ void GeminiProtocol::closeConnection() {
     if (m_client) {
         m_client.close(pdMS_TO_TICKS(1000));
         m_client.stop();
+        m_client.destroy();
     }
     sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::DISCONNECTED;
@@ -385,15 +386,22 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
         case WEBSOCKET_EVENT_DISCONNECTED:
             LOGW_NET("WebSocket disconnected. Stats: rx_frames=%u, rx_dropped=%u, rx_audio_bytes=%u",
                      (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
+            // Full teardown — forces ensureClientInitialized() to re-create from scratch
+            self->m_client.stop();
+            self->m_client.destroy();
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::DISCONNECTED;
+                s.audio.assistant_speaking = false;
             });
             break;
             
         case WEBSOCKET_EVENT_ERROR:
             LOGE_NET("WebSocket socket error.");
+            self->m_client.stop();
+            self->m_client.destroy();
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::ERROR_STATE;
+                s.audio.assistant_speaking = false;
             });
             break;
     }
@@ -417,7 +425,6 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             *data_end = '\0';
 
             // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
-            // Do this BEFORE base64 decoding so the clock switch runs in parallel with decoding!
             if (!sysdb.assistantSpeaking()) {
                 BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
                 sysdb.mutate([](SystemState& s) {
@@ -425,6 +432,9 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                     s.assistant.visual_state  = AssistantVisualState::Speaking;
                     s.audio.assistant_speaking = true;
                 });
+                // Yield to let AudioService switch the I2S clock to 24kHz
+                // before we push the first decoded PCM frame
+                vTaskDelay(pdMS_TO_TICKS(20));
             }
 
             size_t b64_len = data_end - data_start;
@@ -470,6 +480,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 LOGW_NET("Gemini Live Engine: Received 'goAway' signal.");
                 sysdb.mutate([](SystemState& s) {
                     s.assistant.ws_state = WsState::GOING_AWAY;
+                    s.audio.assistant_speaking = false;
                 });
                 if (m_client) m_client.close(pdMS_TO_TICKS(1500));
             }
