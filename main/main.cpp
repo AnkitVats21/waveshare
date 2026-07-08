@@ -1,6 +1,6 @@
 #include "app/AppController.h"
 #include "app/audio/AudioService.h"
-#include "app/audio/RtpTransceiver.h"
+#include "app/audio/RtpPlayer.h"
 #include "app/led/LedService.h"
 #include "app/assistant/AssistantService.h"
 #include "app/mqtt/MqttService.h"
@@ -118,7 +118,7 @@ extern "C" void app_main(void) {
     static LedService           led_svc(led_strip);
     static AssistantService     assistant_svc;
     static MqttService&         mqtt_svc = MqttService::getInstance();
-    // static RtpTransceiver       rtp_trans;
+    static RtpPlayer            rtp_player;
     static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
     (void)gemini_proto; // Suppress unused warning since task auto-spawns on instantiation
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
@@ -130,7 +130,7 @@ extern "C" void app_main(void) {
     audio_svc.begin();
     assistant_svc.begin();
     mqtt_svc.begin();
-    // rtp_trans.begin();
+    rtp_player.begin();
     gemini_pump.start();
     app_ctrl.begin();
     alarm_svc.begin();
@@ -147,7 +147,7 @@ extern "C" void app_main(void) {
     led_svc.start();
     assistant_svc.start();
     mqtt_svc.start();
-    // rtp_trans.start();
+    rtp_player.start();
     gemini_proto.start();
     app_ctrl.start();
     key_svc.start();

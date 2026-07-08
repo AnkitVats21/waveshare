@@ -112,11 +112,12 @@ bool WakeWordEngine::begin() {
         xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
     }
 
-    // 4. Launch tasks (detect on Core 1, feed on Core 0)
+    // 4. Launch tasks. Keep the I2S-owning feed task on the audio core and
+    // let detect run off-core so speaker playback can preempt DSP work.
     xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", ThreadConfig::StackSize::STACK_WW_DET,
-                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, 1);
+                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, ThreadConfig::CORE_NETWORK);
     xTaskCreatePinnedToCore(feedTaskBridge,   "ww_feed",   ThreadConfig::StackSize::STACK_WW_FEED,
-                            afe_data, ThreadConfig::Priority::WAKE_WORD_FEED, nullptr, 1);
+                            afe_data, ThreadConfig::Priority::WAKE_WORD_FEED, nullptr, ThreadConfig::CORE_AUDIO);
 
     LOGI_SYSTEM("WakeWordEngine started (feed: %s)", input_format);
     return true;

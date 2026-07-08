@@ -28,7 +28,7 @@ set(srcs
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
             "app/audio/AudioPipelineManager.cpp"
-            "app/audio/RtpTransceiver.cpp"
+            "app/audio/RtpPlayer.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
             "app/audio/AudioAlertPlayer.cpp"

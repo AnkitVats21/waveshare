@@ -28,10 +28,10 @@ namespace ThreadConfig {
         GEMINI_PROTOCOL  = 7,   ///< GeminiProtocol WebSocket handler (Core 0)
         AUDIO_PUMP       = 8,   ///< GeminiAudioPump uplink (Core 1)
         AUDIO_SERVICE    = 10,  ///< AudioService reactor loop
-        SPEAKER_PLAYBACK = 14,  ///< SpeakerPlayback I2S write task
+        WAKE_WORD_DETECT = 12,  ///< WakeWordEngine detect/fetch task
         MIC_CAPTURE      = 14,  ///< MicCaptureTask I2S read task
-        WAKE_WORD_DETECT = 18,  ///< WakeWordEngine detect task (AFE fetch)
-        WAKE_WORD_FEED   = 19,  ///< WakeWordEngine feed task  (I2S read)
+        WAKE_WORD_FEED   = 16,  ///< WakeWordEngine feed task (I2S read)
+        SPEAKER_PLAYBACK = 18,  ///< SpeakerPlayback I2S write task
     };
 
     // ── Stack sizes (bytes) ────────────────────────────────────────────────

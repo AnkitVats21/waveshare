@@ -73,26 +73,20 @@ protected:
   void run() override;
 
 private:
-  // ── Leaky bucket timing ──────────────────────────────────────────────────
-  // The consumer drains at a fixed cadence regardless of how bursty the
-  // producer (GeminiProtocol) is.
-  // 10 ms = 1 tick at the ESP-IDF default 100 Hz FreeRTOS tick rate.
-  // pdMS_TO_TICKS(5) truncates to 0, which causes xTaskDelayUntil to assert.
-  static constexpr uint32_t DRAIN_PERIOD_MS          = 10;
-
-  // Silence written each empty tick to keep the I2S DMA clock alive.
-  // 240 samples ≈ 10 ms at 24 kHz mono.
-  static constexpr size_t   SILENCE_SAMPLES           = 240;
+  // ── Playback timing ──────────────────────────────────────────────────────
+  // Target steady-state frame size is 20 ms. The empty-fill cadence stays at
+  // 10 ms to keep the clock alive without injecting large silence bursts.
+  static constexpr uint32_t TARGET_FRAME_MS           = 20;
+  static constexpr uint32_t EMPTY_FILL_MS             = 10;
 
   // Number of consecutive empty ticks required before acting on turn_complete.
-  // Prevents premature cutoff when the last PCM frame arrives just before
-  // the turnComplete JSON message.  4 × 5 ms = 20 ms of sustained silence.
-  static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 4;
+  static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 2;
 
   // ── I/O chunk sizing ─────────────────────────────────────────────────────
-  static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 480;
+  static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 2048;
   static constexpr size_t   MAX_AUDIO_CHUNK_BYTES     = MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t);
   static constexpr size_t   EXPANDED_BUF_BYTES        = MAX_AUDIO_CHUNK_SAMPLES * 2 * sizeof(int32_t);
+  static constexpr size_t   MAX_SILENCE_SAMPLES       = 512;
 
   // ── State ─────────────────────────────────────────────────────────────────
   volatile bool             m_hw_valid      = true;
