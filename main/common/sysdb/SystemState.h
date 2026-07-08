@@ -75,14 +75,16 @@ namespace BIT_MQTT {
 // SystemState — the single shared in-memory database
 // ─────────────────────────────────────────────────────────────────────────────
 
+#define NATIVE_SAMPLE_RATE 32000
+
 #define SYSTEM_FIELDS \
     X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED) \
     X_STR(server_ip, 32, "192.168.1.18", BIT_SYSTEM::SERVER_IP) \
     X(int, wifi_max_retries, 5, 0)
 
 #define AUDIO_FIELDS \
-    X(uint32_t, sample_rate, 24000, BIT_AUDIO::SAMPLE_RATE) \
-    X(uint32_t, current_hardware_rate, 24000, BIT_AUDIO::HW_RATE) \
+    X(uint32_t, sample_rate, NATIVE_SAMPLE_RATE, BIT_AUDIO::SAMPLE_RATE) \
+    X(uint32_t, current_hardware_rate, NATIVE_SAMPLE_RATE, BIT_AUDIO::HW_RATE) \
     X(float, mic_gain_db, 60.0f, BIT_AUDIO::MIC_GAIN) \
     X(int, speaker_volume, 80, BIT_AUDIO::SPEAKER_VOLUME) \
     X(bool, mic_enabled, true, BIT_AUDIO::MIC_ENABLED) \

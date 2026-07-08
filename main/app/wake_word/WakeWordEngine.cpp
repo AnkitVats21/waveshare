@@ -159,42 +159,30 @@ void WakeWordEngine::detectTaskBridge(void *arg) {
         static_cast<esp_afe_sr_data_t *>(arg));
 }
 
-// ============================================================================
-// downsample_3to2 — convert 24kHz multi-channel interleaved audio to 16kHz
-//
-// Every 3 input samples become 2 output samples per channel using linear
-// interpolation.  This keeps the frequency content below 8kHz intact which
-// is more than enough for the speech-band WakeNet / VAD models.
-// ============================================================================
 
-static void downsample_3to2(const int16_t* src, int16_t* dst,
+
+// ============================================================================
+// downsample_2to1 — convert 32kHz multi-channel interleaved audio to 16kHz
+//
+// Simple 2:1 downsampling via moving average of consecutive sample pairs.
+// ============================================================================
+static void downsample_2to1(const int16_t* src, int16_t* dst,
                             int src_samples_per_ch, int num_channels,
                             int dst_samples_per_ch) {
     for (int ch = 0; ch < num_channels; ch++) {
         for (int i = 0; i < dst_samples_per_ch; i++) {
-            // Map output index to fractional input position: i_out → i_in = i_out * 3 / 2
-            int numerator = i * 3;
-            int i_in = numerator / 2;
-            int rem   = numerator % 2;
-
-            int idx = i_in * num_channels + ch;
-            if (rem == 0 || (i_in + 1) >= src_samples_per_ch) {
-                dst[i * num_channels + ch] = src[idx];
-            } else {
-                // Linear interpolation: (sample[n] + sample[n+1]) / 2
-                int32_t s0 = src[idx];
-                int32_t s1 = src[(i_in + 1) * num_channels + ch];
-                dst[i * num_channels + ch] = (int16_t)((s0 + s1) / 2);
-            }
+            int idx0 = (2 * i) * num_channels + ch;
+            int idx1 = (2 * i + 1) * num_channels + ch;
+            dst[i * num_channels + ch] = (int16_t)(((int32_t)src[idx0] + (int32_t)src[idx1]) / 2);
         }
     }
 }
 
 // ============================================================================
-// feedTask: read 4-ch mic data @ 24kHz → downsample 3:2 → feed AFE @ 16kHz
+// feedTask: read 4-ch mic data @ 32kHz → downsample 2:1 → feed AFE @ 16kHz
 //
-// The I2S hardware runs at 24kHz permanently.  The AFE requires 16kHz input.
-// For each feed() call we read (chunksize * 3/2) samples at 24kHz and
+// The I2S hardware runs at 32kHz permanently.  The AFE requires 16kHz input.
+// For each feed() call we read (chunksize * 2) samples at 32kHz and
 // downsample to exactly chunksize samples at 16kHz before feeding.
 // ============================================================================
 
@@ -211,8 +199,8 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         return;
     }
 
-    // 24kHz capture buffer: read 3/2 × the AFE chunksize to get enough data
-    int hw_chunksize    = (afe_chunksize * 3 + 1) / 2;  // ceil(chunksize * 1.5)
+    // Capture buffer: read 2x of the AFE chunksize (32kHz -> 16kHz)
+    int hw_chunksize    = afe_chunksize * 2;
     int hw_buf_bytes    = hw_chunksize * (int)sizeof(int16_t) * feed_channel;
 
     // 16kHz downsampled buffer: exactly what the AFE expects
@@ -233,7 +221,7 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         return;
     }
 
-    ESP_LOGI(TAG, "feedTask: 24kHz→16kHz downsample active (hw_chunk=%d, afe_chunk=%d, ch=%d)",
+    ESP_LOGI(TAG, "feedTask: 32kHz→16kHz (2:1) downsample active (hw_chunk=%d, afe_chunk=%d, ch=%d)",
              hw_chunksize, afe_chunksize, feed_channel);
 
     esp_task_wdt_add(nullptr);
@@ -271,8 +259,8 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
             std::memset(hw_buff, 0, hw_buf_bytes);
         }
 
-        // Downsample 24kHz → 16kHz (3:2 ratio) across all channels
-        downsample_3to2(hw_buff, afe_buff, hw_chunksize, feed_channel, afe_chunksize);
+        // Downsample 32kHz -> 16kHz (2:1) across all channels
+        downsample_2to1(hw_buff, afe_buff, hw_chunksize, feed_channel, afe_chunksize);
 
         // Feed 16kHz data to AFE SR engine
         m_afe_handle->feed(afe_data, afe_buff);

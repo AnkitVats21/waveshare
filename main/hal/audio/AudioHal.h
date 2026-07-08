@@ -41,7 +41,7 @@ public:
    * @brief Configuration passed from Board before initialization.
    */
   struct Config {
-    uint32_t sample_rate = 24000;
+    uint32_t sample_rate = 32000;
     int record_volume = 70;
     int play_volume = 80;
     i2c_master_bus_handle_t i2c_bus = nullptr;
@@ -178,7 +178,7 @@ private:
   i2s_chan_handle_t m_rx_handle = nullptr;
   esp_codec_dev_handle_t m_play_dev = nullptr;
   esp_codec_dev_handle_t m_record_dev = nullptr;
-  uint32_t m_sample_rate = 24000;
+  uint32_t m_sample_rate = 32000;
   int m_record_volume = 70;
   int m_play_volume = 80;
   int m_play_previous_volume = 80;

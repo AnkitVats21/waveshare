@@ -173,11 +173,11 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
                 AudioPipelineManager::resumeSpeaker();
             }
         } else {
-            // Restore 24kHz native clock after WAV playback ends
-            if (m_hal.getSampleRate() != 24000) {
-                LOGI_AUDIO("WAV playback finished. Restoring 24kHz native clock...");
+            // Restore native clock after WAV playback ends
+            if (m_hal.getSampleRate() != NATIVE_SAMPLE_RATE) {
+                LOGI_AUDIO("WAV playback finished. Restoring %d Hz native clock...", (int)NATIVE_SAMPLE_RATE);
                 AudioPipelineManager::pauseSpeaker();
-                m_hal.setHardwareSampleRate(24000);
+                m_hal.setHardwareSampleRate(NATIVE_SAMPLE_RATE);
                 AudioPipelineManager::resumeSpeaker();
             }
             // ALWAYS resume wake-word processing when WAV playback stops

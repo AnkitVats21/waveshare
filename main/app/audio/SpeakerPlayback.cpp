@@ -30,7 +30,7 @@ uint32_t getActivePlaybackSampleRate(const SystemState& snap) {
   if (snap.audio.wav_playing && snap.audio.wav_sample_rate > 0) {
     return snap.audio.wav_sample_rate;
   }
-  return 24000;
+  return 32000;
 }
 
 size_t samplesForDurationMs(uint32_t sample_rate, uint32_t duration_ms) {
@@ -44,6 +44,21 @@ uint32_t durationMsForSamples(size_t samples, uint32_t sample_rate) {
   uint32_t ms = static_cast<uint32_t>(
       (static_cast<uint64_t>(samples) * 1000 + sample_rate - 1) / sample_rate);
   return ms == 0 ? 10 : ms;
+}
+
+void upsample_3to4(const int16_t* src, int16_t* dst, int src_len) {
+    int dst_len = (src_len * 4) / 3;
+    for (int j = 0; j < dst_len; j++) {
+        int i_in = (j * 3) / 4;
+        int rem = (j * 3) % 4;
+        if (rem == 0 || (i_in + 1) >= src_len) {
+            dst[j] = src[i_in];
+        } else {
+            int32_t s0 = src[i_in];
+            int32_t s1 = src[i_in + 1];
+            dst[j] = (int16_t)(((4 - rem) * s0 + rem * s1) >> 2);
+        }
+    }
 }
 
 } // namespace
@@ -130,7 +145,15 @@ void SpeakerPlaybackTask::run() {
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
     uint32_t active_sample_rate = getActivePlaybackSampleRate(snap);
-    size_t target_samples = samplesForDurationMs(active_sample_rate, TARGET_FRAME_MS);
+    bool is_gemini_upsample = false;
+    uint32_t src_sample_rate = active_sample_rate;
+
+    if (snap.audio.assistant_speaking && !snap.audio.wav_playing) {
+        is_gemini_upsample = true;
+        src_sample_rate = 24000;
+    }
+
+    size_t target_samples = samplesForDurationMs(src_sample_rate, TARGET_FRAME_MS);
     if (target_samples > MAX_AUDIO_CHUNK_SAMPLES) {
       target_samples = MAX_AUDIO_CHUNK_SAMPLES;
     }
@@ -145,20 +168,43 @@ void SpeakerPlaybackTask::run() {
       sustained_empty = 0;
 
       size_t num_samples = rx_bytes / sizeof(int16_t);
-      memcpy(dma_safe_buffer, rx_ptr, rx_bytes);
-      bm.returnItem(Buffers::SPK_RX_BUF, rx_ptr);
 
-      // Expand 16-bit mono → 32-bit stereo (left-justify in 32-bit word)
-      for (size_t i = 0; i < num_samples; i++) {
-        int32_t sample = ((int32_t)dma_safe_buffer[i]) << 16;
-        expanded_buffer[2 * i + 0] = sample; // L
-        expanded_buffer[2 * i + 1] = sample; // R
+      if (is_gemini_upsample) {
+        int16_t upsampled_pcm[MAX_AUDIO_CHUNK_SAMPLES];
+        size_t upsampled_count = (num_samples * 4) / 3;
+        if (upsampled_count > MAX_AUDIO_CHUNK_SAMPLES) {
+            upsampled_count = MAX_AUDIO_CHUNK_SAMPLES;
+        }
+        upsample_3to4((const int16_t*)rx_ptr, upsampled_pcm, num_samples);
+        bm.returnItem(Buffers::SPK_RX_BUF, rx_ptr);
+
+        // Expand 16-bit mono → 32-bit stereo
+        for (size_t i = 0; i < upsampled_count; i++) {
+          int32_t sample = ((int32_t)upsampled_pcm[i]) << 16;
+          expanded_buffer[2 * i + 0] = sample; // L
+          expanded_buffer[2 * i + 1] = sample; // R
+        }
+
+        esp_codec_dev_write(device, expanded_buffer,
+                            upsampled_count * 2 * sizeof(int32_t));
+        wake_period_ticks = ticksForAtLeastOnePeriod(
+            durationMsForSamples(upsampled_count, active_sample_rate));
+      } else {
+        memcpy(dma_safe_buffer, rx_ptr, rx_bytes);
+        bm.returnItem(Buffers::SPK_RX_BUF, rx_ptr);
+
+        // Expand 16-bit mono → 32-bit stereo (left-justify in 32-bit word)
+        for (size_t i = 0; i < num_samples; i++) {
+          int32_t sample = ((int32_t)dma_safe_buffer[i]) << 16;
+          expanded_buffer[2 * i + 0] = sample; // L
+          expanded_buffer[2 * i + 1] = sample; // R
+        }
+
+        esp_codec_dev_write(device, expanded_buffer,
+                            num_samples * 2 * sizeof(int32_t));
+        wake_period_ticks = ticksForAtLeastOnePeriod(
+            durationMsForSamples(num_samples, active_sample_rate));
       }
-
-      esp_codec_dev_write(device, expanded_buffer,
-                          num_samples * 2 * sizeof(int32_t));
-      wake_period_ticks = ticksForAtLeastOnePeriod(
-          durationMsForSamples(num_samples, active_sample_rate));
 
     } else {
       // Buffer empty — write a short silence frame to keep the DMA clock alive
