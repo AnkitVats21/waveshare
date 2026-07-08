@@ -70,7 +70,7 @@ extern "C" void app_main(void) {
         [](SystemState& s) {
             strncpy(s.system.server_ip, CONFIG_WAVESHARE_SERVER_IP, sizeof(s.system.server_ip) - 1);
             s.system.server_ip[sizeof(s.system.server_ip) - 1] = '\0';
-            s.audio.sample_rate       = 16000;
+            s.audio.sample_rate       = 24000;
             s.audio.speaker_volume    = 80;
             s.audio.mic_gain_db       = 60.0f;
             s.audio.rtp_tx_port       = CONFIG_WAVESHARE_RTP_TX_PORT;

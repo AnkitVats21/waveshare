@@ -41,7 +41,7 @@ public:
    * @brief Configuration passed from Board before initialization.
    */
   struct Config {
-    uint32_t sample_rate = 16000;
+    uint32_t sample_rate = 24000;
     int record_volume = 70;
     int play_volume = 80;
     i2c_master_bus_handle_t i2c_bus = nullptr;
@@ -152,6 +152,10 @@ public:
   esp_err_t getPlayVolume(int *volume);
   esp_err_t setRecordGain(float db_value);
 
+  // --- Record state control (for pausing/resuming RX DMA) ------------------
+  esp_err_t pauseRecord();
+  esp_err_t resumeRecord();
+
   uint32_t getSampleRate() const { return m_sample_rate; }
   int getPlayVolume() const { return m_play_volume; }
   float getRecordGain() const { return (float)m_record_volume; }
@@ -174,7 +178,7 @@ private:
   i2s_chan_handle_t m_rx_handle = nullptr;
   esp_codec_dev_handle_t m_play_dev = nullptr;
   esp_codec_dev_handle_t m_record_dev = nullptr;
-  uint32_t m_sample_rate = 16000;
+  uint32_t m_sample_rate = 24000;
   int m_record_volume = 70;
   int m_play_volume = 80;
   int m_play_previous_volume = 80;

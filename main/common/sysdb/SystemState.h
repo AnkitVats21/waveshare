@@ -81,8 +81,8 @@ namespace BIT_MQTT {
     X(int, wifi_max_retries, 5, 0)
 
 #define AUDIO_FIELDS \
-    X(uint32_t, sample_rate, 16000, BIT_AUDIO::SAMPLE_RATE) \
-    X(uint32_t, current_hardware_rate, 16000, BIT_AUDIO::HW_RATE) \
+    X(uint32_t, sample_rate, 24000, BIT_AUDIO::SAMPLE_RATE) \
+    X(uint32_t, current_hardware_rate, 24000, BIT_AUDIO::HW_RATE) \
     X(float, mic_gain_db, 60.0f, BIT_AUDIO::MIC_GAIN) \
     X(int, speaker_volume, 80, BIT_AUDIO::SPEAKER_VOLUME) \
     X(bool, mic_enabled, true, BIT_AUDIO::MIC_ENABLED) \

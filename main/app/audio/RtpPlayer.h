@@ -10,9 +10,9 @@
 /**
  * @brief Decoupled RTP Player Service.
  *
- * Fetches RTP audio packets (expected to be 16kHz mono PCM) from a UDP socket
- * and feeds them to the speaker playback buffer. Runs only when WiFi is connected
- * and the voice assistant is idle.
+ * Fetches RTP audio packets (24kHz mono PCM, matching native I2S rate) from a
+ * UDP socket and feeds them directly to the speaker playback buffer.
+ * Runs only when WiFi is connected and the voice assistant is idle.
  *
  * Watches:
  *   COMP::SYSTEM    — wifi_connected

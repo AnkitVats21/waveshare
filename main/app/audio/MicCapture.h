@@ -8,7 +8,7 @@
 
 // ---------------------------------------------------------------------------
 // Buffer declaration — this subsystem owns the microphone→network ring buffer.
-// Size: 128 KB in PSRAM (holds ~2 s of 16-bit mono at 16 kHz).
+// Size: 128 KB in PSRAM (holds ~2.7 s of 16-bit mono at 24 kHz).
 // ---------------------------------------------------------------------------
 DECLARE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
 DECLARE_BUFFER(RTP_MIC_BUF, "rtp_mic", 64 * 1024)

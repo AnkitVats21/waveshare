@@ -19,15 +19,18 @@ TickType_t ticksForAtLeastOnePeriod(uint32_t duration_ms) {
   return ticks > 0 ? ticks : 1;
 }
 
+/**
+ * @brief Get the active playback sample rate for timing calculations.
+ *
+ * With native 24kHz I2S, all audio sources (Gemini, RTP, alerts, alarms)
+ * are expected to be at 24kHz.  WAV playback may clock-switch to a
+ * different rate for non-24kHz files on the SD card.
+ */
 uint32_t getActivePlaybackSampleRate(const SystemState& snap) {
   if (snap.audio.wav_playing && snap.audio.wav_sample_rate > 0) {
     return snap.audio.wav_sample_rate;
   }
-  if (snap.assistant.session_state == AssistantState::AssistantSpeaking ||
-      snap.audio.turn_complete_pending) {
-    return 24000;
-  }
-  return 16000;
+  return 24000;
 }
 
 size_t samplesForDurationMs(uint32_t sample_rate, uint32_t duration_ms) {
@@ -60,15 +63,14 @@ void SpeakerPlaybackTask::stop() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// run() — Leaky Bucket drain loop
+// run() — Leaky Bucket drain loop (native 24kHz)
 //
 // The consumer wakes every DRAIN_PERIOD_MS milliseconds (via vTaskDelayUntil)
 // and drains whatever PCM data is available from SPK_RX_BUF.  If the buffer
 // is empty, a short silence frame is written to keep the I2S DMA clock alive.
 //
-// This decouples the consumer cadence from the bursty producer (GeminiProtocol
-// WebSocket frames) so that playback is always smooth regardless of network
-// timing.  No fill-level gating, no re-buffering stalls.
+// All audio sources (Gemini 24kHz, RTP 24kHz, alerts 24kHz) write natively
+// to the ring buffer — no sample rate conversion needed.
 // ─────────────────────────────────────────────────────────────────────────────
 void SpeakerPlaybackTask::run() {
   uint32_t sample_rate = EmbeddedSysDb::getInstance().snapshot().audio.sample_rate;

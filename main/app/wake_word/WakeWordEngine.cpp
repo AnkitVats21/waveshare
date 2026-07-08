@@ -13,6 +13,7 @@
 #include "app/audio/SpeakerPlayback.h"  // for Buffers::SPK_RX_BUF
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
+#include "hal/Board.h"
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -159,11 +160,46 @@ void WakeWordEngine::detectTaskBridge(void *arg) {
 }
 
 // ============================================================================
-// feedTask: read 4-ch mic data via IAudioFeedSource → push to AFE
+// downsample_3to2 — convert 24kHz multi-channel interleaved audio to 16kHz
+//
+// Every 3 input samples become 2 output samples per channel using linear
+// interpolation.  This keeps the frequency content below 8kHz intact which
+// is more than enough for the speech-band WakeNet / VAD models.
+// ============================================================================
+
+static void downsample_3to2(const int16_t* src, int16_t* dst,
+                            int src_samples_per_ch, int num_channels,
+                            int dst_samples_per_ch) {
+    for (int ch = 0; ch < num_channels; ch++) {
+        for (int i = 0; i < dst_samples_per_ch; i++) {
+            // Map output index to fractional input position: i_out → i_in = i_out * 3 / 2
+            int numerator = i * 3;
+            int i_in = numerator / 2;
+            int rem   = numerator % 2;
+
+            int idx = i_in * num_channels + ch;
+            if (rem == 0 || (i_in + 1) >= src_samples_per_ch) {
+                dst[i * num_channels + ch] = src[idx];
+            } else {
+                // Linear interpolation: (sample[n] + sample[n+1]) / 2
+                int32_t s0 = src[idx];
+                int32_t s1 = src[(i_in + 1) * num_channels + ch];
+                dst[i * num_channels + ch] = (int16_t)((s0 + s1) / 2);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// feedTask: read 4-ch mic data @ 24kHz → downsample 3:2 → feed AFE @ 16kHz
+//
+// The I2S hardware runs at 24kHz permanently.  The AFE requires 16kHz input.
+// For each feed() call we read (chunksize * 3/2) samples at 24kHz and
+// downsample to exactly chunksize samples at 16kHz before feeding.
 // ============================================================================
 
 void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
-    int audio_chunksize = m_afe_handle->get_feed_chunksize(afe_data);
+    int afe_chunksize   = m_afe_handle->get_feed_chunksize(afe_data); // 16kHz samples per ch
     int nch             = m_afe_handle->get_feed_channel_num(afe_data);
     int feed_channel    = m_feed_source->feedChannelCount();
 
@@ -175,15 +211,30 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         return;
     }
 
-    int      buf_bytes = audio_chunksize * (int)sizeof(int16_t) * feed_channel;
-    int16_t *i2s_buff  = static_cast<int16_t *>(
-        heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM));
-    if (!i2s_buff) {
-        ESP_LOGE(TAG, "Failed to allocate feed buffer (%d bytes)", buf_bytes);
+    // 24kHz capture buffer: read 3/2 × the AFE chunksize to get enough data
+    int hw_chunksize    = (afe_chunksize * 3 + 1) / 2;  // ceil(chunksize * 1.5)
+    int hw_buf_bytes    = hw_chunksize * (int)sizeof(int16_t) * feed_channel;
+
+    // 16kHz downsampled buffer: exactly what the AFE expects
+    int afe_buf_bytes   = afe_chunksize * (int)sizeof(int16_t) * feed_channel;
+
+    int16_t *hw_buff  = static_cast<int16_t *>(
+        heap_caps_malloc(hw_buf_bytes, MALLOC_CAP_SPIRAM));
+    int16_t *afe_buff = static_cast<int16_t *>(
+        heap_caps_malloc(afe_buf_bytes, MALLOC_CAP_SPIRAM));
+
+    if (!hw_buff || !afe_buff) {
+        ESP_LOGE(TAG, "Failed to allocate feed buffers (hw=%d, afe=%d bytes)",
+                 hw_buf_bytes, afe_buf_bytes);
+        if (hw_buff)  heap_caps_free(hw_buff);
+        if (afe_buff) heap_caps_free(afe_buff);
         xSemaphoreGive(m_feed_done);
         vTaskDelete(nullptr);
         return;
     }
+
+    ESP_LOGI(TAG, "feedTask: 24kHz→16kHz downsample active (hw_chunk=%d, afe_chunk=%d, ch=%d)",
+             hw_chunksize, afe_chunksize, feed_channel);
 
     esp_task_wdt_add(nullptr);
 
@@ -206,8 +257,8 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         // Re-check task flag after waking — stop() may have unblocked us to exit
         if (!m_task_flag) break;
 
-        // Sole hardware reader — MicCaptureTask must stay soft-disabled
-        esp_err_t err = m_feed_source->readFeedData(i2s_buff, buf_bytes);
+        // Read 24kHz 4-channel data from hardware
+        esp_err_t err = m_feed_source->readFeedData(hw_buff, hw_buf_bytes);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "readFeedData failed (err=0x%x) — backing off", err);
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -217,15 +268,19 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
 
         if (warmup_chunks > 0) {
             --warmup_chunks;
-            std::memset(i2s_buff, 0, buf_bytes);
+            std::memset(hw_buff, 0, hw_buf_bytes);
         }
-        // Sending data to AFE SR engine. The feed() call is thread-safe and
-        // returns immediately after copying data into the ring buffer.
-        m_afe_handle->feed(afe_data, i2s_buff);
+
+        // Downsample 24kHz → 16kHz (3:2 ratio) across all channels
+        downsample_3to2(hw_buff, afe_buff, hw_chunksize, feed_channel, afe_chunksize);
+
+        // Feed 16kHz data to AFE SR engine
+        m_afe_handle->feed(afe_data, afe_buff);
         esp_task_wdt_reset();
     }
 
-    heap_caps_free(i2s_buff);
+    heap_caps_free(hw_buff);
+    heap_caps_free(afe_buff);
     esp_task_wdt_delete(nullptr);
     xSemaphoreGive(m_feed_done);
     vTaskDelete(nullptr);
@@ -367,19 +422,25 @@ void WakeWordEngine::pauseProcessing() {
     if (m_audio_event_group) {
         xEventGroupClearBits(m_audio_event_group, AUDIO_RUNNING_BIT);
     }
-    // 2. Flush the AFE internal ring buffer so stale audio from before the
-    //    clock switch doesn't cause pitch/sync artifacts when we resume.
+
+    // 2. Disable I2S RX DMA to prevent buffer overflows and save CPU during pause
+    Board::getInstance().getAudio().pauseRecord();
+
+    // 3. Flush the AFE internal ring buffer so stale audio doesn't cause pitch/sync artifacts when we resume.
     if (m_afe_handle && m_afe_data) {
         m_afe_handle->reset_buffer(m_afe_data);
     }
-    ESP_LOGI(TAG, "pauseProcessing(): pipeline paused (tasks will block on next loop).");
+    ESP_LOGI(TAG, "pauseProcessing(): pipeline paused and RX DMA disabled.");
 }
 
 void WakeWordEngine::resumeProcessing() {
     ESP_LOGI(TAG, "resumeProcessing(): releasing feedTask and detectTask...");
-    // Set RUNNING bit — both tasks unblock simultaneously in the FreeRTOS scheduler
+    // 1. Re-enable I2S RX DMA to get a completely fresh stream of microphone audio
+    Board::getInstance().getAudio().resumeRecord();
+
+    // 2. Set RUNNING bit — both tasks unblock simultaneously in the FreeRTOS scheduler
     if (m_audio_event_group) {
         xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
     }
-    ESP_LOGI(TAG, "resumeProcessing(): pipeline resumed.");
+    ESP_LOGI(TAG, "resumeProcessing(): pipeline resumed and RX DMA enabled.");
 }

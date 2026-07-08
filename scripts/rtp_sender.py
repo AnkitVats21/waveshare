@@ -15,8 +15,8 @@ import os
 ESP32_IP = "192.168.1.23"
 UDP_PORT = 5005
 
-SAMPLE_RATE = 16000
-CHUNK_SAMPLES = 320          # 40ms @ 16kHz
+SAMPLE_RATE = 24000
+CHUNK_SAMPLES = 480          # 20ms @ 24kHz
 CHUNK_SIZE = CHUNK_SAMPLES * 2
 
 # ============================================================

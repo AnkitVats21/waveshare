@@ -152,7 +152,7 @@ void AlarmService::triggerAlarm(const Alarm& alarm) {
     WavInfo info = {};
     bool is_wav_valid = WavPlayer::readWavInfo(alarm.tone_file, info);
 
-    if (is_wav_valid && info.sample_rate <= 16000) {
+    if (is_wav_valid && info.sample_rate <= 24000) {
         ESP_LOGI(TAG, "Triggering WAV alarm playback: %s (Sample Rate: %lu Hz)", alarm.tone_file, (unsigned long)info.sample_rate);
         if (!WavPlayer::getInstance().playAsync(alarm.tone_file)) {
             ESP_LOGE(TAG, "Failed to start WAV playback for alarm. Falling back to algorithmic alert.");
@@ -165,7 +165,7 @@ void AlarmService::triggerAlarm(const Alarm& alarm) {
         if (!is_wav_valid) {
             ESP_LOGW(TAG, "Alarm tone WAV file invalid or missing: %s. Using fallback algorithmic alert.", alarm.tone_file);
         } else {
-            ESP_LOGW(TAG, "Alarm sample rate too high (%lu Hz, limit 16 kHz). Using fallback algorithmic alert to prevent clock collision with wake-word engine.", (unsigned long)info.sample_rate);
+            ESP_LOGW(TAG, "Alarm sample rate too high (%lu Hz, limit 24 kHz). Using fallback algorithmic alert.", (unsigned long)info.sample_rate);
         }
         m_playing_fallback_alarm = true;
         if (m_task_handle) {

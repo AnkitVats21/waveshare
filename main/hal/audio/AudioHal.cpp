@@ -149,13 +149,11 @@ esp_err_t AudioHal::setHardwareSampleRate(uint32_t sample_rate) {
   ret |= i2s_channel_reconfig_std_clock(m_rx_handle, &clk_cfg);
 
   // 5. Re-open codec streams with the new sample rate
-  if (sample_rate != 24000) {
-    esp_codec_dev_sample_info_t record_fs = {};
-    record_fs.sample_rate = sample_rate;
-    record_fs.channel = 2; // Verified ES7210 32-bit stereo dual-interleaved configuration
-    record_fs.bits_per_sample = 32;
-    esp_codec_dev_open(m_record_dev, &record_fs);
-  }
+  esp_codec_dev_sample_info_t record_fs = {};
+  record_fs.sample_rate = sample_rate;
+  record_fs.channel = 2; // Verified ES7210 32-bit stereo dual-interleaved configuration
+  record_fs.bits_per_sample = 32;
+  esp_codec_dev_open(m_record_dev, &record_fs);
 
   esp_codec_dev_sample_info_t play_fs = {};
   play_fs.sample_rate = sample_rate;
@@ -164,12 +162,10 @@ esp_err_t AudioHal::setHardwareSampleRate(uint32_t sample_rate) {
   esp_codec_dev_open(m_play_dev, &play_fs);
 
   // Re-apply record volume and play volume
-  if (sample_rate != 24000) {
-    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
-    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), (float)m_record_volume);
-    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), (float)m_record_volume);
-    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3), (float)m_record_volume);
-  }
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), (float)m_record_volume);
+  esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3), (float)m_record_volume);
   esp_codec_dev_set_out_vol(m_play_dev, m_play_volume);
   esp_codec_dev_set_out_mute(m_play_dev, false);
 
@@ -438,4 +434,29 @@ esp_err_t AudioHal::setRecordGain(float db_value) {
   m_record_volume = (int)db_value;
   ESP_LOGI(TAG, "Record gain set to %.1f dB", db_value);
   return esp_codec_dev_set_in_gain(m_record_dev, db_value);
+}
+
+esp_err_t AudioHal::pauseRecord() {
+  if (!m_initialized || !m_record_dev)
+    return ESP_FAIL;
+  ESP_LOGI(TAG, "pauseRecord(): closing record device to disable RX DMA");
+  return esp_codec_dev_close(m_record_dev);
+}
+
+esp_err_t AudioHal::resumeRecord() {
+  if (!m_initialized || !m_record_dev)
+    return ESP_FAIL;
+  ESP_LOGI(TAG, "resumeRecord(): opening record device to enable RX DMA");
+  esp_codec_dev_sample_info_t record_fs = {};
+  record_fs.sample_rate = m_sample_rate;
+  record_fs.channel = 2; // record expects 2 channels in standard I2S config
+  record_fs.bits_per_sample = 32;
+  esp_err_t ret = esp_codec_dev_open(m_record_dev, &record_fs);
+  if (ret == ESP_OK) {
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), (float)m_record_volume);
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), (float)m_record_volume);
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(2), (float)m_record_volume);
+    esp_codec_dev_set_in_channel_gain(m_record_dev, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(3), (float)m_record_volume);
+  }
+  return ret;
 }

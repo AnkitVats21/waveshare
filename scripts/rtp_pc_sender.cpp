@@ -194,7 +194,7 @@ int main(int argc, char* argv[]) {
     // Setup PulseAudio simple API configurations
     pa_sample_spec ss;
     ss.format = PA_SAMPLE_S16LE;
-    ss.rate = 16000;
+    ss.rate = 24000;
     ss.channels = 1;
 
     pa_buffer_attr attr;
@@ -202,12 +202,12 @@ int main(int argc, char* argv[]) {
     attr.tlength = (uint32_t) -1;
     attr.prebuf = (uint32_t) -1;
     attr.minreq = (uint32_t) -1;
-    attr.fragsize = 640; // 320 samples * 2 bytes = 640 bytes
+    attr.fragsize = 960; // 480 samples * 2 bytes = 960 bytes (20ms @ 24kHz)
 
     const char* dev_name = (source_device == "default") ? NULL : source_device.c_str();
 
     std::cout << BLUE << "[INFO] Target IP: " << ip << ":" << port << RESET << std::endl;
-    std::cout << BLUE << "[INFO] Format:    PCM S16LE, 16000Hz, Mono" << RESET << std::endl;
+    std::cout << BLUE << "[INFO] Format:    PCM S16LE, 24000Hz, Mono" << RESET << std::endl;
     std::cout << BLUE << "[INFO] Source:    " << (dev_name ? dev_name : "default (system recording input)") << RESET << std::endl;
 
     pa_simple* pa_stream = nullptr;
@@ -247,7 +247,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << YELLOW << "Press Ctrl+C to stop streaming." << RESET << "\n" << std::endl;
 
-    const int CHUNK_SAMPLES = 320;
+    const int CHUNK_SAMPLES = 480; // 20ms @ 24kHz
     const int CHUNK_SIZE = CHUNK_SAMPLES * 2;
     std::vector<uint8_t> buffer(sizeof(rtp_header) + CHUNK_SIZE);
     uint8_t* payload_ptr = buffer.data() + sizeof(rtp_header);

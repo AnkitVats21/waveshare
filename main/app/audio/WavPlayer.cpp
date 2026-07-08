@@ -315,7 +315,7 @@ void WavPlayer::playbackTask() {
         vTaskDelay(pdMS_TO_TICKS(20)); // Relaxed from 10ms to 20ms
     }
 
-    // 3. Clear WAV playing state, which reactively restores the 16 kHz clock and re-arms wake-word
+    // 3. Clear WAV playing state, which reactively restores the native 24kHz clock and re-arms wake-word
     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
         s.audio.wav_playing = false;
         s.audio.wav_prefetched = false;

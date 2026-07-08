@@ -85,7 +85,7 @@ void AudioAlertPlayer::playError() {
     playTone(440.0f, 9000, 60, 10);
     // gap — send silence for 40 ms
     {
-        constexpr uint32_t GAP_SAMPLES = (16000 * 40) / 1000; // 640 samples
+        constexpr uint32_t GAP_SAMPLES = (SAMPLE_RATE * 40) / 1000; // samples for 40ms gap
         int16_t silence[GAP_SAMPLES] = {};
         BufferManager::getInstance().send(
             Buffers::SPK_RX_BUF,

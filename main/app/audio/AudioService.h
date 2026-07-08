@@ -53,7 +53,7 @@ private:
 
     void applyPipelineModeSwitch(PipelineMode mode);
     void enterAssistantPlaybackModeNow();
-    void returnToWakeMode16k();
+    void returnToWakeMode();
 
     static constexpr const char* TAG = "AudioSvc";
 };

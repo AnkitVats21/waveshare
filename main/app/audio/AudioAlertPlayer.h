@@ -47,7 +47,7 @@ public:
 
 private:
     // Sample rate assumed by the speaker pipeline at wake/idle time
-    static constexpr int SAMPLE_RATE = 16000;
+    static constexpr int SAMPLE_RATE = 24000;
 
     /**
      * @brief Internal helper: generate a pure sine tone and push it into the
