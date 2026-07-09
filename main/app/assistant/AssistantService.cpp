@@ -66,7 +66,7 @@ void AssistantService::handleCooldownElapsed() {
 AssistantService::AssistantService()
     : ReactorTask({
           "assistant_svc",
-          ThreadConfig::StackSize::STACK_NORMAL,
+          ThreadConfig::StackSize::STACK_ASSISTANT,
           ThreadConfig::Priority::ASSISTANT,
           ThreadConfig::CORE_NETWORK,
           COMP::SYSTEM | COMP::AUDIO | COMP::ASSISTANT
@@ -137,7 +137,12 @@ bool AssistantService::begin() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AssistantService::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // 1. Process timer events
+    // 1. Process timer events and deferred transitions
+    if (m_pending_idle_transition) {
+        m_pending_idle_transition = false;
+        transitionTo(AssistantState::Idle, &snap);
+        return;
+    }
     if (m_connect_timeout_pending) {
         m_connect_timeout_pending = false;
         ESP_LOGW(TAG, "Connection timeout elapsed.");
@@ -393,9 +398,11 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
             break;
     }
 
-    // Handle immediate automatic transitions
+    // Defer Closing→Idle via task notification to avoid a recursive transitionTo() call.
+    // A direct recursive call pushes another large SystemState onto an already deep stack.
     if (trigger_auto_transition_to_idle) {
-        transitionTo(AssistantState::Idle);
+        m_pending_idle_transition = true;
+        xTaskNotify(m_task_handle, COMP::ASSISTANT, eSetBits);
     }
 }
 

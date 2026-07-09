@@ -194,7 +194,7 @@ int main(int argc, char* argv[]) {
     // Setup PulseAudio simple API configurations
     pa_sample_spec ss;
     ss.format = PA_SAMPLE_S16LE;
-    ss.rate = 24000;
+    ss.rate = 32000;
     ss.channels = 1;
 
     pa_buffer_attr attr;

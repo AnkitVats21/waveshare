@@ -35,9 +35,10 @@ private:
     esp_timer_handle_t m_connect_timer = nullptr;
     esp_timer_handle_t m_cooldown_timer = nullptr;
 
-    volatile bool m_connect_timeout_pending = false;
-    volatile bool m_idle_timeout_pending = false;
-    volatile bool m_cooldown_elapsed_pending = false;
+    volatile bool m_connect_timeout_pending   = false;
+    volatile bool m_idle_timeout_pending      = false;
+    volatile bool m_cooldown_elapsed_pending  = false;
+    volatile bool m_pending_idle_transition   = false; ///< Deferred Closing→Idle to avoid recursive transitionTo()
 
     static constexpr const char* TAG = "AssistantSvc";
 };

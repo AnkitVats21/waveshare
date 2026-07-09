@@ -36,13 +36,14 @@ namespace ThreadConfig {
 
     // ── Stack sizes (bytes) ────────────────────────────────────────────────
     enum StackSize : uint32_t {
-        STACK_SMALL   = 3 * 1024,
-        STACK_NORMAL  = 3 * 1024,
-        STACK_MEDIUM  = 6 * 1024,
-        STACK_LARGE   = 8 * 1024,
-        STACK_GEMINI  = 8 * 1024,  ///< GeminiProtocol — needs room for ArduinoJson tool-call serialization
-        STACK_WW_FEED = 3 * 1024,
-        STACK_WW_DET  = 8 * 1024,
+        STACK_SMALL     = 3 * 1024,
+        STACK_NORMAL    = 4 * 1024,  ///< Bumped from 3K — STACK_SMALL alias was too tight
+        STACK_MEDIUM    = 6 * 1024,
+        STACK_LARGE     = 8 * 1024,
+        STACK_ASSISTANT = 6 * 1024,  ///< AssistantService — transitionTo() frames carry a SystemState copy
+        STACK_GEMINI    = 8 * 1024,  ///< GeminiProtocol — needs room for ArduinoJson tool-call serialization
+        STACK_WW_FEED   = 3 * 1024,
+        STACK_WW_DET    = 8 * 1024,
     };
 
     // ── Core affinities ────────────────────────────────────────────────────

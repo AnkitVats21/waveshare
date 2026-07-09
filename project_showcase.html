@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus: Voice-Controlled Media Ecosystem</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent-primary: #8b5cf6;
+            --accent-secondary: #06b6d4;
+            --accent-green: #10b981;
+            --accent-rose: #f43f5e;
+            --card-bg: rgba(30, 41, 59, 0.4);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --glow-color: rgba(139, 92, 246, 0.15);
+            --font-display: 'Outfit', sans-serif;
+            --font-sans: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            line-height: 1.6;
+            overflow-x: hidden;
+            position: relative;
+        }
+
+        /* Ambient glowing background meshes */
+        body::before {
+            content: '';
+            position: absolute;
+            width: 800px;
+            height: 800px;
+            top: -200px;
+            left: -200px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.12) 0%, rgba(0,0,0,0) 70%);
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        body::after {
+            content: '';
+            position: absolute;
+            width: 800px;
+            height: 800px;
+            bottom: 200px;
+            right: -200px;
+            background: radial-gradient(circle, rgba(6, 182, 212, 0.1) 0%, rgba(0,0,0,0) 70%);
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        /* Glassmorphic Navigation Bar */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 70px;
+            background: rgba(11, 15, 25, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--card-border);
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 4rem;
+        }
+
+        nav .logo {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        nav .logo svg {
+            fill: url(#logo-grad);
+        }
+
+        nav .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        nav .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s ease;
+            font-size: 0.95rem;
+        }
+
+        nav .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        nav .nav-links a.active {
+            color: var(--accent-secondary);
+        }
+
+        nav .nav-buttons {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        nav .btn-github {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+            padding: 0.5rem 1.2rem;
+            border-radius: 9999px;
+            color: var(--text-primary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        nav .btn-github:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 10rem 4rem 6rem 4rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.2) 0%, rgba(0,0,0,0) 75%);
+            top: 20%;
+            z-index: -1;
+            filter: blur(40px);
+        }
+
+        .hero-badge {
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            color: #c084fc;
+            padding: 0.4rem 1rem;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 2rem;
+            animation: pulse-border 3s infinite;
+        }
+
+        .hero h1 {
+            font-family: var(--font-display);
+            font-size: 4.5rem;
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            letter-spacing: -0.02em;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--accent-primary) 10%, var(--accent-secondary) 90%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 800px;
+            margin-bottom: 3rem;
+            font-weight: 300;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-primary), #7c3aed);
+            color: var(--text-primary);
+            padding: 0.85rem 2.2rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3);
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 25px rgba(139, 92, 246, 0.5);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+            padding: 0.85rem 2.2rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-3px);
+        }
+
+        /* Ecosystem Projects Section */
+        .projects-section {
+            padding: 6rem 4rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-header h2 {
+            font-family: var(--font-display);
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .section-header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Modular Tabs system */
+        .tabs-nav {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .tab-btn {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            padding: 1.5rem;
+            border-radius: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .tab-btn:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .tab-btn.active {
+            background: rgba(139, 92, 246, 0.08);
+            border-color: rgba(139, 92, 246, 0.3);
+            color: var(--text-primary);
+            box-shadow: 0 4px 20px var(--glow-color);
+        }
+
+        .tab-btn .number {
+            font-size: 1.8rem;
+            font-family: var(--font-display);
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .tab-btn .title-desc h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.1rem;
+        }
+
+        .tab-btn .title-desc p {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* Tab Content Panel */
+        .tab-content {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 3rem;
+            min-height: 500px;
+            display: none;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 3rem;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            animation: fadeIn 0.5s ease;
+        }
+
+        .tab-content.active {
+            display: grid;
+        }
+
+        @media (max-width: 968px) {
+            .tab-content {
+                grid-template-columns: 1fr;
+                padding: 2rem;
+            }
+        }
+
+        .panel-left h3 {
+            font-family: var(--font-display);
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .panel-left .tagline {
+            color: var(--accent-secondary);
+            font-weight: 600;
+            font-size: 1.05rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .panel-left .desc {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            font-size: 0.98rem;
+        }
+
+        .tech-stack-container {
+            margin-bottom: 2rem;
+        }
+
+        .tech-stack-container h4 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-primary);
+            margin-bottom: 0.8rem;
+            font-weight: 600;
+        }
+
+        .tech-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .tech-pill {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--card-border);
+            padding: 0.35rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .tech-pill svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        .feature-bullets {
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        @media (max-width: 600px) {
+            .feature-bullets {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .feature-bullets li {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+        }
+
+        .feature-bullets li svg {
+            flex-shrink: 0;
+            margin-top: 0.2rem;
+            color: var(--accent-green);
+        }
+
+        .panel-right {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        /* Beautiful Code window decoration */
+        .code-window {
+            background: #080c14;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .code-header {
+            background: #0f172a;
+            padding: 0.75rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .code-dots {
+            display: flex;
+            gap: 0.4rem;
+        }
+
+        .code-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 9999px;
+        }
+
+        .code-dot.red { background-color: var(--accent-rose); }
+        .code-dot.yellow { background-color: #fbbf24; }
+        .code-dot.green { background-color: var(--accent-green); }
+
+        .code-title {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            font-family: var(--font-mono);
+        }
+
+        .code-body {
+            padding: 1.5rem;
+            overflow-x: auto;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: #cbd5e1;
+            text-align: left;
+        }
+
+        /* Syntax highlighting classes */
+        .c-comment { color: #64748b; }
+        .c-keyword { color: #f43f5e; }
+        .c-type { color: #06b6d4; }
+        .c-string { color: #10b981; }
+        .c-func { color: #8b5cf6; }
+
+        /* Interactive Architecture Flow (Dataflow) */
+        .architecture-flow-section {
+            padding: 6rem 4rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            background: linear-gradient(180deg, transparent, rgba(139, 92, 246, 0.03), transparent);
+            border-radius: 24px;
+        }
+
+        .flow-container {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 3rem;
+            overflow-x: auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1.5rem;
+            position: relative;
+        }
+
+        .flow-step {
+            flex: 1;
+            min-width: 200px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem 1rem;
+            text-align: center;
+            position: relative;
+            z-index: 2;
+            transition: all 0.3s ease;
+        }
+
+        .flow-step:hover {
+            border-color: var(--accent-secondary);
+            box-shadow: 0 4px 20px rgba(6, 182, 212, 0.15);
+            transform: translateY(-4px);
+        }
+
+        .flow-step h4 {
+            font-family: var(--font-display);
+            font-size: 1.05rem;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .flow-step p {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .flow-step .badge {
+            display: inline-block;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            margin-bottom: 0.8rem;
+        }
+
+        .flow-step.edge .badge { background: rgba(139, 92, 246, 0.15); color: #c084fc; }
+        .flow-step.net .badge { background: rgba(244, 63, 94, 0.15); color: #fda4af; }
+        .flow-step.relay .badge { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
+        .flow-step.client .badge { background: rgba(6, 182, 212, 0.15); color: #67e8f9; }
+
+        .flow-arrow {
+            display: flex;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.15);
+            position: relative;
+            height: 40px;
+        }
+
+        .flow-arrow svg {
+            width: 24px;
+            height: 24px;
+            animation: scroll-arrow 1.5s infinite linear;
+        }
+
+        /* Ecosystem Cross-Project Features Grid */
+        .features-grid-section {
+            padding: 6rem 4rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+        }
+
+        @media (max-width: 900px) {
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .feature-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 2.2rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            gap: 1.2rem;
+        }
+
+        .feature-card:hover {
+            background: rgba(255, 255, 255, 0.03);
+            border-color: rgba(139, 92, 246, 0.3);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.05);
+            transform: translateY(-5px);
+        }
+
+        .feature-card .icon-box {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--card-border);
+            color: var(--accent-secondary);
+        }
+
+        .feature-card:hover .icon-box {
+            background: rgba(139, 92, 246, 0.1);
+            border-color: rgba(139, 92, 246, 0.3);
+            color: #c084fc;
+        }
+
+        .feature-card h3 {
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .feature-card .card-projects {
+            margin-top: auto;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .card-projects span {
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+        }
+
+        /* Footer & Repository Cards */
+        footer {
+            background: #070a10;
+            border-top: 1px solid var(--card-border);
+            padding: 6rem 4rem 4rem 4rem;
+            position: relative;
+        }
+
+        .footer-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4rem;
+        }
+
+        .footer-header {
+            text-align: center;
+            max-width: 600px;
+        }
+
+        .footer-header h2 {
+            font-family: var(--font-display);
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .footer-header p {
+            color: var(--text-secondary);
+        }
+
+        .repo-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+            width: 100%;
+        }
+
+        @media (max-width: 900px) {
+            .repo-cards {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .repo-card {
+            background: rgba(11, 15, 25, 0.5);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .repo-card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+            transform: translateY(-4px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .repo-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .repo-meta .gh-badge {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+            padding: 0.25rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .repo-card h3 {
+            font-family: var(--font-display);
+            font-size: 1.2rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .repo-card p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin-bottom: 1rem;
+        }
+
+        .repo-link {
+            margin-top: auto;
+            color: var(--accent-secondary);
+            font-size: 0.85rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            transition: gap 0.2s ease;
+        }
+
+        .repo-card:hover .repo-link {
+            color: #67e8f9;
+            gap: 0.6rem;
+        }
+
+        .footer-bottom {
+            width: 100%;
+            max-width: 1200px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+
+        /* Animations */
+        @keyframes pulse-border {
+            0%, 100% { border-color: rgba(139, 92, 246, 0.3); }
+            50% { border-color: rgba(6, 182, 212, 0.5); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes scroll-arrow {
+            0% { transform: translateX(-5px); opacity: 0.3; }
+            50% { transform: translateX(5px); opacity: 1; }
+            100% { transform: translateX(-5px); opacity: 0.3; }
+        }
+
+        /* Responsive padding adjustments */
+        @media (max-width: 768px) {
+            nav { padding: 0 1.5rem; }
+            .hero { padding: 8rem 1.5rem 4rem 1.5rem; }
+            .hero h1 { font-size: 2.8rem; }
+            .projects-section, .architecture-flow-section, .features-grid-section { padding: 4rem 1.5rem; }
+            footer { padding: 4rem 1.5rem 2rem 1.5rem; }
+            .footer-bottom { flex-direction: column; gap: 1rem; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- SVG Gradients Definitions for Logos/Icons -->
+    <svg style="display: none;">
+        <defs>
+            <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#8b5cf6" />
+                <stop offset="100%" stop-color="#06b6d4" />
+            </linearGradient>
+        </defs>
+    </svg>
+
+    <!-- Header Navigation -->
+    <nav>
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.25z"/>
+            </svg>
+            NEXUS ECOSYSTEM
+        </div>
+        <ul class="nav-links">
+            <li><a href="#projects">Ecosystem Projects</a></li>
+            <li><a href="#flow">Dataflow</a></li>
+            <li><a href="#features">Key Solutions</a></li>
+        </ul>
+        <div class="nav-buttons">
+            <a href="https://github.com/AnkitVats21/waveshare" target="_blank" class="btn-github">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                GitHub
+            </a>
+        </div>
+    </nav>
+
+    <!-- Hero Header -->
+    <header class="hero">
+        <div class="hero-badge">Direct Gemini Live Integrator</div>
+        <h1>Next-Gen Voice-Controlled<br><span>Media System</span></h1>
+        <p>A high-performance C++ firmware, lightweight Go command proxy, and Svelte 5 control interface combined into a single real-time voice-assistant media player ecosystem.</p>
+        <div class="hero-buttons">
+            <a href="#projects" class="btn-primary">Explore Projects</a>
+            <a href="#flow" class="btn-secondary">View Architecture</a>
+        </div>
+    </header>
+
+    <!-- Project Tabs Explorer -->
+    <section id="projects" class="projects-section">
+        <div class="section-header">
+            <h2>Ecosystem Projects</h2>
+            <p>Nexus is split into three decoupled components that communicate seamlessly using WebSockets, JSON-RPC, and MQTT.</p>
+        </div>
+
+        <div class="tabs-nav">
+            <button class="tab-btn active" onclick="switchTab(0)">
+                <span class="number">01</span>
+                <div class="title-desc">
+                    <h3>ESP32-S3 Firmware</h3>
+                    <p>Embedded C++ / ESP-IDF</p>
+                </div>
+            </button>
+            <button class="tab-btn" onclick="switchTab(1)">
+                <span class="number">02</span>
+                <div class="title-desc">
+                    <h3>Go Relay Backend</h3>
+                    <p>Pure Go / mpv / yt-dlp</p>
+                </div>
+            </button>
+            <button class="tab-btn" onclick="switchTab(2)">
+                <span class="number">03</span>
+                <div class="title-desc">
+                    <h3>Svelte 5 UI</h3>
+                    <p>Svelte 5 / Tailwind v4</p>
+                </div>
+            </button>
+        </div>
+
+        <!-- Tab 1: ESP32-S3 Firmware -->
+        <div class="tab-content active" id="tab-0">
+            <div class="panel-left">
+                <h3>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/>
+                    </svg>
+                    ESP32-S3 Hardware Client
+                </h3>
+                <p class="tagline">Ultra-low latency, real-time edge processing</p>
+                <p class="desc">Runs on the Waveshare Audio Development Board. It processes audio input and output locally, maintains a secure WebSocket session directly to Google's Gemini Live API, coordinates hardware states, and responds to local physical buttons.</p>
+                
+                <div class="tech-stack-container">
+                    <h4>Core Technologies</h4>
+                    <div class="tech-pills">
+                        <span class="tech-pill">C++17</span>
+                        <span class="tech-pill">ESP-IDF v5.x</span>
+                        <span class="tech-pill">FreeRTOS</span>
+                        <span class="tech-pill">WakeNet / ESP-SR</span>
+                        <span class="tech-pill">I2S DMA</span>
+                        <span class="tech-pill">EmbeddedSysDb</span>
+                    </div>
+                </div>
+
+                <div class="tech-stack-container">
+                    <h4>Key Architectural Strengths</h4>
+                    <ul class="feature-bullets">
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Direct Gemini Live Connection
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            EmbeddedSysDb (State Reactor)
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            WakeNet Local Wake Word
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Linear Resampler (3:4 & 3:2)
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="panel-right">
+                <div class="code-window">
+                    <div class="code-header">
+                        <div class="code-dots">
+                            <span class="code-dot red"></span>
+                            <span class="code-dot yellow"></span>
+                            <span class="code-dot green"></span>
+                        </div>
+                        <span class="code-title">EmbeddedSysDb.cpp</span>
+                    </div>
+                    <pre class="code-body">
+<span class="c-comment">// Lock-free state modification</span>
+<span class="c-keyword">void</span> <span class="c-func">updateVolume</span>(<span class="c-keyword">int</span> new_vol) {
+    EmbeddedSysDb::getInstance().mutate([new_vol](SystemState& s) {
+        s.audio.speaker_volume = new_vol;
+    });
+    <span class="c-comment">// Tasks registered to COMP::AUDIO receive </span>
+    <span class="c-comment">// synchronous FreeRTOS task notifications</span>
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Go Backend -->
+        <div class="tab-content" id="tab-1">
+            <div class="panel-left">
+                <h3>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+                    </svg>
+                    Go MPV Relay Backend
+                </h3>
+                <p class="tagline">Robust media coordination & stream resolution</p>
+                <p class="desc">Acts as the central coordination agent. It runs on a local machine or home server, receiving MQTT messages from the ESP32 or WebSocket packages from the web dashboard. It dynamically fetches media links from YouTube via `yt-dlp`, plays them via `mpv`, tracks local play queues, and stores offline tracks in an SQLite database.</p>
+                
+                <div class="tech-stack-container">
+                    <h4>Core Technologies</h4>
+                    <div class="tech-pills">
+                        <span class="tech-pill">Go 1.25</span>
+                        <span class="tech-pill">mpv Daemon</span>
+                        <span class="tech-pill">yt-dlp</span>
+                        <span class="tech-pill">Gorilla WebSockets</span>
+                        <span class="tech-pill">SQLite (Pure Go)</span>
+                        <span class="tech-pill">HiveMQ MQTT</span>
+                    </div>
+                </div>
+
+                <div class="tech-stack-container">
+                    <h4>Key Architectural Strengths</h4>
+                    <ul class="feature-bullets">
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Panic-Safe Async Command Routing
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Real-time Stream-Record Caching
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Intelligent Audio Ducking
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            CGO-free cross-compilation
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="panel-right">
+                <div class="code-window">
+                    <div class="code-header">
+                        <div class="code-dots">
+                            <span class="code-dot red"></span>
+                            <span class="code-dot yellow"></span>
+                            <span class="code-dot green"></span>
+                        </div>
+                        <span class="code-title">queue.go</span>
+                    </div>
+                    <pre class="code-body">
+<span class="c-comment">// Intercept voice events to duck music</span>
+<span class="c-keyword">func</span> (q *Queue) <span class="c-func">HandleAssistantState</span>(state <span class="c-type">string</span>) {
+    <span class="c-keyword">switch</span> state {
+    <span class="c-keyword">case</span> <span class="c-string">"pause"</span>:
+        q.wasPlaying = q.mpv.IsPlaying()
+        q.mpv.<span class="c-func">Pause</span>()
+    <span class="c-keyword">case</span> <span class="c-string">"play"</span>:
+        <span class="c-keyword">if</span> q.wasPlaying {
+            q.mpv.<span class="c-func">Resume</span>()
+        }
+    }
+}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Svelte 5 Frontend -->
+        <div class="tab-content" id="tab-2">
+            <div class="panel-left">
+                <h3>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0-2-.9-2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/>
+                    </svg>
+                    Svelte 5 Web Dashboard
+                </h3>
+                <p class="tagline">Beautiful, reactive user dashboard</p>
+                <p class="desc">A fast, reactive web interface built with Svelte 5 and Tailwind CSS v4. It monitors the MPV server state in real time, displays playback information, hosts a debug WebSocket message console, and provides UI controls to remotely update the ESP32 configuration.</p>
+                
+                <div class="tech-stack-container">
+                    <h4>Core Technologies</h4>
+                    <div class="tech-pills">
+                        <span class="tech-pill">Svelte 5</span>
+                        <span class="tech-pill">Tailwind CSS v4</span>
+                        <span class="tech-pill">Vite</span>
+                        <span class="tech-pill">HTML5 WebSockets</span>
+                        <span class="tech-pill">Svelte Runes</span>
+                    </div>
+                </div>
+
+                <div class="tech-stack-container">
+                    <h4>Key Architectural Strengths</h4>
+                    <ul class="feature-bullets">
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Real-time State Synchronization
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Full Playback Controller
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Remote Settings Editor
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Live Console Frame Log
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="panel-right">
+                <div class="code-window">
+                    <div class="code-header">
+                        <div class="code-dots">
+                            <span class="code-dot red"></span>
+                            <span class="code-dot yellow"></span>
+                            <span class="code-dot green"></span>
+                        </div>
+                        <span class="code-title">store.svelte.js</span>
+                    </div>
+                    <pre class="code-body">
+<span class="c-comment">// Svelte 5 reactive stores using Runes</span>
+<span class="c-keyword">export</span> <span class="c-keyword">class</span> <span class="c-type">MpvStore</span> {
+    playbackState = $state({ title: <span class="c-string">""</span>, volume: <span class="c-keyword">100</span> });
+
+    <span class="c-func">update</span>(data) {
+        <span class="c-keyword">this</span>.playbackState.title = data.title;
+        <span class="c-keyword">this</span>.playbackState.volume = data.volume;
+    }
+}</pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Interactive Dataflow Grid -->
+    <section id="flow" class="architecture-flow-section">
+        <div class="section-header">
+            <h2>Ecosystem Dataflow</h2>
+            <p>See how the entire system reacts when you say a voice command, streaming audio and instructions seamlessly in milliseconds.</p>
+        </div>
+
+        <div class="flow-container">
+            <div class="flow-step edge">
+                <span class="badge">ESP32 Edge</span>
+                <h4>1. Wake & Capture</h4>
+                <p>WakeNet wakes up board. AudioService captures mic stream and pumps it to the WebSocket.</p>
+            </div>
+            
+            <div class="flow-arrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+            </div>
+
+            <div class="flow-step net">
+                <span class="badge">Google Cloud</span>
+                <h4>2. Gemini Live</h4>
+                <p>Decodes voice stream, matches tool calling schemas, and returns structured function call JSON.</p>
+            </div>
+
+            <div class="flow-arrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+            </div>
+
+            <div class="flow-step relay">
+                <span class="badge">Go Backend</span>
+                <h4>3. Stream Resolver</h4>
+                <p>Receives tool call over MQTT/CMD, queries yt-dlp, and loads resolved stream URL to mpv socket.</p>
+            </div>
+
+            <div class="flow-arrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+            </div>
+
+            <div class="flow-step client">
+                <span class="badge">Svelte WebUI</span>
+                <h4>4. State Update</h4>
+                <p>Go server publishes play state over WebSockets, updating the user dashboard instantly.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Key Ecosystem Solutions -->
+    <section id="features" class="features-grid-section">
+        <div class="section-header">
+            <h2>Key Ecosystem Solutions</h2>
+            <p>Advanced engineering implementations resolving audio streaming, synchronization, and configuration problems across the projects.</p>
+        </div>
+
+        <div class="features-grid">
+            <!-- Feature 1 -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                    </svg>
+                </div>
+                <h3>Dynamic Resampling & Leaky Playback</h3>
+                <p>The ESP32 firmware dynamically handles linear upsampling (24kHz assistant to 32kHz native DAC) and downsampling (32kHz mic to 16kHz VAD/WakeNet), using a leaky bucket algorithm to prevent buffer starvation.</p>
+                <div class="card-projects">
+                    <span>ESP32-S3 Firmware</span>
+                </div>
+            </div>
+
+            <!-- Feature 2 -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                </div>
+                <h3>Real-time Stream Caching</h3>
+                <p>The Go Backend instructs `mpv` to log played network stream packets directly to disk (using `stream-record`). This caches music transparently as you listen, ensuring no bandwidth is wasted on repeat tracks.</p>
+                <div class="card-projects">
+                    <span>Go Backend</span>
+                    <span>mpv</span>
+                </div>
+            </div>
+
+            <!-- Feature 3 -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                        <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                        <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                    </svg>
+                </div>
+                <h3>Device Configuration Bridge</h3>
+                <p>Enables absolute administrative control. Svelte clients edit and write the ESP32 SD card's settings via custom JSON WebSocket commands that the Go backend translates to targeted MQTT packets.</p>
+                <div class="card-projects">
+                    <span>ESP32 Firmware</span>
+                    <span>Go Backend</span>
+                    <span>Svelte UI</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer & Repositories -->
+    <footer>
+        <div class="footer-container">
+            <div class="footer-header">
+                <h2>Source Repositories</h2>
+                <p>Nexus is fully open-source. Explore the individual codebases and modules on GitHub.</p>
+            </div>
+
+            <div class="repo-cards">
+                <!-- Repo 1 -->
+                <a href="https://github.com/AnkitVats21/waveshare" target="_blank" class="repo-card">
+                    <div class="repo-meta">
+                        <span class="gh-badge">C++ / ESP-IDF</span>
+                    </div>
+                    <h3>waveshare</h3>
+                    <p>The core firmware for the ESP32-S3 board handling direct Gemini Live streaming, resamplers, local WakeNet, and EmbeddedSysDb.</p>
+                    <div class="repo-link">
+                        View Repository
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                    </div>
+                </a>
+
+                <!-- Repo 2 -->
+                <a href="https://github.com/AnkitVats21/mpv-relay-server" target="_blank" class="repo-card">
+                    <div class="repo-meta">
+                        <span class="gh-badge">Go / mpv</span>
+                    </div>
+                    <h3>mpv-relay-server</h3>
+                    <p>High-performance media relay server acting as the MQTT/WS command proxy, resolving streams and bridging the ESP32 to mpv.</p>
+                    <div class="repo-link">
+                        View Repository
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                    </div>
+                </a>
+
+                <!-- Repo 3 -->
+                <a href="https://github.com/AnkitVats21/mpv-relay-frontend" target="_blank" class="repo-card">
+                    <div class="repo-meta">
+                        <span class="gh-badge">Svelte 5 / Tailwind</span>
+                    </div>
+                    <h3>mpv-relay-frontend</h3>
+                    <p>The control dashboard web application featuring custom media player slots, dynamic queue views, and a WS debugger log console.</p>
+                    <div class="repo-link">
+                        View Repository
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                    </div>
+                </a>
+            </div>
+
+            <div class="footer-bottom">
+                <p>&copy; 2026 Ankit Mishra. All rights reserved.</p>
+                <p>Ecosystem Architecture Portal</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        function switchTab(index) {
+            // Remove active classes
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(panel => panel.classList.remove('active'));
+
+            // Add active classes to current index
+            document.querySelectorAll('.tab-btn')[index].classList.add('active');
+            document.getElementById('tab-' + index).classList.add('active');
+        }
+    </script>
+</body>
+</html>
