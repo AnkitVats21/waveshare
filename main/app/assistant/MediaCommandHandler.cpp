@@ -1,9 +1,10 @@
-#include "MpvCommandHandler.h"
+#include "MediaCommandHandler.h"
 #include "app/mqtt/MqttService.h"
+#include "app/media_player/NexusPlayer.h"
 #include "common/AppLogger.h"
 #include <ArduinoJson.h>
 
-bool MpvCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call, JsonDocument& response_doc) {
+bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call, JsonDocument& response_doc) {
     JsonDocument mqtt_doc;
     const char* cmd_name = nullptr;
 
@@ -19,12 +20,16 @@ bool MpvCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call,
             break;
             
         case GeminiSkills::SkillType::PAUSE:
-            cmd_name = "pause";
-            break;
+            LOGI_SYSTEM("Local Media PAUSE command received");
+            NexusPlayer::getInstance().pause();
+            response_doc["status"] = "success";
+            return true;
             
         case GeminiSkills::SkillType::RESUME:
-            cmd_name = "resume";
-            break;
+            LOGI_SYSTEM("Local Media RESUME command received");
+            NexusPlayer::getInstance().resume();
+            response_doc["status"] = "success";
+            return true;
             
         case GeminiSkills::SkillType::STOP:
             cmd_name = "stop";
@@ -36,11 +41,6 @@ bool MpvCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call,
             
         case GeminiSkills::SkillType::PREVIOUS:
             cmd_name = "previous";
-            break;
-            
-        case GeminiSkills::SkillType::SEEK:
-            cmd_name = "seek";
-            mqtt_doc["seconds"] = skill_call.args.seek->seconds;
             break;
             
         case GeminiSkills::SkillType::VOLUME:

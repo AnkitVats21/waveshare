@@ -1,10 +1,7 @@
 #include "AudioAlertPlayer.h"
 #include "services/BufferManager.h"
 #include "app/audio/SpeakerPlayback.h"   // for DECLARE_BUFFER / SPK_RX_BUF id
-#include "common/AppLogger.h"
-#include "freertos/FreeRTOS.h"
 #include <cmath>
-#include <cstring>
 
 // ---------------------------------------------------------------------------
 // Internal tone synthesiser

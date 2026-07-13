@@ -35,7 +35,8 @@ public:
     // ------------------------------------------------------------------ //
     // Called by DEFINE_BUFFER at static-init time (before app_main).     //
     // ------------------------------------------------------------------ //
-    void registerDescriptor(BufferId &out_id, const char *name, size_t bytes);
+    void registerDescriptor(BufferId &out_id, const char *name, size_t bytes,
+                            RingbufferType_t type = RINGBUF_TYPE_BYTEBUF);
 
     // ------------------------------------------------------------------ //
     // Call once, early in SystemContext::init(), before any task starts.  //
@@ -105,6 +106,7 @@ private:
         const char     *name       = nullptr;
         size_t          size_bytes = 0;
         uint32_t        drops      = 0;     ///< send() calls that were dropped
+        RingbufferType_t   type       = RINGBUF_TYPE_BYTEBUF;
         bool            registered = false; ///< descriptor added by macro
         bool            allocated  = false; ///< initAll() ran successfully
     };
@@ -157,5 +159,18 @@ private:
         _Reg_##id_name::_Reg_##id_name() {                             \
             BufferManager::getInstance().registerDescriptor(           \
                 id_name, buf_name_str, buf_size_bytes);                \
+        }                                                              \
+    }
+
+/**
+ * @brief Define a declared buffer with a specific FreeRTOS RingbufferType_t.
+ */
+#define DEFINE_BUFFER_WITH_TYPE(id_name, buf_name_str, buf_size_bytes, type) \
+    namespace Buffers {                                                \
+        BufferManager::BufferId id_name = BufferManager::INVALID;      \
+        _Reg_##id_name _reg_instance_##id_name;                        \
+        _Reg_##id_name::_Reg_##id_name() {                             \
+            BufferManager::getInstance().registerDescriptor(           \
+                id_name, buf_name_str, buf_size_bytes, type);          \
         }                                                              \
     }

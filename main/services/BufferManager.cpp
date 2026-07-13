@@ -11,7 +11,7 @@ BufferManager &BufferManager::getInstance() {
 // registerDescriptor — called from DEFINE_BUFFER constructor before app_main
 // ----------------------------------------------------------------------------
 void BufferManager::registerDescriptor(BufferId &out_id, const char *name,
-                                        size_t bytes) {
+                                        size_t bytes, RingbufferType_t type) {
     if (m_count >= MAX_BUFFERS) {
         ESP_LOGE(TAG, "MAX_BUFFERS (%d) exceeded — increase limit", MAX_BUFFERS);
         out_id = INVALID;
@@ -20,6 +20,7 @@ void BufferManager::registerDescriptor(BufferId &out_id, const char *name,
     uint8_t idx         = m_count++;
     m_entries[idx].name       = name;
     m_entries[idx].size_bytes = bytes;
+    m_entries[idx].type       = type;
     m_entries[idx].registered = true;
     out_id = idx;
     ESP_LOGD(TAG, "Registered buffer [%d] '%s' (%u bytes)", idx, name,
@@ -37,7 +38,7 @@ bool BufferManager::initAll() {
             continue;
 
         e.rbuf = static_cast<RingbufHandle_t>(
-            xRingbufferCreateWithCaps(e.size_bytes, RINGBUF_TYPE_BYTEBUF,
+            xRingbufferCreateWithCaps(e.size_bytes, e.type,
                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         if (!e.rbuf) {
             ESP_LOGE(TAG, "Failed to allocate PSRAM ring buffer '%s' (%u B)",

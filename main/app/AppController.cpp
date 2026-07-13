@@ -6,7 +6,7 @@
 #include "app/led/LedService.h"
 #include "app/assistant/AssistantService.h"
 #include "app/mqtt/MqttService.h"
-#include "app/assistant/MpvCommandHandler.h"
+#include "app/assistant/MediaCommandHandler.h"
 #include "app/assistant/DeviceCommandHandler.h"
 #include "services/time/TimeSyncHelper.h"
 
@@ -89,7 +89,7 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
 
     // Try device/local commands first; if not handled, fall back to MPV command handler
     if (!DeviceCommandHandler::handle(skill_call, response_doc)) {
-        if (MpvCommandHandler::handle(skill_call, response_doc)) {
+        if (MediaCommandHandler::handle(skill_call, response_doc)) {
             is_mpv_command = true;
         } else {
             response_doc["status"] = "error";

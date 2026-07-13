@@ -32,7 +32,14 @@ set(srcs
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
             "app/audio/AudioAlertPlayer.cpp"
-            "app/audio/WavPlayer.cpp"
+            "app/media_player/WavPlayer.cpp"
+            # "app/media_player/OpusPlayer.cpp"
+            # "app/media_player/AudioSource.cpp"
+            "app/media_player/NexusPlayer.cpp"
+            "app/media_player/AudioEngine.cpp"
+            "app/media_player/StorageManager.cpp"
+            "app/media_player/StreamManager.cpp"
+            "app/media_player/HttpClientStream.cpp"
             "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
 
@@ -44,7 +51,7 @@ set(srcs
 
             # Assistant Session Control
             "app/assistant/AssistantService.cpp"
-            "app/assistant/MpvCommandHandler.cpp"
+            "app/assistant/MediaCommandHandler.cpp"
             "app/assistant/DeviceCommandHandler.cpp"
 
 

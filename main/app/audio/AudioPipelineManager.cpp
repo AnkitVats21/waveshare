@@ -4,15 +4,10 @@
 #include "SpeakerPlayback.h"
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
-#include "lwip/sockets.h"
-#include <cstring>
 
-MicCaptureTask*      AudioPipelineManager::m_mic_task     = nullptr;
+// MicCaptureTask*      AudioPipelineManager::m_mic_task     = nullptr;
 SpeakerPlaybackTask* AudioPipelineManager::m_speaker_task = nullptr;
 int                  AudioPipelineManager::m_shared_socket = -1;
-
-#include "common/sysdb/EmbeddedSysDb.h"
-#include "common/thread_config.h"
 
 bool AudioPipelineManager::initialize(uint32_t sample_rate,
                                       AudioHal& hal,
@@ -29,11 +24,11 @@ bool AudioPipelineManager::initialize(uint32_t sample_rate,
 
     // 1. Start Hardware Tasks
 #ifdef CONFIG_WAVESHARE_WAKEWORD_ENABLE
-    m_mic_task = new MicCaptureTask(hal);
-    m_mic_task->start(hw_handles.mic_rx_handle);
-    // If WakeWordDetector is active, its feedTask takes exclusive ownership of the mic.
-    // We soft-disable MicCaptureTask to prevent concurrent I2S reads from corrupting the driver state.
-    m_mic_task->setEnabled(false);
+    // m_mic_task = new MicCaptureTask(hal);
+    // m_mic_task->start(hw_handles.mic_rx_handle);
+    // If WakeWordDetector is active, its feedTask takes exclusive ownership of
+    // the mic. We soft-disable MicCaptureTask to prevent concurrent I2S reads
+    // from corrupting the driver state. m_mic_task->setEnabled(false);
 #endif
 
     m_speaker_task = new SpeakerPlaybackTask();
@@ -46,12 +41,12 @@ void AudioPipelineManager::teardown() {
     LOGI_AUDIO("Tearing down Audio Pipeline...");
 
     // 3. Stop hardware tasks
-    if (m_mic_task) {
-        m_mic_task->stop();
-        vTaskDelay(pdMS_TO_TICKS(50));
-        delete m_mic_task;
-        m_mic_task = nullptr;
-    }
+    // if (m_mic_task) {
+    //     m_mic_task->stop();
+    //     vTaskDelay(pdMS_TO_TICKS(50));
+    //     delete m_mic_task;
+    //     m_mic_task = nullptr;
+    // }
     if (m_speaker_task) {
         m_speaker_task->stop();
         vTaskDelay(pdMS_TO_TICKS(50));
@@ -68,8 +63,8 @@ void AudioPipelineManager::teardown() {
 
 void AudioPipelineManager::setMicEnabled(bool enabled) {
 #ifndef CONFIG_WAVESHARE_WAKEWORD_ENABLE
-    if (m_mic_task) m_mic_task->setEnabled(enabled);
-    LOGI_AUDIO("Mic pipeline %s (Hardware Task)", enabled ? "ENABLED" : "SOFT-DISABLED");
+    // if (m_mic_task) m_mic_task->setEnabled(enabled);
+    // LOGI_AUDIO("Mic pipeline %s (Hardware Task)", enabled ? "ENABLED" : "SOFT-DISABLED");
 #else
     (void)enabled;
     LOGI_AUDIO("Mic pipeline control bypassed (WakeWordEngine owns mic feed)");

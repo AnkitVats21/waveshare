@@ -1,11 +1,12 @@
 #include "DeviceCommandHandler.h"
+#include "gemini_skills_generated.h"
 #include "services/storage/StorageService.h"
 #include "services/alarm/AlarmService.h"
 #include "app/mqtt/MqttService.h"
 #include "common/sysdb/EmbeddedSysDb.h"
-#include "common/AppLogger.h"
+// #include "common/AppLogger.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
+// #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char* TAG = "DeviceCmd";
@@ -210,6 +211,14 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             response_doc["message"] = "Tool not supported on this firmware version.";
             return true;
         }
+
+        // case SkillType::LIST_ALARMS: {
+        //     auto alarms = Services::AlarmService::getInstance().getAlarms();
+        //     response_doc["status"] = "success";
+        //     response_doc["message"] = "Alarms listed successfully";
+        //     response_doc["alarms"] = alarms;
+        //     return true;
+        // }
 
         default:
             // Forward to the MPV media command handler

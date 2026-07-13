@@ -6,14 +6,49 @@
 #include <dirent.h>
 #include <cstdio>
 #include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char* TAG = "StorageService";
+
+namespace {
+// Thread-safe RAII helper for FreeRTOS mutex
+class FreeRTOSLock {
+public:
+    explicit FreeRTOSLock(SemaphoreHandle_t mutex) : m_mutex(mutex) {
+        if (m_mutex) {
+            xSemaphoreTake(m_mutex, portMAX_DELAY);
+        }
+    }
+    ~FreeRTOSLock() {
+        if (m_mutex) {
+            xSemaphoreGive(m_mutex);
+        }
+    }
+private:
+    SemaphoreHandle_t m_mutex;
+};
+}
 
 namespace Services {
 
 StorageService& StorageService::getInstance() {
     static StorageService instance;
     return instance;
+}
+
+StorageService::StorageService() {
+    m_file_mutex = xSemaphoreCreateMutex();
+    if (!m_file_mutex) {
+        ESP_LOGE(TAG, "Failed to create file mutex!");
+    }
+}
+
+StorageService::~StorageService() {
+    if (m_file_mutex) {
+        vSemaphoreDelete(m_file_mutex);
+        m_file_mutex = nullptr;
+    }
 }
 
 bool StorageService::isMounted() const {
@@ -26,7 +61,7 @@ bool StorageService::writeFile(const char* path, const char* content) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(m_file_mutex);
+    FreeRTOSLock lock(m_file_mutex);
     FILE* f = fopen(path, "w");
     if (f == nullptr) {
         ESP_LOGE(TAG, "Failed to open file %s for writing", path);
@@ -51,7 +86,7 @@ bool StorageService::appendFile(const char* path, const char* content) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(m_file_mutex);
+    FreeRTOSLock lock(m_file_mutex);
     FILE* f = fopen(path, "a");
     if (f == nullptr) {
         ESP_LOGE(TAG, "Failed to open file %s for appending", path);
@@ -76,7 +111,7 @@ std::string StorageService::readFile(const char* path) {
         return "";
     }
 
-    std::lock_guard<std::mutex> lock(m_file_mutex);
+    FreeRTOSLock lock(m_file_mutex);
     FILE* f = fopen(path, "r");
     if (f == nullptr) {
         ESP_LOGW(TAG, "Failed to open file %s for reading", path);
@@ -111,7 +146,7 @@ bool StorageService::deleteFile(const char* path) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(m_file_mutex);
+    FreeRTOSLock lock(m_file_mutex);
     if (remove(path) != 0) {
         ESP_LOGE(TAG, "Failed to remove file: %s", path);
         return false;
@@ -126,7 +161,7 @@ bool StorageService::fileExists(const char* path) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(m_file_mutex);
+    FreeRTOSLock lock(m_file_mutex);
     struct stat st;
     return (stat(path, &st) == 0 && S_ISREG(st.st_mode));
 }
@@ -136,7 +171,7 @@ void StorageService::listFiles(const char* dir_path, const char* extension, File
         return;
     }
 
-    std::lock_guard<std::mutex> lock(m_file_mutex);
+    FreeRTOSLock lock(m_file_mutex);
     DIR* dir = opendir(dir_path);
     if (dir == nullptr) {
         ESP_LOGE(TAG, "Failed to open directory: %s", dir_path);
@@ -163,6 +198,32 @@ void StorageService::listFiles(const char* dir_path, const char* extension, File
     }
 
     closedir(dir);
+}
+
+FILE* StorageService::openStream(const char* path, const char* mode) {
+    if (!isMounted()) return nullptr;
+    return fopen(path, mode);
+}
+
+size_t StorageService::writeStream(FILE* stream, const void* buffer, size_t size) {
+    if (!stream || !buffer || size == 0) return 0;
+    return fwrite(buffer, 1, size, stream);
+}
+
+size_t StorageService::readStream(FILE* stream, void* buffer, size_t size) {
+    if (!stream || !buffer || size == 0) return 0;
+    return fread(buffer, 1, size, stream);
+}
+
+bool StorageService::isStreamEOF(FILE* stream) {
+    if (!stream) return true;
+    return feof(stream) != 0;
+}
+
+void StorageService::closeStream(FILE* stream) {
+    if (!stream) return;
+    fflush(stream);
+    fclose(stream);
 }
 
 } // namespace Services

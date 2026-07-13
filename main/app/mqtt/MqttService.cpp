@@ -11,6 +11,8 @@
 #include "services/config_manager/config.h"
 #include <cstdint>
 #include <sstream>
+#include <ArduinoJson.h>
+#include "app/media_player/NexusPlayer.h"
 
 // MQTT configuration from Kconfig
 static constexpr const char *MQTTS_BROKER_URI  = CONFIG_WAVESHARE_MQTT_BROKER_URI;
@@ -25,6 +27,7 @@ static constexpr const char *TOPIC_CONFIG_STAT = "device/waveshare/config/status
 static constexpr const char *TOPIC_GEMINI_GET  = "device/waveshare/gemini/get";
 static constexpr const char *TOPIC_GEMINI_SET  = "device/waveshare/gemini/set";
 static constexpr const char *TOPIC_GEMINI_STAT = "device/waveshare/gemini/status";
+static constexpr const char *TOPIC_MEDIA       = "device/waveshare/media";
 
 static auto &sysdb = EmbeddedSysDb::getInstance();
 
@@ -135,6 +138,7 @@ void MqttService::handleMqttEvent(int32_t event_id, esp_mqtt_event_handle_t even
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG_SET, 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_GEMINI_GET, 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_GEMINI_SET, 0);
+            esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_MEDIA, 0);
             
             sysdb.mutate([](SystemState& s) {
                 s.mqtt.connected = true;
@@ -243,6 +247,22 @@ void MqttService::processIncomingData(esp_mqtt_event_handle_t event) {
             int msg_id = esp_mqtt_client_subscribe(m_mqtt_handle, new_topic.c_str(), 0);
             if (msg_id >= 0) {
                 ESP_LOGI(TAG, "Dynamically subscribed to %s", new_topic.c_str());
+            }
+        }
+    } else if (topic == TOPIC_MEDIA) {
+        ESP_LOGI(TAG, "Media command received");
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, payload);
+        if (error) {
+            ESP_LOGE(TAG, "Failed to parse media command JSON: %s", error.c_str());
+        } else {
+            const char* song_id = doc["song_id"];
+            const char* song_url = doc["song_url"];
+            if (song_id && song_url) {
+                ESP_LOGI(TAG, "Forwarding media command to NexusPlayer: song_id=%s, url=%s", song_id, song_url);
+                NexusPlayer::getInstance().play(song_id, song_url);
+            } else {
+                ESP_LOGE(TAG, "Media command payload missing song_id or song_url");
             }
         }
     }

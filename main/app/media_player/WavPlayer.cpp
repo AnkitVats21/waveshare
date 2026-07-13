@@ -1,4 +1,4 @@
-#include "app/audio/WavPlayer.h"
+#include "WavPlayer.h"
 #include "services/BufferManager.h"
 #include "app/audio/SpeakerPlayback.h"
 #include "common/sysdb/EmbeddedSysDb.h"

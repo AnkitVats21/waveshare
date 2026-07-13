@@ -4,7 +4,7 @@
 
 // Forward declarations
 class AudioHal;
-class MicCaptureTask;
+// class MicCaptureTask;
 class SpeakerPlaybackTask;
 class RtpStreamer;
 class RtpReceiver;
@@ -18,41 +18,41 @@ class RtpReceiver;
  */
 class AudioPipelineManager {
 public:
-    /**
-     * @brief Initialize the audio pipeline (Tasks + RTP).
-     * BufferManager::initAll() must have been called before this.
-     */
+  /**
+   * @brief Initialize the audio pipeline (Tasks + RTP).
+   * BufferManager::initAll() must have been called before this.
+   */
     static bool initialize(uint32_t sample_rate,
                            AudioHal& hal,
-                           const HardwareAudioHandles &hw_handles);
+                         const HardwareAudioHandles &hw_handles);
 
-    /**
-     * @brief Cleanly tear down the audio pipeline and free task resources.
-     * Ring buffers are flushed but NOT deleted (BufferManager owns them).
-     */
-    static void teardown();
+  /**
+   * @brief Cleanly tear down the audio pipeline and free task resources.
+   * Ring buffers are flushed but NOT deleted (BufferManager owns them).
+   */
+  static void teardown();
 
-    /** @brief Toggle mic capture task + RTP streamer state. */
-    static void setMicEnabled(bool enabled);
+  /** @brief Toggle mic capture task + RTP streamer state. */
+  static void setMicEnabled(bool enabled);
 
-    /** @brief Gate just the RTP streamer without touching MicCapture reads. */
-    static void setRtpEnabled(bool enabled);
+  /** @brief Gate just the RTP streamer without touching MicCapture reads. */
+  static void setRtpEnabled(bool enabled);
 
-    /** @brief Signal that the current turn is interrupted by a user barge-in. */
-    static void setRtpRxInterrupted(bool interrupted);
+  /** @brief Signal that the current turn is interrupted by a user barge-in. */
+  static void setRtpRxInterrupted(bool interrupted);
 
     /** @brief Pause/resume the speaker playback task safely during clock switches. */
-    static void pauseSpeaker();
-    static void resumeSpeaker();
+  static void pauseSpeaker();
+  static void resumeSpeaker();
 
-    /**
-     * @brief Return the raw SpeakerPlaybackTask pointer so callers can poll
-     *        isHardwarePaused() before reconfiguring the I2S clock.
-     */
+  /**
+   * @brief Return the raw SpeakerPlaybackTask pointer so callers can poll
+   *        isHardwarePaused() before reconfiguring the I2S clock.
+   */
     static SpeakerPlaybackTask* getSpeakerTask() { return m_speaker_task; }
 
 private:
-    static MicCaptureTask*      m_mic_task;
+    // static MicCaptureTask*      m_mic_task;
     static SpeakerPlaybackTask* m_speaker_task;
     static int                  m_shared_socket;
 };

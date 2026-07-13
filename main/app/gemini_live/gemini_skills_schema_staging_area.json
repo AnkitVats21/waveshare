@@ -254,6 +254,30 @@
     }
   },
   {
+    "name": "list_alarm",
+    "description": "List all the set alarms on the device.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "delete_alarm",
+    "description": "Delete an alarm from the device.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "id": {
+          "type": "INTEGER",
+          "description": "ID of the alarm to delete."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
     "name": "save_to_memory",
     "description": "Appends the specified information to the device's persistent long-term memory file. Use this when the user explicitly asks you to remember something, or when you learn important personal facts, preferences, or notes about the user.",
     "parameters": {

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <string>
-#include <mutex>
 #include <vector>
+#include <cstdio>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 namespace Services {
 
@@ -24,13 +26,24 @@ public:
     typedef void (*FileFoundCallback)(const char* filename, void* ctx);
     void listFiles(const char* dir_path, const char* extension, FileFoundCallback cb, void* ctx);
 
+    // Opens a continuous binary handle (returns a raw pointer or file descriptor wrapper)
+    FILE* openStream(const char* path, const char* mode);
+    // Writes raw binary array blocks securely without string truncation
+    size_t writeStream(FILE* stream, const void* buffer, size_t size);
+    // Reads raw binary array blocks securely
+    size_t readStream(FILE* stream, void* buffer, size_t size);
+    // Checks if the active continuous stream reached the final file marker
+    bool isStreamEOF(FILE* stream);
+    // Flushes blocks to flash media and securely closes the stream
+    void closeStream(FILE* stream);
+
 private:
-    StorageService() = default;
-    ~StorageService() = default;
+    StorageService();
+    ~StorageService();
     StorageService(const StorageService&) = delete;
     StorageService& operator=(const StorageService&) = delete;
 
-    std::mutex m_file_mutex;
+    SemaphoreHandle_t m_file_mutex = nullptr;
 };
 
 } // namespace Services

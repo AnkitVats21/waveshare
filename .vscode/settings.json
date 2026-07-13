@@ -15,5 +15,6 @@
     "--query-driver=**",
     "--compile-commands-dir=/home/ankitm/ai-assistant/waveshare/build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "editor.formatOnSave": false
 }

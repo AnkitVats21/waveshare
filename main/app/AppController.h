@@ -1,7 +1,6 @@
 #pragma once
 
 #include "common/ReactorTask.h"
-#include "common/app_types.h"
 #include "gemini_skills_generated.h"
 
 class AppController : public ReactorTask {

@@ -1,21 +1,21 @@
 #include "app/AppController.h"
 #include "app/audio/AudioService.h"
-#include "app/audio/RtpPlayer.h"
+// #include "app/audio/RtpPlayer.h"
 #include "app/led/LedService.h"
 #include "app/assistant/AssistantService.h"
 #include "app/mqtt/MqttService.h"
 #include "app/input/KeyService.h"
 #include "app/gemini_live/GeminiProtocol.h"
 #include "app/gemini_live/GeminiAudioPump.h"
+#include "app/media_player/NexusPlayer.h"
 #include "common/AppLogger.h"
 #include "common/LogRouter.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "hal/Board.h"
-#include "services/alarm/AlarmService.h"
+// #include "services/alarm/AlarmService.h"
 #include "services/storage/StorageService.h"
 #include "services/storage/SysDbSyncReactor.h"
 #include "hal/input/ExpanderKeyInput.h"
-#include <sstream>
 #include "hal/network/WifiService.h"
 #include "services/BufferManager.h"
 #include "esp_netif.h"
@@ -118,24 +118,25 @@ extern "C" void app_main(void) {
     static LedService           led_svc(led_strip);
     static AssistantService     assistant_svc;
     static MqttService&         mqtt_svc = MqttService::getInstance();
-    static RtpPlayer            rtp_player;
+    // static RtpPlayer            rtp_player;
     static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
     (void)gemini_proto; // Suppress unused warning since task auto-spawns on instantiation
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
-    static Services::AlarmService& alarm_svc = Services::AlarmService::getInstance();
+    // static Services::AlarmService& alarm_svc = Services::AlarmService::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
 
     // Start services
     audio_svc.begin();
     assistant_svc.begin();
     mqtt_svc.begin();
-    rtp_player.begin();
+    // rtp_player.begin();
+    NexusPlayer::getInstance().begin();
     gemini_pump.start();
     app_ctrl.begin();
-    alarm_svc.begin();
+    // alarm_svc.begin();
     sync_reactor.begin();
-
+    // http_stream_svc.begin();
 
     // 6. Initialize Key Input service
     static ExpanderKeyInput key_input(io_exp);
@@ -147,13 +148,17 @@ extern "C" void app_main(void) {
     led_svc.start();
     assistant_svc.start();
     mqtt_svc.start();
-    rtp_player.start();
+    // rtp_player.start();
     gemini_proto.start();
     app_ctrl.start();
     key_svc.start();
-    alarm_svc.start();
+    // alarm_svc.start();
     sync_reactor.start();
+    // http_stream_svc.start();
+    // opus_player.start();
 
+    // Trigger temporary test trigger for Opus playback once startup has completed
+    // opus_player.play("/sdcard/media/test.opus");
 
     // 7. Start WiFi service event bridge
     WifiService::Config wifi_cfg = {

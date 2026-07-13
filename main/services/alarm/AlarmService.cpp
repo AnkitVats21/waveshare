@@ -3,7 +3,7 @@
 #include "services/BufferManager.h"
 #include "app/audio/SpeakerPlayback.h"
 #include "app/audio/AudioPipelineManager.h"
-#include "app/audio/WavPlayer.h"
+#include "app/media_player/WavPlayer.h"
 #include "app/audio/AudioAlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/sysdb/EmbeddedSysDb.h"

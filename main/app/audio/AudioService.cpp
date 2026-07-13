@@ -2,14 +2,12 @@
 #include "app/audio/AudioPipelineManager.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
-#include "app/audio/AudioAlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "hal/audio/AudioHal.h"
 #include "services/BufferManager.h"
-#include "esp_timer.h"
 
 static auto &sysdb = EmbeddedSysDb::getInstance();
 
@@ -65,18 +63,13 @@ bool AudioService::begin() {
     AudioPipelineManager::setMicEnabled(snap.audio.mic_enabled);
     m_last_applied_mic_enabled = snap.audio.mic_enabled;
 
-    LOGI_AUDIO("AudioService operational at %lu Hz (native 24kHz, no clock switches).",
+    LOGI_AUDIO("AudioService operational at %lu Hz (native 32kHz, no clock switches).",
                (unsigned long)snap.audio.sample_rate);
     return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ReactorTask::onStateChanged — fast path, called from task context
-//
-// With native 24kHz I2S, ALL clock-switch transitions (A, B, C) are eliminated.
-// The hardware runs at 24kHz permanently.  WakeNet receives downsampled 16kHz
-// data via WakeWordEngine::feedTask.  RTP 16kHz playback is upsampled to 24kHz
-// by SpeakerPlaybackTask.
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap) {
@@ -106,7 +99,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         }
     }
 
-    // 4. Assistant session state management (NO CLOCK SWITCHES — hardware stays at 24kHz)
+    // 4. Assistant session state management
     auto session = snap.assistant.session_state;
     bool session_changed = (changed & BIT_ASSISTANT::SESSION_STATE) || 
                            (changed & BIT_AUDIO::SESSION_ACTIVE) ||
@@ -115,7 +108,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
                            (changed == 0);
 
     if (session_changed) {
-        // Transition A: Enter assistant speaking mode (just manage WakeNet state, no clock switch)
+        // Transition A: Enter assistant speaking mode
         if (session == AssistantState::AssistantSpeaking && 
             !snap.audio.turn_complete_pending) {
             
@@ -141,7 +134,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         }
     }
 
-    // Transition C: Turn-complete cleanup (no clock switch needed — just re-arm WakeNet)
+    // Transition C: Turn-complete cleanup (re-arm WakeNet)
     if ((changed & BIT_AUDIO::TURN_COMPLETE) && !snap.audio.turn_complete_pending) {
         auto& ww = WakeWordEngine::getInstance();
         ww.setAssistantActive(false);
@@ -276,23 +269,16 @@ void AudioService::enterAssistantPlaybackModeNow() {
     ww.setAssistantActive(true);
     ww.setVadDeferred(true);
     ww.pauseHardware();
-
-    // No clock switch needed — hardware is already at 24kHz!
-    LOGI_AUDIO("Assistant speaking mode active (hardware already at 24kHz, AFE paused).");
 }
 
 void AudioService::returnToWakeMode() {
     auto& ww = WakeWordEngine::getInstance();
     ww.stopStreaming();
-
-    // No clock switch needed — hardware stays at 24kHz!
-    // WakeWordEngine::feedTask handles downsampling to 16kHz for the AFE.
-
     ww.setAssistantActive(false);
     ww.setVadDeferred(false);
     ww.resumeHardware();
     AudioPipelineManager::setRtpRxInterrupted(false);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
 
-    LOGI_AUDIO("Wake mode restored (hardware stays at 24kHz, AFE receives downsampled 16kHz).");
+    LOGI_AUDIO("Wake mode restored.");
 }

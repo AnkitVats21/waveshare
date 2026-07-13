@@ -3,7 +3,7 @@
 #include "app/gemini_live/gemini_skills_generated.h"
 #include <ArduinoJson.h>
 
-class MpvCommandHandler {
+class MediaCommandHandler {
 public:
     /**
      * @brief Translates Gemini tool calls into MQTT messages published to HiveMQ mpv/command topic.

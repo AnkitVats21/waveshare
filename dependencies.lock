@@ -6,6 +6,16 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 7.4.3
+  esphome/micro-opus:
+    component_hash: c4cec51b6e45b9b660bf8725a10c65f46485ff8b37ff664e4da3fd738301c71e
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.4.1
   espressif/cjson:
     component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
     dependencies:
@@ -17,7 +27,7 @@ dependencies:
       type: service
     version: 1.7.19~2
   espressif/dl_fft:
-    component_hash: ced3cf28cc70452b7859c06f4e5059215167254a2047e34c893d6f501ccd6ea2
+    component_hash: a955ca29581de2177ddf25759273bd83f082b3c805e735fe6ee105858643989b
     dependencies:
     - name: idf
       require: private
@@ -25,7 +35,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 0.4.0
+    version: 0.6.0
   espressif/esp-dsp:
     component_hash: 12e44db246517a627bc0fe2b255b8335410c0215c98bfba2df5a8e3edea839ef
     dependencies:
@@ -124,6 +134,7 @@ dependencies:
     version: 6.0.1
 direct_dependencies:
 - bblanchon/arduinojson
+- esphome/micro-opus
 - espressif/esp-sr
 - espressif/esp_codec_dev
 - espressif/esp_io_expander_tca95xx_16bit
@@ -131,6 +142,6 @@ direct_dependencies:
 - espressif/led_strip
 - espressif/mqtt
 - idf
-manifest_hash: 25c63ecb2eab8a9b7903f11e988b2919d138a0a361132d8310daf08d750c0d40
+manifest_hash: 4f6f6990e8a45bcee808b45b7bfbb8d4863ea8f22c880f2da79d36c92e2c4bb5
 target: esp32s3
 version: 3.0.0
