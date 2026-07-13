@@ -33,6 +33,8 @@ public:
 private:
     PlayerState _state = STATE_IDLE;
     char _activeSongId[64] = {0};
+    uint8_t* _savedPcmBuffer = nullptr;
+    size_t _savedPcmLen = 0;
     
     BufferManager::BufferId _playbackId;
     BufferManager::BufferId _storageId;

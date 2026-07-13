@@ -90,6 +90,7 @@ void StreamManager::runStreamLoop() {
         if (bytes_read > 0) {
             header->type = ChunkType::DATA;
             header->size = bytes_read;
+            ESP_LOGD(TAG, "Network chunk received: %d bytes", bytes_read);
 
             // Send chunk to STREAM_BUF (blocks with timeout to throttle socket reads)
             bool sent = false;
@@ -117,6 +118,7 @@ void StreamManager::runStreamLoop() {
         _bm.send(_storageId, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
     }
 
+    ESP_LOGI(TAG, "Network Task wrap-up: error=%d", error_occurred ? 1 : 0);
     heap_caps_free(net_buf);
     _http.close();
     _isStreaming = false;

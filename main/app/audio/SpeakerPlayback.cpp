@@ -5,7 +5,7 @@
 #include <cstdlib>
 
 // Defines + registers the SPK_RX_BUF ring buffer with BufferManager
-DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 1024 * 1024)
+DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 512 * 1024)
 
 
 

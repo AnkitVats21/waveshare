@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "app/media_player/NexusPlayer.h"
     
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
@@ -475,11 +476,11 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
 void AssistantService::publishMusicCommand(AssistantState oldState, AssistantState newState) {
     if (newState == AssistantState::StartingSession) {
         MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_pause\"}");
-        // NexusPlayer::getInstance().resume();
+        NexusPlayer::getInstance().pause();
     }
     if (oldState != AssistantState::Idle &&
         (newState == AssistantState::Idle || newState == AssistantState::Closing || newState == AssistantState::ErrorCooldown)) {
         MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_play\"}");
-        // NexusPlayer::getInstance().pause();
+        NexusPlayer::getInstance().resume();
     }
 }

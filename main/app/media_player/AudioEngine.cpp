@@ -155,16 +155,22 @@ void AudioEngine::runDecodeLoop() {
 
             // Push final 32 kHz mono PCM to SPK_RX_BUF with backpressure throttling
             size_t send_bytes = resampled_count * sizeof(int16_t);
-            _bm.send(_pcmOutId, _resample_buffer, send_bytes, pdMS_TO_TICKS(100));
+            bool sent = _bm.send(_pcmOutId, _resample_buffer, send_bytes, pdMS_TO_TICKS(100));
+            if (!sent) {
+                ESP_LOGW(TAG, "Failed to send %zu PCM bytes to output buffer", send_bytes);
+            } else {
+                ESP_LOGD(TAG,
+                         "Decoded chunk: consumed=%zu, samples=%zu, pcm_out=%zu",
+                         bytes_consumed, samples_decoded, send_bytes);
+            }
 
             // Yield CPU periodically to prevent task watchdog starvation on CPU 0
             if (++frames_since_yield >= 10) {
-                vTaskDelay(1);
+                vTaskDelay(2);
                 frames_since_yield = 0;
             }
         } else {
-            vTaskDelay(1);
-            frames_since_yield = 0;
+            vTaskDelay(2);
         }
     }
 

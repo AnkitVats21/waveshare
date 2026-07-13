@@ -10,9 +10,9 @@
 
 // ---------------------------------------------------------------------------
 // Buffer declaration — this subsystem owns the network→speaker ring buffer.
-// Size: 64 KB in PSRAM (holds ~1 s of 16-bit mono at 16 kHz).
+// Size: 512 KB in PSRAM (holds ~1 s of 16-bit mono at 16 kHz).
 // ---------------------------------------------------------------------------
-DECLARE_BUFFER(SPK_RX_BUF, "spk_rx", 1024 * 1024)
+DECLARE_BUFFER(SPK_RX_BUF, "spk_rx", 512 * 1024)
 
 #include "common/TaskBase.h"
 #include "common/thread_config.h"

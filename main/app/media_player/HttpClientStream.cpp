@@ -38,8 +38,7 @@ bool HttpClientStream::open(const std::string& url) {
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.event_handler = _httpEventThunk;
-    // Essential for a continuous chunk data player:
-    config.is_async = false; 
+    config.is_async = false;
 
     _clientHandle = esp_http_client_init(&config);
     if (!_clientHandle) {
@@ -47,13 +46,23 @@ bool HttpClientStream::open(const std::string& url) {
         return false;
     }
 
-    esp_err_t err = esp_http_client_perform(_clientHandle);
-    if (err != ESP_OK && err != ESP_ERR_HTTP_EAGAIN) {
-        ESP_LOGE(TAG, "HTTP perform failed: %s", esp_err_to_name(err));
+    // Open the connection and fetch headers only. The body is then consumed
+    // incrementally via esp_http_client_read() in the network task.
+    esp_err_t err = esp_http_client_open(_clientHandle, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
         close();
         return false;
     }
 
+    int64_t content_length = esp_http_client_fetch_headers(_clientHandle);
+    if (content_length < 0) {
+        ESP_LOGE(TAG, "HTTP fetch headers failed: %lld", (long long)content_length);
+        close();
+        return false;
+    }
+
+    ESP_LOGI(TAG, "HTTP stream opened. content_length=%lld", (long long)content_length);
     _is_connected = true;
     return true;
 }

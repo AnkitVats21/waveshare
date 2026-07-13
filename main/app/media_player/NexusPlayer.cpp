@@ -16,7 +16,9 @@ NexusPlayer& NexusPlayer::getInstance() {
 }
 
 NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
-    : _playbackId(playbackId),
+    : _savedPcmBuffer(nullptr),
+      _savedPcmLen(0),
+      _playbackId(playbackId),
       _storageId(storageId),
       _storageManager(playbackId, storageId),
       _streamManager(playbackId, storageId, _storageManager),
@@ -24,10 +26,25 @@ NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::Buff
 
 NexusPlayer::~NexusPlayer() {
     stop();
+    if (_savedPcmBuffer != nullptr) {
+        heap_caps_free(_savedPcmBuffer);
+        _savedPcmBuffer = nullptr;
+    }
 }
 
 bool NexusPlayer::begin() {
     ESP_LOGI(TAG, "NexusPlayer initialization");
+    
+    size_t spk_buf_size = BufferManager::getInstance().size(Buffers::SPK_RX_BUF);
+    if (spk_buf_size == 0) {
+        spk_buf_size = 512 * 1024;
+    }
+    _savedPcmBuffer = (uint8_t*)heap_caps_malloc(spk_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!_savedPcmBuffer) {
+        ESP_LOGE(TAG, "Failed to allocate saved PCM buffer in SPIRAM");
+    }
+    _savedPcmLen = 0;
+
     return _audioEngine.initialize(32000, 1);
 }
 
@@ -96,6 +113,34 @@ void NexusPlayer::pause() {
     if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
         ESP_LOGI(TAG, "Pausing playback");
         _audioEngine.pause();
+
+        // Give the audio engine a tiny delay to yield if it was actively running
+        vTaskDelay(pdMS_TO_TICKS(5));
+
+        // Save the current contents of SPK_RX_BUF to the SPIRAM buffer
+        _savedPcmLen = 0;
+        if (_savedPcmBuffer != nullptr) {
+            auto &bm = BufferManager::getInstance();
+            size_t rx_bytes = 0;
+            size_t max_size = bm.size(Buffers::SPK_RX_BUF);
+            if (max_size == 0) max_size = 512 * 1024;
+            
+            while (true) {
+                void* rx_ptr = bm.receive(Buffers::SPK_RX_BUF, &rx_bytes, 0, 512 * 1024);
+                if (rx_ptr == nullptr || rx_bytes == 0) {
+                    break;
+                }
+                if (_savedPcmLen + rx_bytes <= max_size) {
+                    memcpy(_savedPcmBuffer + _savedPcmLen, rx_ptr, rx_bytes);
+                    _savedPcmLen += rx_bytes;
+                } else {
+                    ESP_LOGE(TAG, "Saved PCM buffer overflow!");
+                }
+                bm.returnItem(Buffers::SPK_RX_BUF, rx_ptr);
+            }
+            ESP_LOGI(TAG, "Saved %zu bytes of PCM data from SPK_RX_BUF", _savedPcmLen);
+        }
+
         _state = STATE_PAUSED;
     }
 }
@@ -103,6 +148,19 @@ void NexusPlayer::pause() {
 void NexusPlayer::resume() {
     if (_state == STATE_PAUSED) {
         ESP_LOGI(TAG, "Resuming playback");
+
+        // Restore the saved PCM data back to SPK_RX_BUF
+        if (_savedPcmBuffer != nullptr && _savedPcmLen > 0) {
+            auto &bm = BufferManager::getInstance();
+            bool sent = bm.send(Buffers::SPK_RX_BUF, _savedPcmBuffer, _savedPcmLen, pdMS_TO_TICKS(100));
+            if (sent) {
+                ESP_LOGI(TAG, "Restored %zu bytes of PCM data to SPK_RX_BUF", _savedPcmLen);
+            } else {
+                ESP_LOGE(TAG, "Failed to restore PCM data to SPK_RX_BUF");
+            }
+            _savedPcmLen = 0;
+        }
+
         _audioEngine.resume();
         if (_streamManager.isStreaming()) {
             _state = STATE_STREAMING_AND_CACHING;
@@ -118,6 +176,7 @@ void NexusPlayer::stop() {
     }
     ESP_LOGI(TAG, "Stopping playback and active pipelines");
     stopActivePipelines();
+    _savedPcmLen = 0;
     _state = STATE_IDLE;
     _activeSongId[0] = '\0';
 }
