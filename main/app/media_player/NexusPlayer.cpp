@@ -3,6 +3,7 @@
 #include <cstring>
 #include "app/audio/SpeakerPlayback.h"
 #include "common/thread_config.h"
+#include "app/mqtt/MqttService.h"
 
 static const char* TAG = "NexusPlayer";
 
@@ -313,6 +314,41 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
                 resume_internal();
             }
             _should_resume_after_session = false;
+        }
+    }
+}
+
+void NexusPlayer::run() {
+    ESP_LOGI(TAG, "NexusPlayer background task started");
+    while (m_running) {
+        uint32_t changed_bits = 0;
+        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(100));
+        if (!m_running) break;
+
+        if (notified == pdTRUE && changed_bits > 0) {
+            m_last_changed = changed_bits;
+            SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+            onStateChanged(m_last_changed, snap);
+        }
+
+        checkPlaybackFinished();
+    }
+}
+
+void NexusPlayer::checkPlaybackFinished() {
+    PlayerLock lock(_mutex);
+    if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
+        if (!_audioEngine.isPlaying()) {
+            auto &bm = BufferManager::getInstance();
+            if (bm.getUsedBytes(Buffers::SPK_RX_BUF) == 0) {
+                ESP_LOGI(TAG, "Playback naturally finished for songId: %s. Trigger next song.", _activeSongId);
+                
+                // Clean up playback state using stop()
+                stop();
+
+                // Publish "next" command via MQTT
+                MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"next\"}");
+            }
         }
     }
 }

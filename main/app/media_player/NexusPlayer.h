@@ -36,6 +36,7 @@ public:
 
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
+    void run() override;
 
 private:
     PlayerState _state = STATE_IDLE;
@@ -65,4 +66,5 @@ private:
     void pause_internal();
     void resume_internal();
     void play_internal(const char* songId, const char* downloadUrl);
+    void checkPlaybackFinished();
 };
