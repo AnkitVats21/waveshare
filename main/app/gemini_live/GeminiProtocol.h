@@ -62,7 +62,7 @@ private:
     GeminiSkills::DecodedSkillCall m_static_skill_event_slot;
 
     // Fixed-size memory management variables in PSRAM
-    static constexpr size_t PSRAM_RB_SIZE = 256 * 1024;      // 256KB static ring buffer pool
+    static constexpr size_t PSRAM_RB_SIZE = 512 * 1024;      // 512KB static ring buffer pool
     static constexpr size_t MAX_INCOMING_FRAME_SIZE = 98304; // 96KB max single frame staging space
 
     RingbufHandle_t m_incoming_psram_rb = nullptr;

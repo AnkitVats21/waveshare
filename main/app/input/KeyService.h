@@ -19,6 +19,8 @@ protected:
 private:
     ExpanderKeyInput &m_input;
     bool m_prevState[5] = {false};
+    uint32_t m_pressCount[5] = {0};
+    bool m_longPressedTriggered[5] = {false};
 
     static constexpr const char *TAG = "KeySvc";
 };
