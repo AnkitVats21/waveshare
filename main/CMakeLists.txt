@@ -31,7 +31,6 @@ set(srcs
             "app/audio/RtpPlayer.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
-            "app/audio/AudioAlertPlayer.cpp"
             "app/media_player/WavPlayer.cpp"
             # "app/media_player/OpusPlayer.cpp"
             # "app/media_player/AudioSource.cpp"

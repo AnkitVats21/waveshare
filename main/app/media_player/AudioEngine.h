@@ -3,6 +3,15 @@
 #include "services/BufferManager.h"
 #include "micro_opus/ogg_opus_decoder.h"
 #include "AudioSource.h" // For ChunkType, AudioChunkHeader
+#include "freertos/event_groups.h"
+
+enum AlertType {
+    ALERT_WAKE_CONFIRM,
+    ALERT_READY_TO_SPEAK,
+    ALERT_SESSION_END,
+    ALERT_ERROR,
+    ALERT_OFFLINE
+};
 
 class AudioEngine {
 public:
@@ -19,6 +28,11 @@ public:
     void pause();
     void resume();
     bool isPlaying() const { return _isPlaying; }
+
+    // Alert playback APIs
+    void playAlert(AlertType type);
+    bool playAlertFile(const char* path);
+    void playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms);
 
 private:
     BufferManager& _bm;
@@ -43,4 +57,11 @@ private:
 
     static void decoderTaskThunk(void* pvParameters);
     void runDecodeLoop();
+
+    // Unified chunk decoder helper
+    void decodeAndPlayChunk(const uint8_t* payload_data, size_t payload_len, size_t& bytes_consumed);
+
+    // FreeRTOS EventGroup for zero-CPU task suspension
+    EventGroupHandle_t _eventGroup = nullptr;
+    static constexpr EventBits_t ENGINE_RUNNING_BIT = 1 << 0;
 };

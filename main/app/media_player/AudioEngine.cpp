@@ -2,6 +2,8 @@
 #include "BufferManager.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include <cstdio>
+#include <cmath>
 
 static const char* TAG = "AudioEngine";
 
@@ -22,12 +24,24 @@ AudioEngine::~AudioEngine() {
         heap_caps_free(_resample_buffer);
         _resample_buffer = nullptr;
     }
+    if (_eventGroup) {
+        vEventGroupDelete(_eventGroup);
+        _eventGroup = nullptr;
+    }
 }
 
 bool AudioEngine::initialize(int sampleRate, int channels) {
     _sampleRate = sampleRate;
     _channels = channels;
     _decoder.reset();
+
+    // Create FreeRTOS EventGroup for zero-CPU task suspension
+    if (!_eventGroup) {
+        _eventGroup = xEventGroupCreate();
+    }
+    if (_eventGroup) {
+        xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
+    }
 
     // Pre-allocate PCM and Resample buffers in PSRAM
     if (!_pcm_buffer) {
@@ -37,7 +51,78 @@ bool AudioEngine::initialize(int sampleRate, int channels) {
         _resample_buffer = (int16_t*)heap_caps_malloc(_resample_buffer_samples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
     
-    return (_pcm_buffer && _resample_buffer);
+    return (_pcm_buffer && _resample_buffer && _eventGroup);
+}
+
+void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload_len, size_t& bytes_consumed) {
+    size_t samples_decoded = 0;
+
+    // Decode Ogg/Opus packet to PCM
+    micro_opus::OggOpusResult result = _decoder.decode(
+        payload_data, payload_len,
+        reinterpret_cast<uint8_t*>(_pcm_buffer), _pcm_buffer_size,
+        bytes_consumed, samples_decoded
+    );
+
+    if (result == micro_opus::OGG_OPUS_OUTPUT_BUFFER_TOO_SMALL) {
+        ESP_LOGE(TAG, "PCM buffer too small (%zu bytes), required %zu.",
+                 _pcm_buffer_size, _decoder.get_required_output_buffer_size());
+        return;
+    } else if (result != micro_opus::OGG_OPUS_OK) {
+        ESP_LOGE(TAG, "Opus decode error: %d", result);
+        return;
+    }
+
+    // Process and output PCM samples
+    if (samples_decoded > 0) {
+        uint8_t channels = _decoder.get_channels();
+        int16_t* pcm_mono = _pcm_buffer;
+        size_t mono_samples = samples_decoded;
+
+        // Stereo to Mono downmix in-place
+        if (channels == 2) {
+            for (size_t i = 0; i < samples_decoded; ++i) {
+                int32_t mix = (static_cast<int32_t>(_pcm_buffer[2 * i]) +
+                               static_cast<int32_t>(_pcm_buffer[2 * i + 1])) / 2;
+                _pcm_buffer[i] = static_cast<int16_t>(mix);
+            }
+        }
+
+        // Resample mono to 32 kHz mono
+        uint32_t src_rate = _decoder.get_sample_rate();
+        uint32_t dst_rate = 32000;
+
+        size_t resampled_count = static_cast<size_t>(mono_samples * dst_rate / src_rate);
+        if (resampled_count > _resample_buffer_samples) {
+            ESP_LOGE(TAG, "Resample buffer too small (%zu samples), required %zu.",
+                     _resample_buffer_samples, resampled_count);
+            return;
+        }
+
+        float ratio = static_cast<float>(src_rate) / dst_rate;
+        for (size_t j = 0; j < resampled_count; ++j) {
+            float src_pos = j * ratio;
+            size_t idx = static_cast<size_t>(src_pos);
+            float frac = src_pos - idx;
+            if (idx + 1 < mono_samples) {
+                float s0 = pcm_mono[idx];
+                float s1 = pcm_mono[idx + 1];
+                _resample_buffer[j] = static_cast<int16_t>(s0 + frac * (s1 - s0));
+            } else {
+                _resample_buffer[j] = pcm_mono[idx];
+            }
+        }
+
+        // Push final 32 kHz mono PCM to SPK_RX_BUF with backpressure throttling
+        size_t send_bytes = resampled_count * sizeof(int16_t);
+        bool sent = _bm.send(_pcmOutId, _resample_buffer, send_bytes, pdMS_TO_TICKS(100));
+        if (!sent) {
+            ESP_LOGW(TAG, "Failed to send %zu PCM bytes to output buffer", send_bytes);
+        } else {
+            ESP_LOGD(TAG, "Decoded chunk: consumed=%zu, samples=%zu, pcm_out=%zu",
+                     bytes_consumed, samples_decoded, send_bytes);
+        }
+    }
 }
 
 void AudioEngine::runDecodeLoop() {
@@ -50,9 +135,12 @@ void AudioEngine::runDecodeLoop() {
     uint32_t frames_since_yield = 0;
 
     while (_isPlaying) {
-        if (_isPaused) {
-            vTaskDelay(pdMS_TO_TICKS(10));
+        // Zero-CPU overhead task gating using FreeRTOS EventGroup
+        if (_isPaused && _isPlaying) {
             frames_since_yield = 0;
+            if (_eventGroup) {
+                xEventGroupWaitBits(_eventGroup, ENGINE_RUNNING_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+            }
             continue;
         }
 
@@ -85,23 +173,7 @@ void AudioEngine::runDecodeLoop() {
         size_t payload_len = current_chunk->size;
 
         size_t bytes_consumed = 0;
-        size_t samples_decoded = 0;
-
-        // Decode Ogg/Opus to PCM
-        micro_opus::OggOpusResult result = _decoder.decode(
-            payload_data + current_offset, payload_len - current_offset,
-            reinterpret_cast<uint8_t*>(_pcm_buffer), _pcm_buffer_size,
-            bytes_consumed, samples_decoded
-        );
-
-        if (result == micro_opus::OGG_OPUS_OUTPUT_BUFFER_TOO_SMALL) {
-            ESP_LOGE(TAG, "PCM buffer too small (%zu bytes), required %zu. Playback aborted.",
-                     _pcm_buffer_size, _decoder.get_required_output_buffer_size());
-            break;
-        } else if (result != micro_opus::OGG_OPUS_OK) {
-            ESP_LOGE(TAG, "Opus decode error: %d", result);
-            break;
-        }
+        decodeAndPlayChunk(payload_data + current_offset, payload_len - current_offset, bytes_consumed);
 
         if (bytes_consumed > 0) {
             current_offset += bytes_consumed;
@@ -113,64 +185,10 @@ void AudioEngine::runDecodeLoop() {
             current_chunk = nullptr;
         }
 
-        // Process and output PCM samples
-        if (samples_decoded > 0) {
-            uint8_t channels = _decoder.get_channels();
-            int16_t* pcm_mono = _pcm_buffer;
-            size_t mono_samples = samples_decoded;
-
-            // Stereo to Mono downmix in-place
-            if (channels == 2) {
-                for (size_t i = 0; i < samples_decoded; ++i) {
-                    int32_t mix = (static_cast<int32_t>(_pcm_buffer[2 * i]) +
-                                   static_cast<int32_t>(_pcm_buffer[2 * i + 1])) / 2;
-                    _pcm_buffer[i] = static_cast<int16_t>(mix);
-                }
-            }
-
-            // Resample 48 kHz mono to 32 kHz mono (3:2 downsampling)
-            uint32_t src_rate = _decoder.get_sample_rate();
-            uint32_t dst_rate = 32000;
-
-            size_t resampled_count = static_cast<size_t>(mono_samples * dst_rate / src_rate);
-            if (resampled_count > _resample_buffer_samples) {
-                ESP_LOGE(TAG, "Resample buffer too small (%zu samples), required %zu. Playback aborted.",
-                         _resample_buffer_samples, resampled_count);
-                break;
-            }
-
-            float ratio = static_cast<float>(src_rate) / dst_rate;
-            for (size_t j = 0; j < resampled_count; ++j) {
-                float src_pos = j * ratio;
-                size_t idx = static_cast<size_t>(src_pos);
-                float frac = src_pos - idx;
-                if (idx + 1 < mono_samples) {
-                    float s0 = pcm_mono[idx];
-                    float s1 = pcm_mono[idx + 1];
-                    _resample_buffer[j] = static_cast<int16_t>(s0 + frac * (s1 - s0));
-                } else {
-                    _resample_buffer[j] = pcm_mono[idx];
-                }
-            }
-
-            // Push final 32 kHz mono PCM to SPK_RX_BUF with backpressure throttling
-            size_t send_bytes = resampled_count * sizeof(int16_t);
-            bool sent = _bm.send(_pcmOutId, _resample_buffer, send_bytes, pdMS_TO_TICKS(100));
-            if (!sent) {
-                ESP_LOGW(TAG, "Failed to send %zu PCM bytes to output buffer", send_bytes);
-            } else {
-                ESP_LOGD(TAG,
-                         "Decoded chunk: consumed=%zu, samples=%zu, pcm_out=%zu",
-                         bytes_consumed, samples_decoded, send_bytes);
-            }
-
-            // Yield CPU periodically to prevent task watchdog starvation on CPU 0
-            if (++frames_since_yield >= 10) {
-                vTaskDelay(2);
-                frames_since_yield = 0;
-            }
-        } else {
+        // Yield CPU periodically to prevent task watchdog starvation on CPU 0
+        if (++frames_since_yield >= 10) {
             vTaskDelay(2);
+            frames_since_yield = 0;
         }
     }
 
@@ -190,15 +208,170 @@ void AudioEngine::start() {
     }
     _isPlaying = true;
     _isPaused = false;
+    if (_eventGroup) {
+        xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
+    }
     xTaskCreatePinnedToCore(decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0);
 }
 
-void AudioEngine::pause() { _isPaused = true; }
-void AudioEngine::resume() { _isPaused = false; }
-void AudioEngine::stop() { _isPlaying = false; }
+void AudioEngine::pause() { 
+    _isPaused = true; 
+    if (_eventGroup) {
+        xEventGroupClearBits(_eventGroup, ENGINE_RUNNING_BIT);
+    }
+}
+
+void AudioEngine::resume() { 
+    _isPaused = false; 
+    if (_eventGroup) {
+        xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
+    }
+}
+
+void AudioEngine::stop() { 
+    _isPlaying = false; 
+    if (_eventGroup) {
+        // Clear pause status and unblock task if it was waiting so it can exit cleanly
+        xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
+    }
+}
 
 void AudioEngine::decoderTaskThunk(void* pvParameters) {
     static_cast<AudioEngine*>(pvParameters)->runDecodeLoop();
     static_cast<AudioEngine*>(pvParameters)->_decoderTaskHandle = nullptr;
     vTaskDelete(NULL);
+}
+
+bool AudioEngine::playAlertFile(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+
+    ESP_LOGI(TAG, "Playing custom alert Ogg file via AudioEngine: %s", path);
+
+    _decoder.reset();
+
+    // Heap-allocate the read buffer to save stack space during VFS filesystem calls
+    constexpr size_t READ_BUF_SIZE = 1024;
+    uint8_t* read_buf = (uint8_t*)malloc(READ_BUF_SIZE);
+    if (!read_buf) {
+        ESP_LOGE(TAG, "Failed to allocate read buffer for alert");
+        fclose(f);
+        return false;
+    }
+
+    size_t payload_len = 0;
+    size_t current_offset = 0;
+
+    while (true) {
+        if (payload_len == 0 || current_offset >= payload_len) {
+            payload_len = fread(read_buf, 1, READ_BUF_SIZE, f);
+            current_offset = 0;
+            if (payload_len == 0) {
+                break; // EOF
+            }
+        }
+
+        size_t bytes_consumed = 0;
+        decodeAndPlayChunk(read_buf + current_offset, payload_len - current_offset, bytes_consumed);
+
+        if (bytes_consumed > 0) {
+            current_offset += bytes_consumed;
+        } else {
+            payload_len = 0; // Force reload if no progress is made
+        }
+    }
+
+    free(read_buf);
+    fclose(f);
+    _decoder.reset(); // Reset again so music decoder starts clean
+    return true;
+}
+
+void AudioEngine::playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms) {
+    constexpr uint32_t SAMPLE_RATE = 32000;
+    const uint32_t total_samples = (SAMPLE_RATE * duration_ms) / 1000;
+    const uint32_t fade_samples  = (SAMPLE_RATE * fade_ms) / 1000;
+    
+    constexpr uint32_t BLOCK = 128;
+    int16_t buf[BLOCK];
+    
+    uint32_t sent = 0;
+    while (sent < total_samples) {
+        const uint32_t n = (total_samples - sent < BLOCK) ? (total_samples - sent) : BLOCK;
+        
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t s = sent + i;
+            float env = 1.0f;
+            
+            if (s < fade_samples && fade_samples > 0) {
+                env = (float)s / (float)fade_samples;
+            }
+            else if (s >= (total_samples - fade_samples) && fade_samples > 0) {
+                env = (float)(total_samples - s) / (float)fade_samples;
+            }
+            
+            const float angle = 2.0f * 3.14159265f * freq_hz * (float)s / (float)SAMPLE_RATE;
+            buf[i] = (int16_t)(env * (float)volume * sinf(angle));
+        }
+        
+        _bm.send(_pcmOutId, reinterpret_cast<uint8_t*>(buf), n * sizeof(int16_t), pdMS_TO_TICKS(10));
+        sent += n;
+    }
+}
+
+void AudioEngine::playAlert(AlertType type) {
+    const char* path = nullptr;
+    switch (type) {
+        case ALERT_WAKE_CONFIRM:    path = "/sdcard/media/alert/wake_confirm.ogg"; break;
+        case ALERT_READY_TO_SPEAK:  path = "/sdcard/media/alert/ready_to_speak.ogg"; break;
+        case ALERT_SESSION_END:     path = "/sdcard/media/alert/session_end.ogg"; break;
+        case ALERT_ERROR:           path = "/sdcard/media/alert/error.ogg"; break;
+        case ALERT_OFFLINE:         path = "/sdcard/media/alert/offline.ogg"; break;
+        default: break;
+    }
+    
+    bool custom_played = false;
+    if (path) {
+        FILE* f = fopen(path, "rb");
+        if (f) {
+            fclose(f);
+            custom_played = playAlertFile(path);
+        } else {
+            f = fopen("/sdcard/media/alert/alert.ogg", "rb");
+            if (f) {
+                fclose(f);
+                custom_played = playAlertFile("/sdcard/media/alert/alert.ogg");
+            }
+        }
+    }
+    
+    if (!custom_played) {
+        switch (type) {
+            case ALERT_WAKE_CONFIRM:
+                playTone(784.0f, 8000, 80, 15);   // G5
+                playTone(987.8f, 8000, 80, 15);   // B5
+                break;
+            case ALERT_READY_TO_SPEAK:
+                playTone(523.3f, 10000, 90, 15);  // C5
+                playTone(659.3f, 10000, 90, 15);  // E5
+                playTone(784.0f, 10000, 130, 20); // G5
+                break;
+            case ALERT_SESSION_END:
+                playTone(659.3f, 7000, 100, 20);  // E5
+                playTone(523.3f, 7000, 120, 20);  // C5
+                break;
+            case ALERT_ERROR:
+                playTone(440.0f, 9000, 60, 10);
+                {
+                    constexpr uint32_t GAP_SAMPLES = (32000 * 40) / 1000;
+                    int16_t silence[GAP_SAMPLES] = {};
+                    _bm.send(_pcmOutId, reinterpret_cast<uint8_t*>(silence), GAP_SAMPLES * sizeof(int16_t), pdMS_TO_TICKS(10));
+                }
+                playTone(440.0f, 9000, 60, 10);
+                break;
+            case ALERT_OFFLINE:
+                playTone(146.8f, 8000, 120, 25);  // D3
+                break;
+        }
+    }
 }

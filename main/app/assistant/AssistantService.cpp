@@ -1,5 +1,5 @@
 #include "AssistantService.h"
-#include "app/audio/AudioAlertPlayer.h"
+#include "app/media_player/NexusPlayer.h"
 #include "app/gemini_live/GeminiProtocol.h"
 #include "app/mqtt/MqttService.h"
 #include "common/AppLogger.h"
@@ -9,21 +9,18 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "app/media_player/NexusPlayer.h"
-    
+
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
 // Helper: play an audio alert on a tiny fire-and-forget FreeRTOS task.
 static void playAlertTask(void* arg) {
-    auto fn = reinterpret_cast<void(*)()>(arg);
-    if (fn) {
-        fn();
-    }
+    AlertType type = static_cast<AlertType>(reinterpret_cast<uintptr_t>(arg));
+    NexusPlayer::getInstance().playAlert(type);
     vTaskDelete(nullptr);
 }
 
-static void playAlertAsync(void (*fn)()) {
-    xTaskCreatePinnedToCore(playAlertTask, "alert_async", 3072, (void*)fn, ThreadConfig::Priority::AUDIO_ALERT, nullptr, 1);
+static void playAlertAsync(AlertType type) {
+    xTaskCreatePinnedToCore(playAlertTask, "alert_async", ThreadConfig::StackSize::STACK_LARGE, reinterpret_cast<void*>(static_cast<uintptr_t>(type)), ThreadConfig::Priority::AUDIO_ALERT, nullptr, 1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,7 +188,7 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
         case AssistantState::StartingSession:
             if (!wifi_ok) {
                 LOGW_SYSTEM("StartingSession: Wi-Fi reported down.");
-                playAlertAsync(AudioAlertPlayer::playOffline);
+                playAlertAsync(ALERT_OFFLINE);
                 transitionTo(AssistantState::ErrorCooldown, &snap);
             } else {
                 transitionTo(AssistantState::Connecting, &snap);
@@ -384,16 +381,16 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
     // 3. Play audio alerts asynchronously
     switch (newState) {
         case AssistantState::StartingSession:
-            playAlertAsync(AudioAlertPlayer::playWakeConfirm);
+            playAlertAsync(ALERT_WAKE_CONFIRM);
             break;
         case AssistantState::StreamingUserAudio:
-            playAlertAsync(AudioAlertPlayer::playReadyToSpeak);
+            playAlertAsync(ALERT_READY_TO_SPEAK);
             break;
         case AssistantState::Closing:
-            playAlertAsync(AudioAlertPlayer::playSessionEnd);
+            playAlertAsync(ALERT_SESSION_END);
             break;
         case AssistantState::ErrorCooldown:
-            playAlertAsync(AudioAlertPlayer::playError);
+            playAlertAsync(ALERT_ERROR);
             break;
         default:
             break;
@@ -476,11 +473,9 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
 void AssistantService::publishMusicCommand(AssistantState oldState, AssistantState newState) {
     if (newState == AssistantState::StartingSession) {
         MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_pause\"}");
-        NexusPlayer::getInstance().pause();
     }
     if (oldState != AssistantState::Idle &&
         (newState == AssistantState::Idle || newState == AssistantState::Closing || newState == AssistantState::ErrorCooldown)) {
         MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_play\"}");
-        NexusPlayer::getInstance().resume();
     }
 }

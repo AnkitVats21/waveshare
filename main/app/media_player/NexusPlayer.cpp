@@ -2,13 +2,30 @@
 #include "esp_log.h"
 #include <cstring>
 #include "app/audio/SpeakerPlayback.h"
+#include "common/thread_config.h"
 
 static const char* TAG = "NexusPlayer";
 
 // Define the playback and storage buffers using the BufferManager macro
-// We use RINGBUF_TYPE_NOSPLIT as specified in the design document
 DEFINE_BUFFER_WITH_TYPE(PLAYER_BUF, "player_buf", 512 * 1024, RINGBUF_TYPE_NOSPLIT)
 DEFINE_BUFFER_WITH_TYPE(STREAM_BUF, "stream_buf", 256 * 1024, RINGBUF_TYPE_NOSPLIT)
+
+// RAII helper to handle recursive mutex locking
+class PlayerLock {
+public:
+    explicit PlayerLock(SemaphoreHandle_t mutex) : _mutex(mutex) {
+        if (_mutex) {
+            xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
+        }
+    }
+    ~PlayerLock() {
+        if (_mutex) {
+            xSemaphoreGiveRecursive(_mutex);
+        }
+    }
+private:
+    SemaphoreHandle_t _mutex;
+};
 
 NexusPlayer& NexusPlayer::getInstance() {
     static NexusPlayer instance(Buffers::PLAYER_BUF, Buffers::STREAM_BUF);
@@ -16,7 +33,14 @@ NexusPlayer& NexusPlayer::getInstance() {
 }
 
 NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
-    : _savedPcmBuffer(nullptr),
+    : ReactorTask({
+          "nexus_player",
+          ThreadConfig::StackSize::STACK_NORMAL,
+          ThreadConfig::Priority::GEMINI_PROTOCOL, // Raised to 7 to preempt AssistantService (6) on Core 0
+          ThreadConfig::CORE_NETWORK,
+          COMP::ASSISTANT
+      }),
+      _savedPcmBuffer(nullptr),
       _savedPcmLen(0),
       _playbackId(playbackId),
       _storageId(storageId),
@@ -30,11 +54,21 @@ NexusPlayer::~NexusPlayer() {
         heap_caps_free(_savedPcmBuffer);
         _savedPcmBuffer = nullptr;
     }
+    if (_mutex != nullptr) {
+        vSemaphoreDelete(_mutex);
+        _mutex = nullptr;
+    }
 }
 
 bool NexusPlayer::begin() {
     ESP_LOGI(TAG, "NexusPlayer initialization");
     
+    _mutex = xSemaphoreCreateRecursiveMutex();
+    if (!_mutex) {
+        ESP_LOGE(TAG, "Failed to create recursive mutex");
+        return false;
+    }
+
     size_t spk_buf_size = BufferManager::getInstance().size(Buffers::SPK_RX_BUF);
     if (spk_buf_size == 0) {
         spk_buf_size = 512 * 1024;
@@ -49,12 +83,33 @@ bool NexusPlayer::begin() {
 }
 
 void NexusPlayer::play(const char* songId, const char* downloadUrl) {
+    PlayerLock lock(_mutex);
+
     if (!songId || !downloadUrl) {
         ESP_LOGE(TAG, "Invalid play arguments");
         return;
     }
 
+    if (_session_active) {
+        ESP_LOGI(TAG, "Play requested during active session. Deferring songId: %s until session ends.", songId);
+        strncpy(_pendingSongId, songId, sizeof(_pendingSongId) - 1);
+        _pendingSongId[sizeof(_pendingSongId) - 1] = '\0';
+        strncpy(_pendingDownloadUrl, downloadUrl, sizeof(_pendingDownloadUrl) - 1);
+        _pendingDownloadUrl[sizeof(_pendingDownloadUrl) - 1] = '\0';
+        _should_play_after_session = true;
+        _should_resume_after_session = false; // Overridden by new play request
+        return;
+    }
+
+    play_internal(songId, downloadUrl);
+}
+
+void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
     ESP_LOGI(TAG, "Play requested for songId: %s, url: %s", songId, downloadUrl);
+
+    // Starting a new song cancels any deferred session resumption/play
+    _should_resume_after_session = false;
+    _should_play_after_session = false;
 
     // If currently playing, stop it first
     if (_state != STATE_IDLE) {
@@ -110,6 +165,13 @@ void NexusPlayer::play(const char* songId, const char* downloadUrl) {
 }
 
 void NexusPlayer::pause() {
+    PlayerLock lock(_mutex);
+    _should_resume_after_session = false; // Explicit pause cancels auto-resume
+    _should_play_after_session = false;   // Explicit pause cancels pending plays
+    pause_internal();
+}
+
+void NexusPlayer::pause_internal() {
     if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
         ESP_LOGI(TAG, "Pausing playback");
         _audioEngine.pause();
@@ -146,6 +208,17 @@ void NexusPlayer::pause() {
 }
 
 void NexusPlayer::resume() {
+    PlayerLock lock(_mutex);
+    if (_session_active) {
+        ESP_LOGI(TAG, "Resume requested during active session. Deferring until session ends.");
+        _should_resume_after_session = true;
+        _should_play_after_session = false; // Resume overrides any pending play
+    } else {
+        resume_internal();
+    }
+}
+
+void NexusPlayer::resume_internal() {
     if (_state == STATE_PAUSED) {
         ESP_LOGI(TAG, "Resuming playback");
 
@@ -171,6 +244,7 @@ void NexusPlayer::resume() {
 }
 
 void NexusPlayer::stop() {
+    PlayerLock lock(_mutex);
     if (_state == STATE_IDLE) {
         return;
     }
@@ -179,6 +253,8 @@ void NexusPlayer::stop() {
     _savedPcmLen = 0;
     _state = STATE_IDLE;
     _activeSongId[0] = '\0';
+    _should_resume_after_session = false;
+    _should_play_after_session = false;
 }
 
 void NexusPlayer::stopActivePipelines() {
@@ -203,4 +279,40 @@ void NexusPlayer::stopActivePipelines() {
     BufferManager::getInstance().flush(_playbackId);
     BufferManager::getInstance().flush(_storageId);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+}
+
+void NexusPlayer::playAlert(AlertType type) {
+    PlayerLock lock(_mutex);
+    _audioEngine.playAlert(type);
+}
+
+void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap) {
+    if (changed & COMP::ASSISTANT) {
+        PlayerLock lock(_mutex);
+        
+        bool new_session_active = (snap.assistant.session_state != AssistantState::Idle);
+        
+        if (new_session_active && !_session_active) {
+            ESP_LOGI(TAG, "Assistant session became active. Interrupting NexusPlayer if playing.");
+            _session_active = true;
+            if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
+                _should_resume_after_session = true;
+                _should_play_after_session = false; // Playing is overridden if we are already playing
+                pause_internal();
+            } else {
+                _should_resume_after_session = false;
+            }
+        } 
+        else if (!new_session_active && _session_active) {
+            ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
+            _session_active = false;
+            if (_should_play_after_session) {
+                play_internal(_pendingSongId, _pendingDownloadUrl);
+                _should_play_after_session = false;
+            } else if (_should_resume_after_session) {
+                resume_internal();
+            }
+            _should_resume_after_session = false;
+        }
+    }
 }

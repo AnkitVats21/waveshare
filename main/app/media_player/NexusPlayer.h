@@ -3,6 +3,8 @@
 #include "StorageManager.h"
 #include "StreamManager.h"
 #include "AudioEngine.h"
+#include "common/ReactorTask.h"
+#include "freertos/semphr.h"
 
 // Declare the playback and storage buffers for NexusPlayer
 DECLARE_BUFFER(PLAYER_BUF, "player_buf", 512 * 1024)
@@ -15,11 +17,11 @@ enum PlayerState {
     STATE_PAUSED 
 };
 
-class NexusPlayer {
+class NexusPlayer : public ReactorTask {
 public:
     static NexusPlayer& getInstance();
     NexusPlayer(BufferManager::BufferId playbackId, BufferManager::BufferId storageId);
-    ~NexusPlayer();
+    virtual ~NexusPlayer() override;
 
     bool begin();
     
@@ -28,7 +30,12 @@ public:
     void resume();
     void stop();
     
+    void playAlert(AlertType type);
+    
     PlayerState getState() { return _state; }
+
+    // ReactorTask interface
+    void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
 private:
     PlayerState _state = STATE_IDLE;
@@ -44,4 +51,18 @@ private:
     AudioEngine      _audioEngine;
     
     void stopActivePipelines();
+
+    // Reactor task state & thread safety
+    SemaphoreHandle_t _mutex = nullptr;
+    bool _session_active = false;
+    bool _should_resume_after_session = false;
+
+    // Deferred playback state cache
+    bool _should_play_after_session = false;
+    char _pendingSongId[64] = {0};
+    char _pendingDownloadUrl[256] = {0};
+
+    void pause_internal();
+    void resume_internal();
+    void play_internal(const char* songId, const char* downloadUrl);
 };

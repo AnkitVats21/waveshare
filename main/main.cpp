@@ -154,6 +154,7 @@ extern "C" void app_main(void) {
     key_svc.start();
     // alarm_svc.start();
     sync_reactor.start();
+    NexusPlayer::getInstance().start();
     // http_stream_svc.start();
     // opus_player.start();
 

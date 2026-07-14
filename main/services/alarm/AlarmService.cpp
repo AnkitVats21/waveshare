@@ -4,7 +4,7 @@
 #include "app/audio/SpeakerPlayback.h"
 #include "app/audio/AudioPipelineManager.h"
 #include "app/media_player/WavPlayer.h"
-#include "app/audio/AudioAlertPlayer.h"
+// #include "app/audio/AudioAlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
@@ -226,7 +226,7 @@ void AlarmService::run() {
 
         if (m_playing_fallback_alarm) {
             ESP_LOGI(TAG, "Sounding fallback algorithmic alarm chime...");
-            AudioAlertPlayer::playError();
+            // AudioAlertPlayer::playError();
         }
 
         // Get system time
