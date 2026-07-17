@@ -13,6 +13,7 @@ public:
     bool beginStreaming(const char* url);
     void stopStreaming();
     bool isStreaming() const { return _isStreaming; }
+    bool isDownloadComplete() const { return _downloadComplete; }
 
 private:
     BufferManager& _bm;
@@ -24,6 +25,7 @@ private:
     std::string _url;
     TaskHandle_t _networkTaskHandle = nullptr;
     volatile bool _isStreaming = false;
+    volatile bool _downloadComplete = false;
     
     static void networkTaskThunk(void* pvParameters);
     void runStreamLoop();

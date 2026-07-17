@@ -256,13 +256,22 @@ void MqttService::processIncomingData(esp_mqtt_event_handle_t event) {
         if (error) {
             ESP_LOGE(TAG, "Failed to parse media command JSON: %s", error.c_str());
         } else {
-            const char* song_id = doc["song_id"];
+            // "type" defaults to "play" for backward compatibility with servers
+            // that don't yet send the field.
+            const char* type     = doc["type"] | "play";
+            const char* song_id  = doc["song_id"];
             const char* song_url = doc["song_url"];
-            if (song_id && song_url) {
-                ESP_LOGI(TAG, "Forwarding media command to NexusPlayer: song_id=%s, url=%s", song_id, song_url);
-                NexusPlayer::getInstance().play(song_id, song_url);
-            } else {
+
+            if (!song_id || !song_url) {
                 ESP_LOGE(TAG, "Media command payload missing song_id or song_url");
+            } else if (strcmp(type, "play_next") == 0) {
+                // Server response for the prefetch request — load into next-song slot
+                ESP_LOGI(TAG, "play_next received: song_id=%s — queuing prefetch", song_id);
+                NexusPlayer::getInstance().setNextSong(song_id, song_url);
+            } else {
+                // Standard play response (or unknown type — treat as play)
+                ESP_LOGI(TAG, "play received: song_id=%s url=%s", song_id, song_url);
+                NexusPlayer::getInstance().play(song_id, song_url);
             }
         }
     }

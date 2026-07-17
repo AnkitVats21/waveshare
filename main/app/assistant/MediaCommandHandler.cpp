@@ -15,9 +15,11 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
             break;
             
         case GeminiSkills::SkillType::PLAY_NEXT:
-            cmd_name = "play_next";
-            mqtt_doc["query"] = skill_call.args.play_next->query;
-            break;
+            // Device-level skip: player manages queue and demands next from server itself.
+            LOGI_SYSTEM("Local PLAY_NEXT command — delegating to NexusPlayer::playNext()");
+            NexusPlayer::getInstance().playNext();
+            response_doc["status"] = "success";
+            return true;
             
         case GeminiSkills::SkillType::PAUSE:
             LOGI_SYSTEM("Local Media PAUSE command received");
@@ -36,8 +38,11 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
             break;
             
         case GeminiSkills::SkillType::NEXT:
-            cmd_name = "next";
-            break;
+            // Device-level skip: player manages queue and demands next from server itself.
+            LOGI_SYSTEM("Local NEXT command — delegating to NexusPlayer::playNext()");
+            NexusPlayer::getInstance().playNext();
+            response_doc["status"] = "success";
+            return true;
             
         case GeminiSkills::SkillType::PREVIOUS:
             cmd_name = "previous";

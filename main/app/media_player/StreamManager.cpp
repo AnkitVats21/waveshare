@@ -23,6 +23,7 @@ bool StreamManager::beginStreaming(const char* url) {
 
     _url = url;
     _isStreaming = true;
+    _downloadComplete = false;
 
     xTaskCreatePinnedToCore(
         networkTaskThunk, "net_stream_task", 4096, this,
@@ -42,6 +43,7 @@ void StreamManager::stopStreaming() {
     if (_isStreaming || _networkTaskHandle != nullptr) {
         ESP_LOGI(TAG, "Stopping streaming...");
         _isStreaming = false;
+        _downloadComplete = false;
         _http.close();
 
         while (_networkTaskHandle != nullptr) {
@@ -113,6 +115,7 @@ void StreamManager::runStreamLoop() {
         header->size = 0;
         _bm.send(_storageId, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
     } else {
+        _downloadComplete = true;  // Signal that HTTP download finished successfully
         header->type = ChunkType::EOF_STREAM;
         header->size = 0;
         _bm.send(_storageId, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);

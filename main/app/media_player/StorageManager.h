@@ -19,6 +19,12 @@ public:
     void closeActiveFile();
     void setDownloadCompleteSignal(bool complete) { _downloadComplete = complete; }
 
+    // Prefetch Path (writer-only — downloads next song silently to SD)
+    // Must only be called after the main writer task has exited (after onDownloadComplete)
+    bool beginPrefetch(const char* songId);
+    void stopPrefetch();
+    bool isPrefetchComplete() const { return _prefetchComplete; }
+
 private:
     BufferManager& _bm;
     Services::StorageService& _storageService;
@@ -41,10 +47,18 @@ private:
     TaskHandle_t _readerTaskHandle = nullptr;
     
     bool _isWritingMode = false;
+
+    // Prefetch state (writer-only, no reader, no AudioEngine)
+    volatile bool _prefetchWriterRunning = false;
+    volatile bool _prefetchComplete = false;
+    char _prefetchSongId[64] = {0};
+    TaskHandle_t _prefetchWriterHandle = nullptr;
     
     static void sdWriterTaskThunk(void* pvParameters);
     static void sdReaderTaskThunk(void* pvParameters);
+    static void sdPrefetchWriterTaskThunk(void* pvParameters);
     
     void runWriterTaskLoop();
     void runReaderTaskLoop();
+    void runPrefetchWriterLoop();
 };

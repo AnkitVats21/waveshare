@@ -340,3 +340,165 @@ void StorageManager::runReaderTaskLoop() {
     _readerTaskHandle = nullptr;
     vTaskDelete(NULL);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prefetch Path — writer-only (no reader, no AudioEngine involvement)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool StorageManager::beginPrefetch(const char* songId) {
+    if (!songId || songId[0] == '\0') return false;
+
+    // Stop any previous prefetch before starting a new one
+    stopPrefetch();
+
+    strncpy(_prefetchSongId, songId, sizeof(_prefetchSongId) - 1);
+    _prefetchSongId[sizeof(_prefetchSongId) - 1] = '\0';
+    _prefetchComplete = false;
+    _prefetchWriterRunning = true;
+
+    ESP_LOGI(TAG, "Starting prefetch writer for songId: %s", songId);
+
+    BaseType_t ret = xTaskCreatePinnedToCore(
+        sdPrefetchWriterTaskThunk, "sd_prefetch_task", 4096, this,
+        3, &_prefetchWriterHandle, 1  // Lower priority than main writer (4)
+    );
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to spawn sd_prefetch_task");
+        _prefetchWriterRunning = false;
+        _prefetchSongId[0] = '\0';
+        return false;
+    }
+
+    return true;
+}
+
+void StorageManager::stopPrefetch() {
+    if (_prefetchWriterRunning || _prefetchWriterHandle != nullptr) {
+        ESP_LOGI(TAG, "Stopping prefetch writer...");
+        _prefetchWriterRunning = false;
+
+        // Wait for the prefetch task to exit
+        while (_prefetchWriterHandle != nullptr) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        ESP_LOGI(TAG, "Prefetch writer stopped");
+    }
+
+    // Clean up incomplete prefetch temp file
+    if (_prefetchSongId[0] != '\0' && !_prefetchComplete) {
+        char tempPath[128];
+        snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.ogg.tmp", _prefetchSongId);
+        if (_storageService.fileExists(tempPath)) {
+            ESP_LOGI(TAG, "Cleaning up incomplete prefetch temp: %s", tempPath);
+            _storageService.deleteFile(tempPath);
+        }
+    }
+
+    _prefetchComplete = false;
+    _prefetchSongId[0] = '\0';
+}
+
+void StorageManager::sdPrefetchWriterTaskThunk(void* pvParameters) {
+    static_cast<StorageManager*>(pvParameters)->runPrefetchWriterLoop();
+}
+
+void StorageManager::runPrefetchWriterLoop() {
+    ESP_LOGI(TAG, "Prefetch Writer Task running on Core 1 for songId: %s", _prefetchSongId);
+
+    // Ensure music directory exists
+    struct stat st;
+    if (stat("/sdcard/music", &st) != 0) {
+        mkdir("/sdcard/music", 0755);
+    }
+
+    char tempPath[128];
+    char targetPath[128];
+    snprintf(tempPath,   sizeof(tempPath),   "/sdcard/music/%s.ogg.tmp", _prefetchSongId);
+    snprintf(targetPath, sizeof(targetPath), "/sdcard/music/%s.ogg",     _prefetchSongId);
+
+    FILE* prefetchStream = _storageService.openStream(tempPath, "wb");
+    if (!prefetchStream) {
+        ESP_LOGE(TAG, "Prefetch Writer: Failed to open temp file: %s", tempPath);
+        _prefetchWriterRunning = false;
+        _prefetchWriterHandle = nullptr;
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Allocate write buffer in PSRAM
+    size_t allocSize = sizeof(AudioChunkHeader) + AUDIO_CHUNK_SIZE;
+    uint8_t* write_buf = static_cast<uint8_t*>(heap_caps_malloc(allocSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!write_buf) {
+        ESP_LOGE(TAG, "Prefetch Writer: Failed to allocate buffer in PSRAM");
+        _storageService.closeStream(prefetchStream);
+        _prefetchWriterRunning = false;
+        _prefetchWriterHandle = nullptr;
+        vTaskDelete(NULL);
+        return;
+    }
+
+    bool success = false;
+
+    while (_prefetchWriterRunning) {
+        size_t rx_bytes = 0;
+        void* rx_ptr = _bm.receive(_storageId, &rx_bytes, pdMS_TO_TICKS(200));
+        if (rx_ptr == nullptr) {
+            continue;
+        }
+
+        AudioChunkHeader* chunk = reinterpret_cast<AudioChunkHeader*>(rx_ptr);
+
+        if (chunk->type == ChunkType::EOF_STREAM) {
+            ESP_LOGI(TAG, "Prefetch Writer: Received EOF — prefetch download complete");
+            success = true;
+            _bm.returnItem(_storageId, rx_ptr);
+            break;
+        } else if (chunk->type == ChunkType::ERROR) {
+            ESP_LOGE(TAG, "Prefetch Writer: Received ERROR signal");
+            _bm.returnItem(_storageId, rx_ptr);
+            break;
+        }
+
+        if (chunk->type == ChunkType::DATA && chunk->size > 0) {
+            uint8_t* payload = reinterpret_cast<uint8_t*>(chunk) + sizeof(AudioChunkHeader);
+            size_t written = _storageService.writeStream(prefetchStream, payload, chunk->size);
+            if (written != chunk->size) {
+                ESP_LOGE(TAG, "Prefetch Writer: Disk write error! Expected %u, wrote %u",
+                         (unsigned)chunk->size, (unsigned)written);
+            } else {
+                fflush(prefetchStream);
+                fsync(fileno(prefetchStream));
+            }
+        }
+
+        _bm.returnItem(_storageId, rx_ptr);
+    }
+
+    _storageService.closeStream(prefetchStream);
+    heap_caps_free(write_buf);
+
+    if (success) {
+        // Commit: rename .ogg.tmp → .ogg
+        if (_storageService.fileExists(targetPath)) {
+            _storageService.deleteFile(targetPath);
+        }
+        int ret = rename(tempPath, targetPath);
+        if (ret == 0) {
+            ESP_LOGI(TAG, "Prefetch Writer: Successfully cached next song: %s", targetPath);
+            _prefetchComplete = true;
+        } else {
+            ESP_LOGE(TAG, "Prefetch Writer: Failed to rename temp file (errno %d)", errno);
+        }
+    } else {
+        // Cleanup incomplete temp file
+        if (_storageService.fileExists(tempPath)) {
+            _storageService.deleteFile(tempPath);
+        }
+    }
+
+    ESP_LOGI(TAG, "Prefetch Writer Task exiting");
+    _prefetchWriterRunning = false;
+    _prefetchWriterHandle = nullptr;
+    vTaskDelete(NULL);
+}
+

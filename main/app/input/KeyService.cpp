@@ -77,10 +77,12 @@ void KeyService::run() {
 
                         if (keys[i] == KeyId::KEY_3) {
                             ESP_LOGI(TAG, "Key 3 long press: requesting next track");
-                            MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"next\"}");
+                            // MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"next\"}");
+                            NexusPlayer::getInstance().playNext();
                         } else if (keys[i] == KeyId::KEY_5) {
                             ESP_LOGI(TAG, "Key 5 long press: requesting previous track");
-                            MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"previous\"}");
+                            // MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"previous\"}");
+                            // NexusPlayer::getInstance().playPrevious();
                         }
                     }
                 }
