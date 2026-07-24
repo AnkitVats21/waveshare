@@ -21,7 +21,7 @@ public:
     /**
      * @brief Initializes the pre-allocated buffers in PSRAM.
      */
-    bool initialize(int sampleRate = 32000, int channels = 1);
+    bool initialize(int sampleRate = 44100, int channels = 1);
     
     void start();
     void stop();

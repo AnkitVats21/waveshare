@@ -4,6 +4,7 @@
 #include "esp_io_expander.h"
 #include "hal/Board_defs.h"
 #include "hal/audio/AudioHal.h"
+#include "hal/audio/BtSpeakerHal.h"
 #include "hal/io/I2CBus.h"
 #include "hal/io/IoExpander.h"
 #include "hal/led/LedStripManager.h"
@@ -47,6 +48,7 @@ public:
     // ── Typed sub-HAL getters (Dependency Injection) ─────────────────────────
     /** @brief Direct reference to the AudioHal driver (inject into AudioService / WakeWordEngine). */
     AudioHal&        getAudio()               { return m_audio; }
+    BtSpeakerHal&    getBtSpeaker()           { return m_bt_speaker; }
 
     /** @brief Direct reference to the LED strip driver (inject into LedService). */
     LedStripManager& getLeds()                { return m_leds; }
@@ -85,6 +87,7 @@ private:
     I2CBus          m_i2c;
     IoExpander      m_io;
     AudioHal        m_audio;
+    BtSpeakerHal    m_bt_speaker;
     LedStripManager m_leds;
     SdCardManager   m_storage;
 

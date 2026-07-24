@@ -7,6 +7,7 @@ set(srcs
 
             # HAL — Audio
             "hal/audio/AudioHal.cpp"
+            "hal/audio/BtSpeakerHal.cpp"
 
             # HAL — I/O
             "hal/io/I2CBus.cpp"
@@ -31,6 +32,7 @@ set(srcs
             "app/audio/RtpPlayer.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
+            "app/audio/BtSpeakerPlaybackTask.cpp"
             "app/audio/GeminiPCMDrainerTask.cpp"
             "app/media_player/WavPlayer.cpp"
             # "app/media_player/OpusPlayer.cpp"

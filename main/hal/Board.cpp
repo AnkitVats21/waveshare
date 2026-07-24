@@ -72,6 +72,17 @@ bool Board::begin() {
   if (m_audio.init(audio_cfg) != ESP_OK)
     return false;
 
+  // 3b. BT Speaker Daughter Board HAL (I2S TX on GPIO 4, 5, 6, 7 @ 48 kHz)
+  BtSpeakerHal::Config bt_spk_cfg;
+  bt_spk_cfg.bck_pin     = GPIO_NUM_4;
+  bt_spk_cfg.ws_pin      = GPIO_NUM_5;
+  bt_spk_cfg.dout_pin    = GPIO_NUM_6;
+  bt_spk_cfg.mclk_pin    = GPIO_NUM_7;
+  bt_spk_cfg.sample_rate = 48000;
+  if (m_bt_speaker.init(bt_spk_cfg) != ESP_OK) {
+    ESP_LOGW(TAG, "BtSpeakerHal init warning (continuing without BT daughter board I2S)");
+  }
+
   m_current_mic_gain = (float)m_record_volume; // Sync stored gain with initialized gain
 
   // 4. RGB LED strip — no dependencies, safe to init last

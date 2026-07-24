@@ -3,6 +3,7 @@
 #include <cstring>
 #include "app/audio/SpeakerPlayback.h"
 #include "app/audio/AudioPipelineManager.h"
+#include "app/audio/BtSpeakerPlaybackTask.h"
 #include "common/thread_config.h"
 #include "app/mqtt/MqttService.h"
 
@@ -122,6 +123,9 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
     BufferManager::getInstance().flush(_playbackId);
     BufferManager::getInstance().flush(_storageId);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+    if (BufferManager::getInstance().handle(Buffers::BT_SPK_BUF)) {
+        BufferManager::getInstance().flush(Buffers::BT_SPK_BUF);
+    }
 
     if (_storageManager.fileExists(songId)) {
         ESP_LOGI(TAG, "Cache Hit! Playing local file for songId: %s", songId);
@@ -258,6 +262,9 @@ void NexusPlayer::stopActivePipelines() {
     BufferManager::getInstance().flush(_playbackId);
     BufferManager::getInstance().flush(_storageId);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+    if (BufferManager::getInstance().handle(Buffers::BT_SPK_BUF)) {
+        BufferManager::getInstance().flush(Buffers::BT_SPK_BUF);
+    }
 }
 
 void NexusPlayer::playAlert(AlertType type) {

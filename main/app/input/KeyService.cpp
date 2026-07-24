@@ -91,9 +91,21 @@ void KeyService::run() {
                     m_prevState[i] = false;
                     ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);
 
-                    // Short press logic: volume up/down if long press was NOT triggered
+                    // Short press logic: volume up/down/mute toggle if long press was NOT triggered
                     if (!m_longPressedTriggered[i]) {
-                        if (keys[i] == KeyId::KEY_3) {
+                        if (keys[i] == KeyId::KEY_2) {
+                            sysdb.mutate([](SystemState& s) {
+                                static int saved_vol = 80;
+                                if (s.audio.speaker_volume > 0) {
+                                    saved_vol = s.audio.speaker_volume;
+                                    s.audio.speaker_volume = 0;
+                                    ESP_LOGI("KeySvc", "Key 2: Muted speaker (saved volume: %d)", saved_vol);
+                                } else {
+                                    s.audio.speaker_volume = (saved_vol > 0) ? saved_vol : 80;
+                                    ESP_LOGI("KeySvc", "Key 2: Unmuted speaker (restored volume: %d)", s.audio.speaker_volume);
+                                }
+                            });
+                        } else if (keys[i] == KeyId::KEY_3) {
                             sysdb.mutate([](SystemState& s) {
                                 int old_vol = s.audio.speaker_volume;
                                 s.audio.speaker_volume = std::min(old_vol + 5, 100);

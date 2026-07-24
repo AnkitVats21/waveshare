@@ -3,12 +3,15 @@
 #include "GeminiPCMDrainerTask.h"
 #include "MicCapture.h"
 #include "SpeakerPlayback.h"
+#include "BtSpeakerPlaybackTask.h"
+#include "hal/Board.h"
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
 
-SpeakerPlaybackTask*    AudioPipelineManager::m_speaker_task  = nullptr;
-GeminiPCMDrainerTask*   AudioPipelineManager::m_drainer_task  = nullptr;
-int                     AudioPipelineManager::m_shared_socket = -1;
+SpeakerPlaybackTask*    AudioPipelineManager::m_speaker_task    = nullptr;
+BtSpeakerPlaybackTask*  AudioPipelineManager::m_bt_speaker_task = nullptr;
+GeminiPCMDrainerTask*   AudioPipelineManager::m_drainer_task    = nullptr;
+int                     AudioPipelineManager::m_shared_socket   = -1;
 
 bool AudioPipelineManager::initialize(uint32_t sample_rate,
                                       AudioHal& hal,
@@ -35,6 +38,12 @@ bool AudioPipelineManager::initialize(uint32_t sample_rate,
     m_speaker_task = new SpeakerPlaybackTask();
     m_speaker_task->start(hw_handles.play_dev);
 
+    // Start Bluetooth Speaker playback task (drains BT_SPK_BUF over GPIOs 4, 5, 6, 7 @ 44.1 kHz)
+    if (Board::getInstance().getBtSpeaker().isInitialized()) {
+        m_bt_speaker_task = new BtSpeakerPlaybackTask();
+        m_bt_speaker_task->start(&Board::getInstance().getBtSpeaker());
+    }
+
     // Start the Gemini PCM drainer task — begins suspended (nothing in GEMINI_PCM_BUF yet)
     m_drainer_task = &GeminiPCMDrainerTask::getInstance();
     m_drainer_task->start();
@@ -46,17 +55,17 @@ void AudioPipelineManager::teardown() {
     LOGI_AUDIO("Tearing down Audio Pipeline...");
 
     // 3. Stop hardware tasks
-    // if (m_mic_task) {
-    //     m_mic_task->stop();
-    //     vTaskDelay(pdMS_TO_TICKS(50));
-    //     delete m_mic_task;
-    //     m_mic_task = nullptr;
-    // }
     if (m_speaker_task) {
         m_speaker_task->stop();
         vTaskDelay(pdMS_TO_TICKS(50));
         delete m_speaker_task;
         m_speaker_task = nullptr;
+    }
+    if (m_bt_speaker_task) {
+        m_bt_speaker_task->stop();
+        vTaskDelay(pdMS_TO_TICKS(50));
+        delete m_bt_speaker_task;
+        m_bt_speaker_task = nullptr;
     }
     if (m_drainer_task) {
         m_drainer_task->stop();
@@ -66,6 +75,9 @@ void AudioPipelineManager::teardown() {
     // 4. Flush ring buffers (BufferManager owns them; do NOT delete)
     BufferManager::getInstance().flush(Buffers::MIC_TX_BUF);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+    if (BufferManager::getInstance().handle(Buffers::BT_SPK_BUF)) {
+        BufferManager::getInstance().flush(Buffers::BT_SPK_BUF);
+    }
     BufferManager::getInstance().flush(Buffers::GEMINI_PCM_BUF);
 
     LOGI_AUDIO("Audio Pipeline teardown complete.");

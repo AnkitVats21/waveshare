@@ -5,6 +5,7 @@
 // Forward declarations
 class AudioHal;
 class SpeakerPlaybackTask;
+class BtSpeakerPlaybackTask;
 class GeminiPCMDrainerTask;
 class RtpStreamer;
 class RtpReceiver;
@@ -61,6 +62,7 @@ public:
 
 private:
     static SpeakerPlaybackTask*    m_speaker_task;
+    static BtSpeakerPlaybackTask*  m_bt_speaker_task;
     static GeminiPCMDrainerTask*   m_drainer_task;
     static int                     m_shared_socket;
 };

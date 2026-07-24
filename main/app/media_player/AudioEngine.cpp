@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "BufferManager.h"
+#include "app/audio/BtSpeakerPlaybackTask.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <cstdio>
@@ -76,10 +77,59 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
     // Process and output PCM samples
     if (samples_decoded > 0) {
         uint8_t channels = _decoder.get_channels();
+        uint32_t src_rate = _decoder.get_sample_rate();
+
+        // 1. Send high-quality 48 kHz Stereo PCM to BT Speaker buffer (if initialized)
+        if (Buffers::BT_SPK_BUF != BufferManager::INVALID && Buffers::BT_SPK_BUF != _pcmOutId) {
+            if (channels == 2 && src_rate == 48000) {
+                // Already 48 kHz stereo 16-bit PCM!
+                size_t bt_bytes = samples_decoded * 2 * sizeof(int16_t);
+                _bm.send(Buffers::BT_SPK_BUF, _pcm_buffer, bt_bytes, pdMS_TO_TICKS(10));
+            } else if (channels == 1 && src_rate == 48000) {
+                // Mono 48 kHz -> Expand to Stereo 48 kHz using _resample_buffer
+                size_t req_samples = samples_decoded * 2;
+                if (req_samples <= _resample_buffer_samples) {
+                    for (size_t i = 0; i < samples_decoded; ++i) {
+                        _resample_buffer[2 * i + 0] = _pcm_buffer[i]; // L
+                        _resample_buffer[2 * i + 1] = _pcm_buffer[i]; // R
+                    }
+                    _bm.send(Buffers::BT_SPK_BUF, _resample_buffer, req_samples * sizeof(int16_t), pdMS_TO_TICKS(10));
+                }
+            } else {
+                // Resample to 48 kHz stereo if src_rate != 48000
+                uint32_t bt_dst_rate = 48000;
+                size_t resample_frames = static_cast<size_t>(samples_decoded * bt_dst_rate / src_rate);
+                size_t req_samples = resample_frames * 2;
+                if (req_samples <= _resample_buffer_samples) {
+                    float ratio = static_cast<float>(src_rate) / bt_dst_rate;
+                    for (size_t j = 0; j < resample_frames; ++j) {
+                        float src_pos = j * ratio;
+                        size_t idx = static_cast<size_t>(src_pos);
+                        float frac = src_pos - idx;
+                        if (channels == 2) {
+                            int16_t l0 = _pcm_buffer[2 * idx + 0];
+                            int16_t r0 = _pcm_buffer[2 * idx + 1];
+                            int16_t l1 = (idx + 1 < samples_decoded) ? _pcm_buffer[2 * (idx + 1) + 0] : l0;
+                            int16_t r1 = (idx + 1 < samples_decoded) ? _pcm_buffer[2 * (idx + 1) + 1] : r0;
+                            _resample_buffer[2 * j + 0] = static_cast<int16_t>(l0 + frac * (l1 - l0));
+                            _resample_buffer[2 * j + 1] = static_cast<int16_t>(r0 + frac * (r1 - r0));
+                        } else {
+                            int16_t s0 = _pcm_buffer[idx];
+                            int16_t s1 = (idx + 1 < samples_decoded) ? _pcm_buffer[idx + 1] : s0;
+                            int16_t val = static_cast<int16_t>(s0 + frac * (s1 - s0));
+                            _resample_buffer[2 * j + 0] = val;
+                            _resample_buffer[2 * j + 1] = val;
+                        }
+                    }
+                    _bm.send(Buffers::BT_SPK_BUF, _resample_buffer, req_samples * sizeof(int16_t), pdMS_TO_TICKS(10));
+                }
+            }
+        }
+
+        // 2. Local Speaker: Downmix Stereo to Mono & Resample for onboard codec
         int16_t* pcm_mono = _pcm_buffer;
         size_t mono_samples = samples_decoded;
 
-        // Stereo to Mono downmix in-place
         if (channels == 2) {
             for (size_t i = 0; i < samples_decoded; ++i) {
                 int32_t mix = (static_cast<int32_t>(_pcm_buffer[2 * i]) +
@@ -88,10 +138,7 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
             }
         }
 
-        // Resample mono to 32 kHz mono
-        uint32_t src_rate = _decoder.get_sample_rate();
-        uint32_t dst_rate = 32000;
-
+        uint32_t dst_rate = _sampleRate > 0 ? static_cast<uint32_t>(_sampleRate) : 44100;
         size_t resampled_count = static_cast<size_t>(mono_samples * dst_rate / src_rate);
         if (resampled_count > _resample_buffer_samples) {
             ESP_LOGE(TAG, "Resample buffer too small (%zu samples), required %zu.",
@@ -113,11 +160,10 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
             }
         }
 
-        // Push final 32 kHz mono PCM to SPK_RX_BUF with backpressure throttling
         size_t send_bytes = resampled_count * sizeof(int16_t);
         bool sent = _bm.send(_pcmOutId, _resample_buffer, send_bytes, pdMS_TO_TICKS(100));
         if (!sent) {
-            ESP_LOGW(TAG, "Failed to send %zu PCM bytes to output buffer", send_bytes);
+            ESP_LOGW(TAG, "Failed to send %zu PCM bytes to local output buffer", send_bytes);
         } else {
             ESP_LOGD(TAG, "Decoded chunk: consumed=%zu, samples=%zu, pcm_out=%zu",
                      bytes_consumed, samples_decoded, send_bytes);
@@ -288,7 +334,7 @@ bool AudioEngine::playAlertFile(const char* path) {
 }
 
 void AudioEngine::playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms) {
-    constexpr uint32_t SAMPLE_RATE = 32000;
+    const uint32_t SAMPLE_RATE = _sampleRate > 0 ? static_cast<uint32_t>(_sampleRate) : 44100;
     const uint32_t total_samples = (SAMPLE_RATE * duration_ms) / 1000;
     const uint32_t fade_samples  = (SAMPLE_RATE * fade_ms) / 1000;
     
