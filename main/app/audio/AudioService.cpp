@@ -2,6 +2,7 @@
 #include "app/audio/AudioPipelineManager.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/GeminiPCMDrainerTask.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
@@ -193,14 +194,12 @@ void AudioService::onWakeWord(uint8_t channel) {
 }
 
 void AudioService::onVadTimeout() {
-    LOGI_AUDIO("VAD timeout — returning to Idle.");
+    LOGI_AUDIO("VAD timeout — returning to Closing.");
     sysdb.mutate([](SystemState& s) {
         if (s.assistant.session_state == AssistantState::StreamingUserAudio ||
             s.assistant.session_state == AssistantState::WaitingForFollowup) {
-            s.assistant.session_state = AssistantState::Idle;
-            s.assistant.visual_state  = s.system.wifi_connected
-                                        ? AssistantVisualState::Idle
-                                        : AssistantVisualState::Offline;
+            s.assistant.session_state = AssistantState::Closing;
+            s.assistant.close_is_natural = true;
         }
     });
 }
@@ -278,6 +277,7 @@ void AudioService::returnToWakeMode() {
     ww.setVadDeferred(false);
     ww.resumeHardware();
     AudioPipelineManager::setRtpRxInterrupted(false);
+    BufferManager::getInstance().flush(Buffers::GEMINI_PCM_BUF);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
 
     LOGI_AUDIO("Wake mode restored.");

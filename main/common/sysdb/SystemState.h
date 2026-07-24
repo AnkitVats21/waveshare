@@ -61,6 +61,7 @@ namespace BIT_ASSISTANT {
     static constexpr ComponentMask VISUAL_STATE   = (1u << 1);
     static constexpr ComponentMask WS_STATE       = (1u << 2);
     static constexpr ComponentMask CONNECT_REQ    = (1u << 3);
+    static constexpr ComponentMask PLAY_ALERTS    = (1u << 4);
 }
 namespace BIT_LED {
     static constexpr ComponentMask MODE           = (1u << 0);
@@ -111,7 +112,9 @@ namespace BIT_MQTT {
     X(AssistantVisualState, visual_state, AssistantVisualState::Offline, BIT_ASSISTANT::VISUAL_STATE) \
     X(bool, connect_requested, false, BIT_ASSISTANT::CONNECT_REQ) \
     X(WsState, ws_state, WsState::DISCONNECTED, BIT_ASSISTANT::WS_STATE) \
-    X(bool, mpv_pending_idle, false, 0)
+    X(bool, mpv_pending_idle, false, 0) \
+    X(bool, close_is_natural, false, 0) \
+    X(bool, play_connection_alerts, false, BIT_ASSISTANT::PLAY_ALERTS)
 
 #define LED_FIELDS \
     X(LedMode, mode, LedMode::OFF, BIT_LED::MODE) \

@@ -13,6 +13,9 @@
 #include "services/BufferManager.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/GeminiPCMDrainerTask.h"
+#include "app/audio/AudioPipelineManager.h"
+#include "app/media_player/NexusPlayer.h"
 #include "esp_heap_caps.h"
 #include "esp_crt_bundle.h"
 #include <string>
@@ -323,17 +326,22 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
     auto* data = static_cast<esp_websocket_event_data_t*>(event_data);
 
     switch (event_id) {
-        case WEBSOCKET_EVENT_CONNECTED:
+        case WEBSOCKET_EVENT_CONNECTED: {
             LOGI_NET("WebSocket established.");
             self->m_rx_frames = 0;
             self->m_rx_dropped_frames = 0;
             self->m_rx_audio_bytes = 0;
             self->m_frame_overflowed = false;
             self->transmitSetupHandshake();
+            
+            // Mutate sysdb to trigger NexusPlayer to play the connection alerts
+            // sequentially on its own thread, preventing a stack overflow here.
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::CONNECTED;
+                s.assistant.play_connection_alerts = true;
             });
             break;
+        }
             
         case WEBSOCKET_EVENT_DATA:
             if (data->op_code == 1 || data->data_len > 0) {
@@ -360,7 +368,7 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                         BaseType_t ok = xRingbufferSend(self->m_incoming_psram_rb,
                                                         self->m_assembly_scratch,
                                                         self->m_assembly_idx + 1,
-                                                        pdMS_TO_TICKS(20));
+                                                        pdMS_TO_TICKS(500)); // 500 ms timeout for backpressure
                         if (ok == pdTRUE) {
                             self->m_rx_frames++;
                             if (self->getHandle() != nullptr) {
@@ -424,17 +432,17 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         if (data_end) {
             *data_end = '\0';
 
-            // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
+            // If transitioning to speaking, flush stale data from both buffers and
+            // advance the session state so AudioService and LED react correctly.
             if (!sysdb.assistantSpeaking()) {
+                BufferManager::getInstance().flush(Buffers::GEMINI_PCM_BUF);
                 BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
                 sysdb.mutate([](SystemState& s) {
                     s.assistant.session_state = AssistantState::AssistantSpeaking;
                     s.assistant.visual_state  = AssistantVisualState::Speaking;
                     s.audio.assistant_speaking = true;
                 });
-                // Yield to let AudioService switch the I2S clock to 24kHz
-                // before we push the first decoded PCM frame
-                vTaskDelay(pdMS_TO_TICKS(20));
+                vTaskDelay(pdMS_TO_TICKS(20)); // let AudioService react before first frame
             }
 
             size_t b64_len = data_end - data_start;
@@ -447,9 +455,14 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 if (written > 0) {
                     m_rx_audio_bytes += written;
 
-                    if (!BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20))) {
+                    // Write to GEMINI_PCM_BUF with portMAX_DELAY — this is the
+                    // backpressure point: if the drainer is slower than the server,
+                    // this blocks the decoder task, which fills m_incoming_psram_rb,
+                    // which blocks the WS event handler (500 ms timeout), which causes
+                    // TCP flow-control to close the receive window on the server.
+                    if (!BufferManager::getInstance().send(Buffers::GEMINI_PCM_BUF, m_static_pcm_scratch_arena, written, portMAX_DELAY)) {
                         m_rx_dropped_frames++;
-                        LOGW_NET("Audio drop: SPK_RX_BUF is full!");
+                        LOGW_NET("Audio drop: GEMINI_PCM_BUF full (backpressure failed)!");
                     }
                 }
             } else {

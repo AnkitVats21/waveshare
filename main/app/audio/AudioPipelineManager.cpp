@@ -1,13 +1,14 @@
 #include "sdkconfig.h"
 #include "AudioPipelineManager.h"
+#include "GeminiPCMDrainerTask.h"
 #include "MicCapture.h"
 #include "SpeakerPlayback.h"
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
 
-// MicCaptureTask*      AudioPipelineManager::m_mic_task     = nullptr;
-SpeakerPlaybackTask* AudioPipelineManager::m_speaker_task = nullptr;
-int                  AudioPipelineManager::m_shared_socket = -1;
+SpeakerPlaybackTask*    AudioPipelineManager::m_speaker_task  = nullptr;
+GeminiPCMDrainerTask*   AudioPipelineManager::m_drainer_task  = nullptr;
+int                     AudioPipelineManager::m_shared_socket = -1;
 
 bool AudioPipelineManager::initialize(uint32_t sample_rate,
                                       AudioHal& hal,
@@ -34,6 +35,10 @@ bool AudioPipelineManager::initialize(uint32_t sample_rate,
     m_speaker_task = new SpeakerPlaybackTask();
     m_speaker_task->start(hw_handles.play_dev);
 
+    // Start the Gemini PCM drainer task — begins suspended (nothing in GEMINI_PCM_BUF yet)
+    m_drainer_task = &GeminiPCMDrainerTask::getInstance();
+    m_drainer_task->start();
+
     return true;
 }
 
@@ -53,10 +58,15 @@ void AudioPipelineManager::teardown() {
         delete m_speaker_task;
         m_speaker_task = nullptr;
     }
+    if (m_drainer_task) {
+        m_drainer_task->stop();
+        m_drainer_task = nullptr;
+    }
 
     // 4. Flush ring buffers (BufferManager owns them; do NOT delete)
     BufferManager::getInstance().flush(Buffers::MIC_TX_BUF);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+    BufferManager::getInstance().flush(Buffers::GEMINI_PCM_BUF);
 
     LOGI_AUDIO("Audio Pipeline teardown complete.");
 }
@@ -89,4 +99,29 @@ void AudioPipelineManager::resumeSpeaker() {
     if (m_speaker_task) {
         m_speaker_task->resumeHardware();
     }
+}
+
+void AudioPipelineManager::suspendDrainer() {
+    if (m_drainer_task) {
+        m_drainer_task->suspendAndFlush();
+    }
+}
+
+void AudioPipelineManager::resumeDrainer() {
+    if (m_drainer_task) {
+        m_drainer_task->resume();
+    }
+}
+
+void AudioPipelineManager::setSpeakerPaused(bool paused) {
+    if (m_speaker_task) {
+        m_speaker_task->setPaused(paused);
+    }
+}
+
+bool AudioPipelineManager::isSpeakerPaused() {
+    if (m_speaker_task) {
+        return m_speaker_task->isPaused();
+    }
+    return false;
 }

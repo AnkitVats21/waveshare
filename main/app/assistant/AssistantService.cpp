@@ -12,7 +12,7 @@
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
-// Helper: play an audio alert on a tiny fire-and-forget FreeRTOS task.
+// Helper: play an audio alert asynchronously for offline/error tones.
 static void playAlertTask(void* arg) {
     AlertType type = static_cast<AlertType>(reinterpret_cast<uintptr_t>(arg));
     NexusPlayer::getInstance().playAlert(type);
@@ -48,6 +48,9 @@ void AssistantService::handleConnectTimeout() {
 }
 
 void AssistantService::handleIdleTimeout() {
+    sysdb.mutate([](SystemState& s) {
+        s.assistant.close_is_natural = true;
+    });
     m_idle_timeout_pending = true;
     xTaskNotify(m_task_handle, COMP::ASSISTANT, eSetBits);
 }
@@ -301,12 +304,13 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
     switch (newState) {
         case AssistantState::Idle:
             visState = wifi_connected ? AssistantVisualState::Idle : AssistantVisualState::Offline;
-            GeminiProtocol::getInstance().closeConnection();
             sysdb.mutate([](SystemState& s) {
+                s.assistant.connect_requested = false;
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
                 s.assistant.mpv_pending_idle = false;
             });
+            GeminiProtocol::getInstance().closeConnection();
             break;
 
         case AssistantState::StartingSession:
@@ -350,10 +354,18 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
         case AssistantState::Closing:
             sysdb.mutate([](SystemState& s) {
                 s.assistant.connect_requested = false;
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
             });
-            trigger_auto_transition_to_idle = true; 
+            if (snap.assistant.close_is_natural) {
+                // Handover to NexusPlayer: do nothing here.
+                // NexusPlayer's run() loop will play the alert and then mutate the state to Idle.
+            } else {
+                sysdb.mutate([](SystemState& s) {
+                    s.pipeline.mode = PipelineMode::WAKE_IDLE;
+                    s.audio.session_active = false;
+                    s.assistant.close_is_natural = false;
+                });
+                trigger_auto_transition_to_idle = true; 
+            }
             break;
 
         case AssistantState::ErrorCooldown:
@@ -381,13 +393,13 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
     // 3. Play audio alerts asynchronously
     switch (newState) {
         case AssistantState::StartingSession:
-            playAlertAsync(ALERT_WAKE_CONFIRM);
+            // ALERT_WAKE_CONFIRM is now played sequentially in GeminiProtocol
             break;
         case AssistantState::StreamingUserAudio:
-            playAlertAsync(ALERT_READY_TO_SPEAK);
+            // ALERT_READY_TO_SPEAK is now played sequentially in GeminiProtocol
             break;
         case AssistantState::Closing:
-            playAlertAsync(ALERT_SESSION_END);
+            // ALERT_SESSION_END is played inline above if natural close
             break;
         case AssistantState::ErrorCooldown:
             playAlertAsync(ALERT_ERROR);
@@ -408,7 +420,45 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
     m_current_state = newState;
     LOGI_SYSTEM("Syncing local state machine from external change: %s ──> %s", assistantStateToString(oldState), assistantStateToString(newState));
 
-    publishMusicCommand(oldState, newState);
+    // Sync visual state to match external session state change
+    AssistantVisualState visState = snap.assistant.visual_state;
+    bool wifi_connected = snap.system.wifi_connected;
+    switch (newState) {
+        case AssistantState::Idle:
+            visState = wifi_connected ? AssistantVisualState::Idle : AssistantVisualState::Offline;
+            break;
+        case AssistantState::StartingSession:
+            visState = AssistantVisualState::Thinking;
+            break;
+        case AssistantState::Connecting:
+            visState = AssistantVisualState::Connecting;
+            break;
+        case AssistantState::StreamingUserAudio:
+            visState = AssistantVisualState::Listening;
+            break;
+        case AssistantState::AssistantSpeaking:
+            visState = AssistantVisualState::Speaking;
+            break;
+        case AssistantState::WaitingForFollowup:
+            visState = AssistantVisualState::Thinking;
+            break;
+        case AssistantState::Closing:
+            visState = AssistantVisualState::Thinking;
+            break;
+        case AssistantState::ErrorCooldown:
+            visState = AssistantVisualState::Error;
+            break;
+        default:
+            break;
+    }
+
+    if (visState != snap.assistant.visual_state) {
+        sysdb.mutate([visState](SystemState& s) {
+            s.assistant.visual_state = visState;
+        });
+    }
+
+    // publishMusicCommand(oldState, newState);
 
     // Sync timers and internal variables
     switch (oldState) {
@@ -428,13 +478,13 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
     // Start appropriate timers or sync database if updated externally
     switch (newState) {
         case AssistantState::Idle:
-            GeminiProtocol::getInstance().closeConnection();
             sysdb.mutate([](SystemState& s) {
+                s.assistant.connect_requested = false;
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
-                s.assistant.connect_requested = false;
                 s.assistant.mpv_pending_idle = false;
             });
+            GeminiProtocol::getInstance().closeConnection();
             break;
         case AssistantState::Connecting:
             if (m_connect_timer) {
@@ -449,9 +499,17 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
         case AssistantState::Closing:
             sysdb.mutate([](SystemState& s) {
                 s.assistant.connect_requested = false;
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
             });
+            if (snap.assistant.close_is_natural) {
+                // Handover to NexusPlayer: do nothing here.
+                // NexusPlayer's run() loop will play the alert and then mutate the state to Idle.
+            } else {
+                sysdb.mutate([](SystemState& s) {
+                    s.pipeline.mode = PipelineMode::WAKE_IDLE;
+                    s.audio.session_active = false;
+                    s.assistant.close_is_natural = false;
+                });
+            }
             break;
         case AssistantState::ErrorCooldown:
             sysdb.mutate([](SystemState& s) {

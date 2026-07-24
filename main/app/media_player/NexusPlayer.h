@@ -82,7 +82,7 @@ private:
 
     // Deferred playback state cache (used when assistant session is active)
     bool _should_play_after_session = false;
-    char _pendingSongId[64] = {0};
+    char _pendingSongId[32] = {0};
     char _pendingDownloadUrl[256] = {0};
 
     // ── Internal methods ───────────────────────────────────────────────────

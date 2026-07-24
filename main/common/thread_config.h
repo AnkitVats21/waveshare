@@ -44,6 +44,7 @@ namespace ThreadConfig {
         STACK_GEMINI    = 8 * 1024,  ///< GeminiProtocol — needs room for ArduinoJson tool-call serialization
         STACK_WW_FEED   = 3 * 1024,
         STACK_WW_DET    = 8 * 1024,
+        STACK_MEDIA     = 12 * 1024, ///< Media players with heavy decoders (Ogg/Opus)
     };
 
     // ── Core affinities ────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 #include "esp_log.h"
 #include <cstring>
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/AudioPipelineManager.h"
 #include "common/thread_config.h"
 #include "app/mqtt/MqttService.h"
 
@@ -36,13 +37,11 @@ NexusPlayer& NexusPlayer::getInstance() {
 NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
     : ReactorTask({
           "nexus_player",
-          ThreadConfig::StackSize::STACK_NORMAL,
+          ThreadConfig::StackSize::STACK_MEDIA,
           ThreadConfig::Priority::GEMINI_PROTOCOL, // Raised to 7 to preempt AssistantService (6) on Core 0
           ThreadConfig::CORE_NETWORK,
           COMP::ASSISTANT
       }),
-      _savedPcmBuffer(nullptr),
-      _savedPcmLen(0),
       _playbackId(playbackId),
       _storageId(storageId),
       _storageManager(playbackId, storageId),
@@ -51,10 +50,6 @@ NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::Buff
 
 NexusPlayer::~NexusPlayer() {
     stop();
-    if (_savedPcmBuffer != nullptr) {
-        heap_caps_free(_savedPcmBuffer);
-        _savedPcmBuffer = nullptr;
-    }
     if (_mutex != nullptr) {
         vSemaphoreDelete(_mutex);
         _mutex = nullptr;
@@ -69,16 +64,6 @@ bool NexusPlayer::begin() {
         ESP_LOGE(TAG, "Failed to create recursive mutex");
         return false;
     }
-
-    size_t spk_buf_size = BufferManager::getInstance().size(Buffers::SPK_RX_BUF);
-    if (spk_buf_size == 0) {
-        spk_buf_size = 512 * 1024;
-    }
-    _savedPcmBuffer = (uint8_t*)heap_caps_malloc(spk_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!_savedPcmBuffer) {
-        ESP_LOGE(TAG, "Failed to allocate saved PCM buffer in SPIRAM");
-    }
-    _savedPcmLen = 0;
 
     return _audioEngine.initialize(32000, 1);
 }
@@ -199,29 +184,8 @@ void NexusPlayer::pause_internal() {
         // Give the audio engine a tiny delay to yield if it was actively running
         vTaskDelay(pdMS_TO_TICKS(5));
 
-        // Save the current contents of SPK_RX_BUF to the SPIRAM buffer
-        _savedPcmLen = 0;
-        if (_savedPcmBuffer != nullptr) {
-            auto &bm = BufferManager::getInstance();
-            size_t rx_bytes = 0;
-            size_t max_size = bm.size(Buffers::SPK_RX_BUF);
-            if (max_size == 0) max_size = 512 * 1024;
-            
-            while (true) {
-                void* rx_ptr = bm.receive(Buffers::SPK_RX_BUF, &rx_bytes, 0, 512 * 1024);
-                if (rx_ptr == nullptr || rx_bytes == 0) {
-                    break;
-                }
-                if (_savedPcmLen + rx_bytes <= max_size) {
-                    memcpy(_savedPcmBuffer + _savedPcmLen, rx_ptr, rx_bytes);
-                    _savedPcmLen += rx_bytes;
-                } else {
-                    ESP_LOGE(TAG, "Saved PCM buffer overflow!");
-                }
-                bm.returnItem(Buffers::SPK_RX_BUF, rx_ptr);
-            }
-            ESP_LOGI(TAG, "Saved %zu bytes of PCM data from SPK_RX_BUF", _savedPcmLen);
-        }
+        // Pause the speaker playback task draining to stop instantly
+        AudioPipelineManager::setSpeakerPaused(true);
 
         _state = STATE_PAUSED;
     }
@@ -242,17 +206,8 @@ void NexusPlayer::resume_internal() {
     if (_state == STATE_PAUSED) {
         ESP_LOGI(TAG, "Resuming playback");
 
-        // Restore the saved PCM data back to SPK_RX_BUF
-        if (_savedPcmBuffer != nullptr && _savedPcmLen > 0) {
-            auto &bm = BufferManager::getInstance();
-            bool sent = bm.send(Buffers::SPK_RX_BUF, _savedPcmBuffer, _savedPcmLen, pdMS_TO_TICKS(100));
-            if (sent) {
-                ESP_LOGI(TAG, "Restored %zu bytes of PCM data to SPK_RX_BUF", _savedPcmLen);
-            } else {
-                ESP_LOGE(TAG, "Failed to restore PCM data to SPK_RX_BUF");
-            }
-            _savedPcmLen = 0;
-        }
+        // Resume the speaker playback task draining
+        AudioPipelineManager::setSpeakerPaused(false);
 
         _audioEngine.resume();
         if (_streamManager.isStreaming()) {
@@ -270,7 +225,6 @@ void NexusPlayer::stop() {
     }
     ESP_LOGI(TAG, "Stopping playback and active pipelines");
     stopActivePipelines();
-    _savedPcmLen = 0;
     _state = STATE_IDLE;
     _activeSongId[0] = '\0';
     _should_resume_after_session = false;
@@ -296,6 +250,9 @@ void NexusPlayer::stopActivePipelines() {
 
     // 4. Stop and clean up SD Reader/Writer tasks and active file streams
     _storageManager.closeActiveFile();
+
+    // Ensure the speaker playback task is not left paused
+    AudioPipelineManager::setSpeakerPaused(false);
 
     // 5. Flush all buffers
     BufferManager::getInstance().flush(_playbackId);
@@ -326,9 +283,27 @@ void NexusPlayer::requestNextSong() {
 void NexusPlayer::onDownloadComplete() {
     // Called once per song when its HTTP download finishes successfully.
     // At this point: writer task has exited, _storageId buffer is idle, reader is still playing.
-    ESP_LOGI(TAG, "Download complete for songId: %s — requesting prefetch", _activeSongId);
+    ESP_LOGI(TAG, "Download complete for songId: %s", _activeSongId);
     _downloadWasComplete = true;
-    requestNextSong();
+
+    // If a prefetch song was already queued but waiting for the main download to finish, start it now.
+    if (_nextSongId[0] != '\0') {
+        if (_prefetchState == PrefetchState::WAITING) {
+            ESP_LOGI(TAG, "Starting deferred prefetch for next song: %s", _nextSongId);
+            _prefetchState = PrefetchState::DOWNLOADING;
+            _storageManager.beginPrefetch(_nextSongId);
+            if (!_streamManager.beginStreaming(_nextSongUrl)) {
+                ESP_LOGE(TAG, "Failed to start prefetch stream for: %s", _nextSongId);
+                _prefetchState = PrefetchState::NONE;
+                _nextSongId[0] = '\0';
+                _nextSongUrl[0] = '\0';
+            }
+        } else {
+            ESP_LOGI(TAG, "Next song %s already queued in state %d", _nextSongId, (int)_prefetchState);
+        }
+    } else {
+        requestNextSong();
+    }
 }
 
 void NexusPlayer::setNextSong(const char* songId, const char* url) {
@@ -361,16 +336,24 @@ void NexusPlayer::setNextSong(const char* songId, const char* url) {
         _prefetchState = PrefetchState::CACHED;
         ESP_LOGI(TAG, "Next song %s already cached — no prefetch needed", songId);
     } else {
-        // Prefetch: reuse StreamManager + StorageManager in writer-only mode.
-        // Safe because main download is already done (onDownloadComplete fired before this).
-        ESP_LOGI(TAG, "Prefetching next song: %s", songId);
-        _prefetchState = PrefetchState::DOWNLOADING;
-        _storageManager.beginPrefetch(songId);
-        if (!_streamManager.beginStreaming(url)) {
-            ESP_LOGE(TAG, "Failed to start prefetch stream for: %s", songId);
-            _prefetchState = PrefetchState::NONE;
-            _nextSongId[0] = '\0';
-            _nextSongUrl[0] = '\0';
+        // If current song is still streaming and caching, we MUST NOT start the prefetch stream yet.
+        // Doing so would interrupt the active download and cause a crash.
+        // Instead, mark the prefetch as WAITING. It will be started in onDownloadComplete().
+        if (!_downloadWasComplete) {
+            ESP_LOGI(TAG, "Current song download is still active. Deferring prefetch of: %s", songId);
+            _prefetchState = PrefetchState::WAITING;
+        } else {
+            // Prefetch: reuse StreamManager + StorageManager in writer-only mode.
+            // Safe because main download is already done (onDownloadComplete fired before this).
+            ESP_LOGI(TAG, "Prefetching next song: %s", songId);
+            _prefetchState = PrefetchState::DOWNLOADING;
+            _storageManager.beginPrefetch(songId);
+            if (!_streamManager.beginStreaming(url)) {
+                ESP_LOGE(TAG, "Failed to start prefetch stream for: %s", songId);
+                _prefetchState = PrefetchState::NONE;
+                _nextSongId[0] = '\0';
+                _nextSongUrl[0] = '\0';
+            }
         }
     }
 }
@@ -395,7 +378,6 @@ void NexusPlayer::playNext() {
 
         // Stop current playback
         stopActivePipelines();
-        _savedPcmLen = 0;
         _state = STATE_IDLE;
         _activeSongId[0] = '\0';
         _downloadWasComplete = false;
@@ -421,7 +403,6 @@ void NexusPlayer::promoteNextToCurrent() {
     // Stop current pipelines (does nothing if already idle)
     if (_state != STATE_IDLE) {
         stopActivePipelines();
-        _savedPcmLen = 0;
         _state = STATE_IDLE;
         _activeSongId[0] = '\0';
     }
@@ -456,9 +437,14 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
                 _should_resume_after_session = true;
                 _should_play_after_session = false;
                 pause_internal();
+
+                // Flush SPK_RX_BUF to immediately discard any buffered music
+                BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
             } else {
                 _should_resume_after_session = false;
             }
+            // Ensure speaker is unpaused during assistant session to play alerts & assistant voice
+            AudioPipelineManager::setSpeakerPaused(false);
         } 
         else if (!new_session_active && _session_active) {
             ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
@@ -468,6 +454,11 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
                 _should_play_after_session = false;
             } else if (_should_resume_after_session) {
                 resume_internal();
+            } else {
+                // If we were paused before the session, restore the speaker pause state
+                if (_state == STATE_PAUSED) {
+                    AudioPipelineManager::setSpeakerPaused(true);
+                }
             }
             _should_resume_after_session = false;
         }
@@ -485,6 +476,39 @@ void NexusPlayer::run() {
             m_last_changed = changed_bits;
             SystemState snap = EmbeddedSysDb::getInstance().snapshot();
             onStateChanged(m_last_changed, snap);
+        }
+
+        // Check if connection alerts are pending (set by GeminiProtocol)
+        SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+        if (snap.assistant.play_connection_alerts) {
+            ESP_LOGI(TAG, "Playing connection alerts on NexusPlayer task...");
+            AudioPipelineManager::suspendDrainer();
+            playAlert(ALERT_WAKE_CONFIRM);
+            AudioPipelineManager::resumeDrainer();
+
+            // Clear flag and advance state to start mic pumping
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.assistant.play_connection_alerts = false;
+                s.assistant.session_state = AssistantState::StreamingUserAudio;
+                s.assistant.visual_state  = AssistantVisualState::Listening;
+                s.pipeline.mode           = PipelineMode::GEMINI_LIVE;
+                s.audio.session_active    = true;
+                s.audio.mic_enabled       = true;
+            });
+        }
+
+        // Check if natural close alerts are pending (set by AudioService/AssistantService)
+        if (snap.assistant.session_state == AssistantState::Closing && snap.assistant.close_is_natural) {
+            ESP_LOGI(TAG, "Playing session end alert on NexusPlayer task...");
+            AudioPipelineManager::suspendDrainer();
+            playAlert(ALERT_SESSION_END);
+            AudioPipelineManager::resumeDrainer();
+
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.assistant.close_is_natural = false;
+                // Transition to Idle to trigger AssistantService and AudioService cleanup
+                s.assistant.session_state = AssistantState::Idle;
+            });
         }
 
         // Poll for main download completion to trigger next-song prefetch request
@@ -528,7 +552,6 @@ void NexusPlayer::checkPlaybackFinished() {
                     // _waitingForPlayNextAsPlay logic or a direct play_internal call.
                     ESP_LOGI(TAG, "No next song queued — going idle. Server response pending.");
                     stopActivePipelines();
-                    _savedPcmLen = 0;
                     _state = STATE_IDLE;
                     _activeSongId[0] = '\0';
                     // Mark that we want the next play_next response as current song

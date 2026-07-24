@@ -4,8 +4,8 @@
 
 // Forward declarations
 class AudioHal;
-// class MicCaptureTask;
 class SpeakerPlaybackTask;
+class GeminiPCMDrainerTask;
 class RtpStreamer;
 class RtpReceiver;
 
@@ -45,6 +45,14 @@ public:
   static void pauseSpeaker();
   static void resumeSpeaker();
 
+  /** @brief Pause/resume the speaker playback task draining (without pausing hardware). */
+  static void setSpeakerPaused(bool paused);
+  static bool isSpeakerPaused();
+
+  /** @brief Suspend/resume the Gemini PCM drainer (used during alert playback). */
+  static void suspendDrainer();
+  static void resumeDrainer();
+
   /**
    * @brief Return the raw SpeakerPlaybackTask pointer so callers can poll
    *        isHardwarePaused() before reconfiguring the I2S clock.
@@ -52,7 +60,7 @@ public:
     static SpeakerPlaybackTask* getSpeakerTask() { return m_speaker_task; }
 
 private:
-    // static MicCaptureTask*      m_mic_task;
-    static SpeakerPlaybackTask* m_speaker_task;
-    static int                  m_shared_socket;
+    static SpeakerPlaybackTask*    m_speaker_task;
+    static GeminiPCMDrainerTask*   m_drainer_task;
+    static int                     m_shared_socket;
 };

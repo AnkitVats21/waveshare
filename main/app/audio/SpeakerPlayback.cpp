@@ -1,11 +1,12 @@
 #include "SpeakerPlayback.h"
 #include "common/AppLogger.h"
 #include "esp_timer.h"
+#include "hal/Board.h"
 #include <cstring>
 #include <cstdlib>
 
 // Defines + registers the SPK_RX_BUF ring buffer with BufferManager
-DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 512 * 1024)
+DEFINE_BUFFER(SPK_RX_BUF, "spk_rx", 32 * 1024)
 
 
 
@@ -145,6 +146,22 @@ void SpeakerPlaybackTask::run() {
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
     uint32_t active_sample_rate = getActivePlaybackSampleRate(snap);
+
+    // ── Software pause check ─────────────────────────────────────────────────
+    if (m_paused) {
+      if (m_amp_enabled) {
+        size_t silence_samples = samplesForDurationMs(active_sample_rate, EMPTY_FILL_MS);
+        if (silence_samples > MAX_SILENCE_SAMPLES) {
+          silence_samples = MAX_SILENCE_SAMPLES;
+        }
+        esp_codec_dev_write(device, silence_buffer,
+                            silence_samples * 2 * sizeof(int32_t));
+      }
+      wake_period_ticks = ticksForAtLeastOnePeriod(EMPTY_FILL_MS);
+      sustained_empty = 0;
+      continue;
+    }
+
     bool is_gemini_upsample = false;
     uint32_t src_sample_rate = active_sample_rate;
 
@@ -166,6 +183,20 @@ void SpeakerPlaybackTask::run() {
     if (rx_ptr != nullptr && rx_bytes > 0) {
       // Real audio data arrived — reset empty counter and play it
       sustained_empty = 0;
+      m_sustained_empty_ms = 0;
+
+      // ── Amplifier wake-up ──────────────────────────────────────────────
+      // If the PA was shut off during idle, power it back on and allow the
+      // DAC bias to stabilise before the first sample reaches the speaker.
+      if (!m_amp_enabled) {
+        LOGI_HAL("SpeakerPlayback: audio resumed — re-enabling amplifier.");
+        Board::getInstance().getIoExpanderInstance().setPowerRail(true);
+        vTaskDelay(pdMS_TO_TICKS(AMP_WARMUP_MS));
+        m_amp_enabled = true;
+        // Re-anchor the timer so we don't immediately catch-up all the
+        // ticks that elapsed while the amp was off.
+        last_wake = xTaskGetTickCount();
+      }
 
       size_t num_samples = rx_bytes / sizeof(int16_t);
 
@@ -208,14 +239,31 @@ void SpeakerPlaybackTask::run() {
 
     } else {
       // Buffer empty — write a short silence frame to keep the DMA clock alive
-      size_t silence_samples = samplesForDurationMs(active_sample_rate, EMPTY_FILL_MS);
-      if (silence_samples > MAX_SILENCE_SAMPLES) {
-        silence_samples = MAX_SILENCE_SAMPLES;
+      // (only while the amp is on; once it is off we just slow-poll).
+      if (m_amp_enabled) {
+        size_t silence_samples = samplesForDurationMs(active_sample_rate, EMPTY_FILL_MS);
+        if (silence_samples > MAX_SILENCE_SAMPLES) {
+          silence_samples = MAX_SILENCE_SAMPLES;
+        }
+        esp_codec_dev_write(device, silence_buffer,
+                            silence_samples * 2 * sizeof(int32_t));
       }
-      esp_codec_dev_write(device, silence_buffer,
-                          silence_samples * 2 * sizeof(int32_t));
       wake_period_ticks = ticksForAtLeastOnePeriod(EMPTY_FILL_MS);
       sustained_empty++;
+
+      // ── Amplifier idle-shutoff ─────────────────────────────────────────
+      m_sustained_empty_ms += EMPTY_FILL_MS;
+      if (m_amp_enabled && m_sustained_empty_ms >= AMP_IDLE_SHUTOFF_MS) {
+        LOGI_HAL("SpeakerPlayback: %lu ms of silence — disabling amplifier to save power.",
+                 (unsigned long)m_sustained_empty_ms);
+        Board::getInstance().getIoExpanderInstance().setPowerRail(false);
+        m_amp_enabled = false;
+      }
+
+      // Slow the poll rate while the amp is off — nothing urgent to do.
+      if (!m_amp_enabled) {
+        wake_period_ticks = ticksForAtLeastOnePeriod(AMP_IDLE_POLL_MS);
+      }
 
       // Only finalize turn_complete after SUSTAINED silence to avoid
       // cutting off the last PCM frames that arrive just before the
