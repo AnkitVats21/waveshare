@@ -39,6 +39,8 @@ set(srcs
             "app/media_player/StorageManager.cpp"
             "app/media_player/StreamManager.cpp"
             "app/media_player/HttpClientStream.cpp"
+            "app/media_player/InvidiousClient.cpp"
+            "app/media_player/MusicPlaybackService.cpp"
             "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
 
