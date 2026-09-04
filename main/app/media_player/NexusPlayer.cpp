@@ -36,7 +36,7 @@ NexusPlayer& NexusPlayer::getInstance() {
 NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
     : ReactorTask({
           "nexus_player",
-          ThreadConfig::StackSize::STACK_NORMAL,
+          ThreadConfig::StackSize::STACK_PLAYER,
           ThreadConfig::Priority::GEMINI_PROTOCOL, // Raised to 7 to preempt AssistantService (6) on Core 0
           ThreadConfig::CORE_NETWORK,
           COMP::ASSISTANT

@@ -45,10 +45,10 @@ private:
     bool _decoderIdentified = false;
     
     // PSRAM Buffers for working data
-    int16_t* _pcm_buffer = nullptr;        // Pre-allocated 32KB
-    int16_t* _resample_buffer = nullptr;   // Pre-allocated 4096 samples
+    int16_t* _pcm_buffer = nullptr;        // Pre-allocated 32KB (16384 samples)
+    int16_t* _resample_buffer = nullptr;   // Pre-allocated 32KB (16384 samples)
     size_t _pcm_buffer_size = 32768;
-    size_t _resample_buffer_samples = 4096;
+    size_t _resample_buffer_samples = 16384;
 
     TaskHandle_t _decoderTaskHandle = nullptr;
     volatile bool _isPlaying = false;

@@ -96,7 +96,7 @@ void WebMOpusDecoder::reset() {
 DecodeResult WebMOpusDecoder::decode(const uint8_t* inData, size_t inLen,
                                      int16_t* outPcm, size_t maxSamples,
                                      size_t& bytesConsumed, size_t& samplesDecoded) {
-    bytesConsumed = inLen;
+    bytesConsumed = 0;
     samplesDecoded = 0;
 
     if (!initOpusDecoder()) {
@@ -105,16 +105,19 @@ DecodeResult WebMOpusDecoder::decode(const uint8_t* inData, size_t inLen,
 
     // Handle skip bytes remaining from previously skipped elements
     size_t inOffset = 0;
-    if (_skipRemaining > 0) {
+    if (_skipRemaining > 0 && inLen > 0) {
         size_t toSkip = std::min(_skipRemaining, inLen);
         _skipRemaining -= toSkip;
         inOffset += toSkip;
     }
 
-    // Append remaining incoming bytes to assembly buffer
-    if (inOffset < inLen) {
-        _buffer.insert(_buffer.end(), inData + inOffset, inData + inLen);
+    // Append incoming bytes to assembly buffer if room available (cap at 16KB)
+    if (inOffset < inLen && _buffer.size() < 16384) {
+        size_t toAppend = std::min(inLen - inOffset, static_cast<size_t>(16384 - _buffer.size()));
+        _buffer.insert(_buffer.end(), inData + inOffset, inData + inOffset + toAppend);
+        inOffset += toAppend;
     }
+    bytesConsumed = inOffset;
 
     return processBuffer(outPcm, maxSamples, samplesDecoded);
 }
@@ -178,8 +181,9 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
                 ESP_LOGW(TAG, "SimpleBlock decode warning: %d", (int)res);
             }
 
-            if (samplesDecoded >= maxSamples - 1920) {
-                // Output PCM buffer near capacity; yield to consumer
+            if (samplesDecoded > 0) {
+                // Yield immediately to consumer per Opus frame (20-40ms)
+                // This ensures lowest latency and prevents resample buffer spikes.
                 break;
             }
         } else {
@@ -201,8 +205,8 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
     }
 
     // Safety guard against runaway buffer size
-    if (_buffer.size() > 32768) {
-        ESP_LOGW(TAG, "Buffer exceeded 32KB without sync; resetting");
+    if (_buffer.size() > 65536) {
+        ESP_LOGW(TAG, "Buffer exceeded 64KB without sync; resetting");
         _buffer.clear();
         _skipRemaining = 0;
         return DecodeResult::ERROR_INVALID_STREAM;

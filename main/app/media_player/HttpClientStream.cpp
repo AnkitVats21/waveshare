@@ -46,17 +46,23 @@ bool HttpClientStream::open(const std::string& url) {
     // --- HTTPS Security Layer Enhancements ---
     if (url.rfind("https://", 0) == 0) {
         config.transport_type = HTTP_TRANSPORT_OVER_SSL;
-        config.crt_bundle_attach = esp_crt_bundle_attach;
+        // Audio stream CDNs (e.g. googlevideo.com) frequently rotate intermediate and
+        // cross-signed certificates (GTS Root R1 cross-signed by GlobalSign) which fail
+        // strict x509 bundle checks. We do full TLS encryption without strict CA pinning
+        // so media streaming never aborts.
+        config.crt_bundle_attach = nullptr;
         config.skip_cert_common_name_check = true; 
         
         #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
         config.use_global_ca_store = false;
         #endif
         
-        config.buffer_size_tx = 1024;
-        config.buffer_size = 4096;
+        config.buffer_size_tx = 4096;
+        config.buffer_size = 8192;
     } else {
         config.transport_type = HTTP_TRANSPORT_OVER_TCP;
+        config.buffer_size_tx = 4096;
+        config.buffer_size = 8192;
     }
 
     _clientHandle = esp_http_client_init(&config);

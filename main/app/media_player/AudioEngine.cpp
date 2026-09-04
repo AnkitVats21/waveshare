@@ -87,6 +87,7 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
         return;
     } else if (result == DecodeResult::ERROR_INVALID_STREAM || result == DecodeResult::ERROR_DECODE_FAILED) {
         ESP_LOGD(TAG, "Decoder error result: %d", (int)result);
+        if (bytes_consumed == 0) bytes_consumed = payload_len;
         return;
     }
 
@@ -199,9 +200,12 @@ void AudioEngine::runDecodeLoop() {
         }
 
         // If we have fully consumed this chunk, return it to release memory
-        if (current_offset >= payload_len || bytes_consumed == 0) {
+        if (current_offset >= payload_len) {
             _bm.returnItem(_rawOpusInId, current_chunk);
             current_chunk = nullptr;
+        } else if (bytes_consumed == 0) {
+            // Decoder is working through buffered audio; yield briefly to avoid busy loop
+            vTaskDelay(pdMS_TO_TICKS(2));
         }
 
         // Yield CPU periodically to prevent task watchdog starvation on CPU 0

@@ -42,6 +42,7 @@ namespace ThreadConfig {
         STACK_LARGE     = 8 * 1024,
         STACK_ASSISTANT = 6 * 1024,  ///< AssistantService — transitionTo() frames carry a SystemState copy
         STACK_GEMINI    = 8 * 1024,  ///< GeminiProtocol — needs room for ArduinoJson tool-call serialization
+        STACK_PLAYER    = 12 * 1024, ///< NexusPlayer — handles InvidiousClient HTTPS + ArduinoJson during autoplay
         STACK_WW_FEED   = 3 * 1024,
         STACK_WW_DET    = 8 * 1024,
     };
