@@ -147,34 +147,10 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         });
     }
 
-    // Transition D: Reactive WAV format clock switching
-    // WAV files may be at various sample rates (16kHz, 44.1kHz, etc.)
-    // For WAV playback we still support clock switching since it's non-real-time-critical
+    // Transition D: Reactive WAV status logging (playback resampled in software to 32kHz)
     if ((changed & BIT_AUDIO::WAV_PLAYING) || (changed == 0)) {
-        auto& ww = WakeWordEngine::getInstance();
         if (snap.audio.wav_playing) {
-            // ONLY pause wake-word processing during WAV playback if it's NOT memory-prefetched
-            if (!snap.audio.wav_prefetched) {
-                ww.pauseHardware();
-            } else {
-                LOGI_AUDIO("WAV is memory prefetched. Keeping wake-word engine active during playback.");
-            }
-            if (m_hal.getSampleRate() != snap.audio.wav_sample_rate) {
-                LOGI_AUDIO("Switching hardware to %lu Hz for WAV playback.", (unsigned long)snap.audio.wav_sample_rate);
-                AudioPipelineManager::pauseSpeaker();
-                m_hal.setHardwareSampleRate(snap.audio.wav_sample_rate);
-                AudioPipelineManager::resumeSpeaker();
-            }
-        } else {
-            // Restore native clock after WAV playback ends
-            if (m_hal.getSampleRate() != NATIVE_SAMPLE_RATE) {
-                LOGI_AUDIO("WAV playback finished. Restoring %d Hz native clock...", (int)NATIVE_SAMPLE_RATE);
-                AudioPipelineManager::pauseSpeaker();
-                m_hal.setHardwareSampleRate(NATIVE_SAMPLE_RATE);
-                AudioPipelineManager::resumeSpeaker();
-            }
-            // ALWAYS resume wake-word processing when WAV playback stops
-            ww.resumeHardware();
+            LOGI_AUDIO("WAV playback active (resampled to native 32 kHz).");
         }
     }
 }
@@ -278,7 +254,6 @@ void AudioService::returnToWakeMode() {
     ww.setVadDeferred(false);
     ww.resumeHardware();
     AudioPipelineManager::setRtpRxInterrupted(false);
-    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
 
     LOGI_AUDIO("Wake mode restored.");
 }

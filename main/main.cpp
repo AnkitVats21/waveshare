@@ -1,5 +1,7 @@
 #include "app/AppController.h"
 #include "app/audio/AudioService.h"
+#include "app/audio/AudioOrchestrator.h"
+#include "app/audio/AlertPlayer.h"
 #include "app/led/LedService.h"
 #include "app/assistant/AssistantService.h"
 #include "app/mqtt/MqttService.h"
@@ -135,6 +137,8 @@ extern "C" void app_main(void) {
 
     // Start services
     audio_svc.begin();
+    AudioOrchestrator::getInstance().begin();
+    AlertPlayer::getInstance().begin();
     assistant_svc.begin();
 #if CONFIG_WAVESHARE_MQTT_ENABLE
     mqtt_svc.begin();
@@ -152,6 +156,7 @@ extern "C" void app_main(void) {
 
     // 6.5 Spawn ReactorTask background threads
     audio_svc.start();
+    AlertPlayer::getInstance().start();
     led_svc.start();
     assistant_svc.start();
 #if CONFIG_WAVESHARE_MQTT_ENABLE

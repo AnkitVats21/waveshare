@@ -10,7 +10,8 @@
 #include "model_path.h"
 
 #include "app/audio/MicCapture.h"  // for Buffers::MIC_TX_BUF
-#include "app/audio/SpeakerPlayback.h"  // for Buffers::SPK_RX_BUF
+#include "app/audio/SpeakerPlayback.h"
+#include "app/audio/AudioOrchestrator.h"
 #include "common/AppLogger.h"
 #include "services/BufferManager.h"
 #include "hal/Board.h"
@@ -325,10 +326,10 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
 
         // ── Stream AFE-processed audio into MIC_TX_BUF ───────────────────────
         // res->data is the beamformed + AEC mono output (cleaner than raw Mic1).
-        // Only write while streaming is active (wake word confirmed) and assistant is quiet.
-        bool assistant_talking = m_assistant_active;
-        size_t buffered_spk_bytes = bm.getUsedBytes(Buffers::SPK_RX_BUF);
-        bool block_mic_capture = assistant_talking || (buffered_spk_bytes > 0);
+        // Only block when assistant voice is actively playing out of the speaker.
+        bool assistant_talking = m_assistant_active || AudioOrchestrator::getInstance().isVoiceActive();
+        size_t buffered_voice_bytes = bm.getUsedBytes(Buffers::VOICE_RX_BUF);
+        bool block_mic_capture = assistant_talking || (buffered_voice_bytes > 0);
 
         if (m_streaming_active && !block_mic_capture && res->data && res->data_size > 0) {
             bm.send(Buffers::MIC_TX_BUF, res->data, res->data_size);

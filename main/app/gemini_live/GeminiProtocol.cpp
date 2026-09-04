@@ -13,6 +13,7 @@
 #include "services/BufferManager.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/AudioOrchestrator.h"
 #include "esp_heap_caps.h"
 #include "esp_crt_bundle.h"
 #include <string>
@@ -424,17 +425,16 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         if (data_end) {
             *data_end = '\0';
 
-            // If transitioning to speaking, flush stale 16kHz data and update sysdb (notifies reactors once)
+            // If transitioning to speaking, flush stale voice data and update sysdb (notifies reactors once)
             if (!sysdb.assistantSpeaking()) {
-                BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+                BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
                 sysdb.mutate([](SystemState& s) {
                     s.assistant.session_state = AssistantState::AssistantSpeaking;
                     s.assistant.visual_state  = AssistantVisualState::Speaking;
                     s.audio.assistant_speaking = true;
                 });
-                // Yield to let AudioService switch the I2S clock to 24kHz
-                // before we push the first decoded PCM frame
-                vTaskDelay(pdMS_TO_TICKS(20));
+                AudioOrchestrator::getInstance().notifyVoiceStarted();
+                vTaskDelay(pdMS_TO_TICKS(10));
             }
 
             size_t b64_len = data_end - data_start;
@@ -447,9 +447,9 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 if (written > 0) {
                     m_rx_audio_bytes += written;
 
-                    if (!BufferManager::getInstance().send(Buffers::SPK_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20))) {
+                    if (!BufferManager::getInstance().send(Buffers::VOICE_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20))) {
                         m_rx_dropped_frames++;
-                        LOGW_NET("Audio drop: SPK_RX_BUF is full!");
+                        LOGW_NET("Audio drop: VOICE_RX_BUF is full!");
                     }
                 }
             } else {

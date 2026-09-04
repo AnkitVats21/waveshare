@@ -17,7 +17,9 @@ bool AudioPipelineManager::initialize(uint32_t sample_rate,
 
     // Verify ring buffers are allocated (done in app_main via BufferManager)
     if (!BufferManager::getInstance().handle(Buffers::MIC_TX_BUF) ||
-        !BufferManager::getInstance().handle(Buffers::SPK_RX_BUF)) {
+        !BufferManager::getInstance().handle(Buffers::VOICE_RX_BUF) ||
+        !BufferManager::getInstance().handle(Buffers::ALERT_RX_BUF) ||
+        !BufferManager::getInstance().handle(Buffers::MEDIA_RX_BUF)) {
         LOGE_AUDIO("Ring buffers not allocated — was BufferManager initialized?");
         return false;
     }
@@ -56,7 +58,9 @@ void AudioPipelineManager::teardown() {
 
     // 4. Flush ring buffers (BufferManager owns them; do NOT delete)
     BufferManager::getInstance().flush(Buffers::MIC_TX_BUF);
-    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+    BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
+    BufferManager::getInstance().flush(Buffers::ALERT_RX_BUF);
+    BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
 
     LOGI_AUDIO("Audio Pipeline teardown complete.");
 }

@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "app/audio/AudioOrchestrator.h"
+
 // Declare the playback and storage buffers for NexusPlayer
 DECLARE_BUFFER(PLAYER_BUF, "player_buf", 512 * 1024)
 DECLARE_BUFFER(STREAM_BUF, "stream_buf", 256 * 1024)
@@ -20,7 +22,7 @@ enum PlayerState {
     STATE_PAUSED 
 };
 
-class NexusPlayer : public ReactorTask {
+class NexusPlayer : public ReactorTask, public IAudioFocusObserver {
 public:
     static NexusPlayer& getInstance();
     NexusPlayer(BufferManager::BufferId playbackId, BufferManager::BufferId storageId);
@@ -33,14 +35,15 @@ public:
     void resume();
     void stop();
     
-    void playAlert(AlertType type);
-    
     PlayerState getState() { return _state; }
     StorageManager& getStorageManager() { return _storageManager; }
 
     // Observer Pattern registration
     void addObserver(IPlaybackObserver* observer);
     void removeObserver(IPlaybackObserver* observer);
+
+    // IAudioFocusObserver interface
+    void onAudioFocusChange(AudioTrack track, FocusEvent event) override;
 
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
@@ -49,8 +52,6 @@ public:
 private:
     PlayerState _state = STATE_IDLE;
     char _activeSongId[64] = {0};
-    uint8_t* _savedPcmBuffer = nullptr;
-    size_t _savedPcmLen = 0;
     
     BufferManager::BufferId _playbackId;
     BufferManager::BufferId _storageId;

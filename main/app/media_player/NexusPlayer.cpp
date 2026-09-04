@@ -3,6 +3,7 @@
 #include <cstring>
 #include <algorithm>
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/AudioOrchestrator.h"
 #include "common/thread_config.h"
 
 static const char* TAG = "NexusPlayer";
@@ -37,24 +38,18 @@ NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::Buff
     : ReactorTask({
           "nexus_player",
           ThreadConfig::StackSize::STACK_PLAYER,
-          ThreadConfig::Priority::GEMINI_PROTOCOL, // Raised to 7 to preempt AssistantService (6) on Core 0
+          ThreadConfig::Priority::GEMINI_PROTOCOL,
           ThreadConfig::CORE_NETWORK,
           COMP::ASSISTANT
       }),
-      _savedPcmBuffer(nullptr),
-      _savedPcmLen(0),
       _playbackId(playbackId),
       _storageId(storageId),
       _storageManager(playbackId, storageId),
       _streamManager(playbackId, storageId, _storageManager),
-      _audioEngine(playbackId, Buffers::SPK_RX_BUF) {}
+      _audioEngine(playbackId, Buffers::MEDIA_RX_BUF) {}
 
 NexusPlayer::~NexusPlayer() {
     stop();
-    if (_savedPcmBuffer != nullptr) {
-        heap_caps_free(_savedPcmBuffer);
-        _savedPcmBuffer = nullptr;
-    }
     if (_mutex != nullptr) {
         vSemaphoreDelete(_mutex);
         _mutex = nullptr;
@@ -70,16 +65,7 @@ bool NexusPlayer::begin() {
         return false;
     }
 
-    size_t spk_buf_size = BufferManager::getInstance().size(Buffers::SPK_RX_BUF);
-    if (spk_buf_size == 0) {
-        spk_buf_size = 512 * 1024;
-    }
-    _savedPcmBuffer = (uint8_t*)heap_caps_malloc(spk_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!_savedPcmBuffer) {
-        ESP_LOGE(TAG, "Failed to allocate saved PCM buffer in SPIRAM");
-    }
-    _savedPcmLen = 0;
-
+    AudioOrchestrator::getInstance().addObserver(this);
     return _audioEngine.initialize(32000, 1);
 }
 
@@ -113,6 +99,25 @@ void NexusPlayer::notifyPlaybackError(const char* songId, int err) {
     }
 }
 
+void NexusPlayer::onAudioFocusChange(AudioTrack track, FocusEvent event) {
+    if (track == AudioTrack::MEDIA) {
+        PlayerLock lock(_mutex);
+        if (event == FocusEvent::LOSS_PAUSE) {
+            if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
+                ESP_LOGI(TAG, "Audio focus lost (pause) — pausing media playback");
+                _should_resume_after_session = true;
+                pause_internal();
+            }
+        } else if (event == FocusEvent::GAIN) {
+            if (_state == STATE_PAUSED && _should_resume_after_session) {
+                ESP_LOGI(TAG, "Audio focus gained (resume) — resuming media playback");
+                _should_resume_after_session = false;
+                resume_internal();
+            }
+        }
+    }
+}
+
 void NexusPlayer::play(const char* songId, const char* downloadUrl) {
     PlayerLock lock(_mutex);
 
@@ -126,7 +131,7 @@ void NexusPlayer::play(const char* songId, const char* downloadUrl) {
         _pendingSongId = songId;
         _pendingDownloadUrl = downloadUrl;
         _should_play_after_session = true;
-        _should_resume_after_session = false; // Overridden by new play request
+        _should_resume_after_session = false;
         return;
     }
 
@@ -136,11 +141,9 @@ void NexusPlayer::play(const char* songId, const char* downloadUrl) {
 void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
     ESP_LOGI(TAG, "Play requested for songId: %s, url: %s", songId, downloadUrl);
 
-    // Starting a new song cancels any deferred session resumption/play
     _should_resume_after_session = false;
     _should_play_after_session = false;
 
-    // If currently playing, stop it first
     if (_state != STATE_IDLE) {
         stop();
     }
@@ -148,21 +151,19 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
     strncpy(_activeSongId, songId, sizeof(_activeSongId) - 1);
     _activeSongId[sizeof(_activeSongId) - 1] = '\0';
 
-    // Flush all buffers before starting new session
+    // Flush buffers before starting new stream
     BufferManager::getInstance().flush(_playbackId);
     BufferManager::getInstance().flush(_storageId);
-    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+    BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
 
     notifyTrackStarted(songId);
+    AudioOrchestrator::getInstance().notifyMediaStarted();
 
     if (_storageManager.fileExists(songId)) {
         ESP_LOGI(TAG, "Cache Hit! Playing local file for songId: %s", songId);
         _state = STATE_LOCAL_PLAYBACK;
-
-        // Start decoding engine
         _audioEngine.start();
 
-        // Open local file for reading. Spawns Reader Task.
         if (!_storageManager.openFileForReading(songId)) {
             ESP_LOGE(TAG, "Failed to open local file for reading");
             stopActivePipelines();
@@ -177,11 +178,8 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
         if (doCache) {
             ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);
             _state = STATE_STREAMING_AND_CACHING;
-
-            // Start decoding engine
             _audioEngine.start();
 
-            // Open temp file for caching (writes stream to it and reads progressively)
             if (!_storageManager.openFileForCaching(songId)) {
                 ESP_LOGE(TAG, "Failed to open file for caching");
                 stopActivePipelines();
@@ -190,7 +188,6 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
                 return;
             }
 
-            // Start downloading HTTP stream chunk-by-chunk to STREAM_BUF. Spawns Network Task.
             if (!_streamManager.beginStreaming(downloadUrl, true)) {
                 ESP_LOGE(TAG, "Failed to start streaming");
                 stopActivePipelines();
@@ -201,11 +198,8 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
         } else {
             ESP_LOGI(TAG, "Cache Miss! Pure live streaming (no SD cache) songId: %s", songId);
             _state = STATE_STREAMING_AND_CACHING;
-
-            // Start decoding engine
             _audioEngine.start();
 
-            // Start downloading HTTP stream chunk-by-chunk DIRECTLY to PLAYER_BUF. Spawns Network Task.
             if (!_streamManager.beginStreaming(downloadUrl, false)) {
                 ESP_LOGE(TAG, "Failed to start live streaming");
                 stopActivePipelines();
@@ -219,8 +213,8 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
 
 void NexusPlayer::pause() {
     PlayerLock lock(_mutex);
-    _should_resume_after_session = false; // Explicit pause cancels auto-resume
-    _should_play_after_session = false;   // Explicit pause cancels pending plays
+    _should_resume_after_session = false;
+    _should_play_after_session = false;
     pause_internal();
 }
 
@@ -228,33 +222,6 @@ void NexusPlayer::pause_internal() {
     if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
         ESP_LOGI(TAG, "Pausing playback");
         _audioEngine.pause();
-
-        vTaskDelay(pdMS_TO_TICKS(5));
-
-        // Save the current contents of SPK_RX_BUF to the SPIRAM buffer
-        _savedPcmLen = 0;
-        if (_savedPcmBuffer != nullptr) {
-            auto &bm = BufferManager::getInstance();
-            size_t rx_bytes = 0;
-            size_t max_size = bm.size(Buffers::SPK_RX_BUF);
-            if (max_size == 0) max_size = 512 * 1024;
-            
-            while (true) {
-                void* rx_ptr = bm.receive(Buffers::SPK_RX_BUF, &rx_bytes, 0, 512 * 1024);
-                if (rx_ptr == nullptr || rx_bytes == 0) {
-                    break;
-                }
-                if (_savedPcmLen + rx_bytes <= max_size) {
-                    memcpy(_savedPcmBuffer + _savedPcmLen, rx_ptr, rx_bytes);
-                    _savedPcmLen += rx_bytes;
-                } else {
-                    ESP_LOGE(TAG, "Saved PCM buffer overflow!");
-                }
-                bm.returnItem(Buffers::SPK_RX_BUF, rx_ptr);
-            }
-            ESP_LOGI(TAG, "Saved %zu bytes of PCM data from SPK_RX_BUF", _savedPcmLen);
-        }
-
         _state = STATE_PAUSED;
     }
 }
@@ -264,7 +231,7 @@ void NexusPlayer::resume() {
     if (_session_active) {
         ESP_LOGI(TAG, "Resume requested during active session. Deferring until session ends.");
         _should_resume_after_session = true;
-        _should_play_after_session = false; // Resume overrides any pending play
+        _should_play_after_session = false;
     } else {
         resume_internal();
     }
@@ -273,19 +240,6 @@ void NexusPlayer::resume() {
 void NexusPlayer::resume_internal() {
     if (_state == STATE_PAUSED) {
         ESP_LOGI(TAG, "Resuming playback");
-
-        // Restore the saved PCM data back to SPK_RX_BUF
-        if (_savedPcmBuffer != nullptr && _savedPcmLen > 0) {
-            auto &bm = BufferManager::getInstance();
-            bool sent = bm.send(Buffers::SPK_RX_BUF, _savedPcmBuffer, _savedPcmLen, pdMS_TO_TICKS(100));
-            if (sent) {
-                ESP_LOGI(TAG, "Restored %zu bytes of PCM data to SPK_RX_BUF", _savedPcmLen);
-            } else {
-                ESP_LOGE(TAG, "Failed to restore PCM data to SPK_RX_BUF");
-            }
-            _savedPcmLen = 0;
-        }
-
         _audioEngine.resume();
         if (_streamManager.isStreaming()) {
             _state = STATE_STREAMING_AND_CACHING;
@@ -302,17 +256,17 @@ void NexusPlayer::stop() {
     }
     ESP_LOGI(TAG, "Stopping playback and active pipelines");
     stopActivePipelines();
-    _savedPcmLen = 0;
     _state = STATE_IDLE;
     _activeSongId[0] = '\0';
     _should_resume_after_session = false;
     _should_play_after_session = false;
     _pendingSongId.clear();
     _pendingDownloadUrl.clear();
+    AudioOrchestrator::getInstance().notifyMediaStopped();
 }
 
 void NexusPlayer::stopActivePipelines() {
-    // 1. Stop streaming from network (kills HTTP connection and net task)
+    // 1. Stop streaming from network
     _streamManager.stopStreaming();
 
     // 2. Unblock AudioEngine decoder task from waiting on PLAYER_BUF
@@ -320,7 +274,7 @@ void NexusPlayer::stopActivePipelines() {
     BufferManager::getInstance().send(_playbackId, &eof_header, sizeof(eof_header));
     BufferManager::getInstance().send(_storageId, &eof_header, sizeof(eof_header));
 
-    // 3. Stop AudioEngine (kills decoder task)
+    // 3. Stop AudioEngine
     _audioEngine.stop();
 
     // 4. Stop and clean up SD Reader/Writer tasks and active file streams
@@ -329,12 +283,7 @@ void NexusPlayer::stopActivePipelines() {
     // 5. Flush all buffers
     BufferManager::getInstance().flush(_playbackId);
     BufferManager::getInstance().flush(_storageId);
-    BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
-}
-
-void NexusPlayer::playAlert(AlertType type) {
-    PlayerLock lock(_mutex);
-    _audioEngine.playAlert(type);
+    BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
 }
 
 void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap) {
@@ -392,7 +341,7 @@ void NexusPlayer::checkPlaybackFinished() {
     if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
         if (!_audioEngine.isPlaying()) {
             auto &bm = BufferManager::getInstance();
-            if (bm.getUsedBytes(Buffers::SPK_RX_BUF) == 0) {
+            if (bm.getUsedBytes(Buffers::MEDIA_RX_BUF) == 0) {
                 ESP_LOGI(TAG, "Playback naturally finished for songId: %s. Notifying observers.", _activeSongId);
                 char finishedSong[64];
                 strncpy(finishedSong, _activeSongId, sizeof(finishedSong) - 1);

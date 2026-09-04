@@ -210,7 +210,7 @@ void WavPlayer::stop() {
     if (m_playing) {
         m_stop_requested = true;
         // Flush buffer to cut off audio immediately
-        BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+        BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
         
         // Wait for the task to finish exiting (relaxed from 5ms to 20ms to prevent CPU spinning)
         while (m_playing) {
@@ -299,8 +299,34 @@ void WavPlayer::playbackTask() {
             send_size = num_frames * sizeof(int16_t);
         }
 
-        // Send to ringbuffer (blocks if full, which throttles this loop naturally)
-        bm.send(Buffers::SPK_RX_BUF, buffer, send_size, pdMS_TO_TICKS(100));
+        // Resample mono to 32kHz if needed, otherwise send direct
+        int16_t* pcm = (int16_t*)buffer;
+        size_t mono_samples = send_size / sizeof(int16_t);
+
+        if (m_info.sample_rate != 32000 && m_info.sample_rate > 0) {
+            size_t out_samples = (mono_samples * 32000) / m_info.sample_rate;
+            int16_t* resampled = (int16_t*)malloc(out_samples * sizeof(int16_t));
+            if (resampled) {
+                float ratio = (float)m_info.sample_rate / 32000.0f;
+                for (size_t j = 0; j < out_samples; ++j) {
+                    float src_pos = j * ratio;
+                    size_t idx = (size_t)src_pos;
+                    float frac = src_pos - idx;
+                    if (idx + 1 < mono_samples) {
+                        float s0 = pcm[idx];
+                        float s1 = pcm[idx + 1];
+                        resampled[j] = (int16_t)(s0 + frac * (s1 - s0));
+                    } else {
+                        resampled[j] = pcm[idx];
+                    }
+                }
+                bm.send(Buffers::MEDIA_RX_BUF, resampled, out_samples * sizeof(int16_t), pdMS_TO_TICKS(100));
+                free(resampled);
+            }
+        } else {
+            // Send directly to MEDIA_RX_BUF
+            bm.send(Buffers::MEDIA_RX_BUF, buffer, send_size, pdMS_TO_TICKS(100));
+        }
     }
 
     free(buffer);
@@ -310,9 +336,8 @@ void WavPlayer::playbackTask() {
     }
 
     // 2. Wait until the ringbuffer has been completely drained by SpeakerPlaybackTask.
-    // This serves as the event-driven trigger that the audio output is fully complete.
-    while (m_playing && !m_stop_requested && bm.getUsedBytes(Buffers::SPK_RX_BUF) > 0) {
-        vTaskDelay(pdMS_TO_TICKS(20)); // Relaxed from 10ms to 20ms
+    while (m_playing && !m_stop_requested && bm.getUsedBytes(Buffers::MEDIA_RX_BUF) > 0) {
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 
     // 3. Clear WAV playing state, which reactively restores the native 24kHz clock and re-arms wake-word

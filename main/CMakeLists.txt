@@ -28,6 +28,8 @@ set(srcs
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
             "app/audio/AudioPipelineManager.cpp"
+            "app/audio/AudioOrchestrator.cpp"
+            "app/audio/AlertPlayer.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
             "app/media_player/WavPlayer.cpp"

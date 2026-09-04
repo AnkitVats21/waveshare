@@ -1,5 +1,6 @@
 #include "AssistantService.h"
-#include "app/media_player/NexusPlayer.h"
+#include "app/audio/AlertPlayer.h"
+#include "app/audio/AudioOrchestrator.h"
 #include "app/gemini_live/GeminiProtocol.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
@@ -11,15 +12,9 @@
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
-// Helper: play an audio alert on a tiny fire-and-forget FreeRTOS task.
-static void playAlertTask(void* arg) {
-    AlertType type = static_cast<AlertType>(reinterpret_cast<uintptr_t>(arg));
-    NexusPlayer::getInstance().playAlert(type);
-    vTaskDelete(nullptr);
-}
-
+// Non-blocking, thread-safe alert dispatch via AlertPlayer queue
 static void playAlertAsync(AlertType type) {
-    xTaskCreatePinnedToCore(playAlertTask, "alert_async", ThreadConfig::StackSize::STACK_LARGE, reinterpret_cast<void*>(static_cast<uintptr_t>(type)), ThreadConfig::Priority::AUDIO_ALERT, nullptr, 1);
+    AlertPlayer::getInstance().playAlert(type);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -378,6 +373,7 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
     // 3. Play audio alerts asynchronously
     switch (newState) {
         case AssistantState::StartingSession:
+            AudioOrchestrator::getInstance().notifyWakeWordDetected();
             playAlertAsync(ALERT_WAKE_CONFIRM);
             break;
         case AssistantState::StreamingUserAudio:

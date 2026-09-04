@@ -6,14 +6,6 @@
 #include "freertos/event_groups.h"
 #include <memory>
 
-enum AlertType {
-    ALERT_WAKE_CONFIRM,
-    ALERT_READY_TO_SPEAK,
-    ALERT_SESSION_END,
-    ALERT_ERROR,
-    ALERT_OFFLINE
-};
-
 class AudioEngine {
 public:
     AudioEngine(BufferManager::BufferId rawOpusInId, BufferManager::BufferId pcmOutId);
@@ -29,11 +21,6 @@ public:
     void pause();
     void resume();
     bool isPlaying() const { return _isPlaying; }
-
-    // Alert playback APIs
-    void playAlert(AlertType type);
-    bool playAlertFile(const char* path);
-    void playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms);
 
 private:
     BufferManager& _bm;
