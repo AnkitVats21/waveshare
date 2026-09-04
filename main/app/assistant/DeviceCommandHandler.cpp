@@ -221,7 +221,7 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
         // }
 
         default:
-            // Forward to the MPV media command handler
+            // Forward to the Media command handler
             return false;
     }
 }

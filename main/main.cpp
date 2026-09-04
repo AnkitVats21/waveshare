@@ -118,7 +118,9 @@ extern "C" void app_main(void) {
     static AudioService         audio_svc(audio_hal, handles);
     static LedService           led_svc(led_strip);
     static AssistantService     assistant_svc;
+#if CONFIG_WAVESHARE_MQTT_ENABLE
     static MqttService&         mqtt_svc = MqttService::getInstance();
+#endif
     static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
     (void)gemini_proto; // Suppress unused warning since task auto-spawns on instantiation
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
@@ -128,7 +130,9 @@ extern "C" void app_main(void) {
     // Start services
     audio_svc.begin();
     assistant_svc.begin();
+#if CONFIG_WAVESHARE_MQTT_ENABLE
     mqtt_svc.begin();
+#endif
     NexusPlayer::getInstance().begin();
     MusicPlaybackService::getInstance().begin();
     gemini_pump.start();
@@ -144,7 +148,9 @@ extern "C" void app_main(void) {
     audio_svc.start();
     led_svc.start();
     assistant_svc.start();
+#if CONFIG_WAVESHARE_MQTT_ENABLE
     mqtt_svc.start();
+#endif
     gemini_proto.start();
     app_ctrl.start();
     key_svc.start();

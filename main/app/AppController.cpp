@@ -5,7 +5,6 @@
 #include "app/gemini_live/gemini_skills_generated.h"
 #include "app/led/LedService.h"
 #include "app/assistant/AssistantService.h"
-#include "app/mqtt/MqttService.h"
 #include "app/assistant/MediaCommandHandler.h"
 #include "app/assistant/DeviceCommandHandler.h"
 #include "services/time/TimeSyncHelper.h"
@@ -85,12 +84,12 @@ void AppController::handleGeminiToolCall(const GeminiSkills::DecodedSkillCall& s
 
 void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_call) {
     JsonDocument response_doc;
-    bool is_mpv_command = false;
+    bool is_media_command = false;
 
-    // Try device/local commands first; if not handled, fall back to MPV command handler
+    // Try device/local commands first; if not handled, fall back to media command handler
     if (!DeviceCommandHandler::handle(skill_call, response_doc)) {
         if (MediaCommandHandler::handle(skill_call, response_doc)) {
-            is_mpv_command = true;
+            is_media_command = true;
         } else {
             response_doc["status"] = "error";
             response_doc["message"] = "Unsupported tool skill";
@@ -103,12 +102,12 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
     LOGI_SYSTEM("Uplinking tool response: %s", feedback_string.c_str());
     GeminiProtocol::getInstance().transmitToolResponse(skill_call.call_id, feedback_string.c_str());
 
-    // If it was an MPV command, set the mpv_pending_idle flag to trigger immediate session termination once speaking finishes
-    if (is_mpv_command) {
-        LOGI_SYSTEM("MPV command handled. Setting pending idle flag to bypass VAD delay after speech confirmation.");
+    // If it was a media command, set the media_pending_idle flag to trigger immediate session termination once speaking finishes
+    if (is_media_command) {
+        LOGI_SYSTEM("Media command handled. Setting pending idle flag to bypass VAD delay after speech confirmation.");
         auto& sysdb = EmbeddedSysDb::getInstance();
         sysdb.mutate([](SystemState& s) {
-            s.assistant.mpv_pending_idle = true;
+            s.assistant.media_pending_idle = true;
         });
     }
 }

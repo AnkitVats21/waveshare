@@ -111,7 +111,7 @@ namespace BIT_MQTT {
     X(AssistantVisualState, visual_state, AssistantVisualState::Offline, BIT_ASSISTANT::VISUAL_STATE) \
     X(bool, connect_requested, false, BIT_ASSISTANT::CONNECT_REQ) \
     X(WsState, ws_state, WsState::DISCONNECTED, BIT_ASSISTANT::WS_STATE) \
-    X(bool, mpv_pending_idle, false, 0)
+    X(bool, media_pending_idle, false, 0)
 
 #define LED_FIELDS \
     X(LedMode, mode, LedMode::OFF, BIT_LED::MODE) \

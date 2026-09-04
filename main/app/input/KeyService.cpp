@@ -3,7 +3,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "app/media_player/NexusPlayer.h"
-#include "app/mqtt/MqttService.h"
+#include "app/media_player/MusicPlaybackService.h"
 #include <algorithm>
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
@@ -77,10 +77,10 @@ void KeyService::run() {
 
                         if (keys[i] == KeyId::KEY_3) {
                             ESP_LOGI(TAG, "Key 3 long press: requesting next track");
-                            MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"next\"}");
+                            MusicPlaybackService::getInstance().next();
                         } else if (keys[i] == KeyId::KEY_5) {
                             ESP_LOGI(TAG, "Key 5 long press: requesting previous track");
-                            MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"previous\"}");
+                            MusicPlaybackService::getInstance().previous();
                         }
                     }
                 }

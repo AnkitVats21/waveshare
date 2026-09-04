@@ -1,7 +1,6 @@
 #include "AssistantService.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/gemini_live/GeminiProtocol.h"
-#include "app/mqtt/MqttService.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
@@ -215,9 +214,9 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
 
         case AssistantState::AssistantSpeaking:
             if (snap.audio.turn_complete_pending || !snap.audio.assistant_speaking) {
-                if (snap.assistant.mpv_pending_idle) {
+                if (snap.assistant.media_pending_idle) {
                     if (!snap.audio.turn_complete_pending) {
-                        ESP_LOGI(TAG, "MPV command was executed and speech playback completed. Transitioning directly to Closing to bypass VAD.");
+                        ESP_LOGI(TAG, "Media command was executed and speech playback completed. Transitioning directly to Closing to bypass VAD.");
                         transitionTo(AssistantState::Closing, &snap);
                     }
                 } else {
@@ -230,8 +229,8 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
             break;
 
         case AssistantState::WaitingForFollowup:
-            if (snap.assistant.mpv_pending_idle) {
-                ESP_LOGI(TAG, "MPV command was executed. Transitioning directly to Closing from WaitingForFollowup.");
+            if (snap.assistant.media_pending_idle) {
+                ESP_LOGI(TAG, "Media command was executed. Transitioning directly to Closing from WaitingForFollowup.");
                 transitionTo(AssistantState::Closing, &snap);
             } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
                 ESP_LOGW(TAG, "WaitingForFollowup: WebSocket lost (state=%d). Returning to Idle.", (int)ws);
@@ -276,8 +275,6 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
 
     LOGI_SYSTEM("Assistant transition request: %s ──> %s", assistantStateToString(oldState), assistantStateToString(newState));
 
-    publishMusicCommand(oldState, newState);
-
     // 1. Cleanup timers/actions of the old state
     switch (oldState) {
         case AssistantState::Connecting:
@@ -305,7 +302,7 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
             sysdb.mutate([](SystemState& s) {
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
-                s.assistant.mpv_pending_idle = false;
+                s.assistant.media_pending_idle = false;
             });
             break;
 
@@ -408,8 +405,6 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
     m_current_state = newState;
     LOGI_SYSTEM("Syncing local state machine from external change: %s ──> %s", assistantStateToString(oldState), assistantStateToString(newState));
 
-    publishMusicCommand(oldState, newState);
-
     // Sync timers and internal variables
     switch (oldState) {
         case AssistantState::Connecting:
@@ -433,7 +428,7 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
                 s.pipeline.mode = PipelineMode::WAKE_IDLE;
                 s.audio.session_active = false;
                 s.assistant.connect_requested = false;
-                s.assistant.mpv_pending_idle = false;
+                s.assistant.media_pending_idle = false;
             });
             break;
         case AssistantState::Connecting:
@@ -465,17 +460,5 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
             break;
         default:
             break;
-    }
-}
-
-
-
-void AssistantService::publishMusicCommand(AssistantState oldState, AssistantState newState) {
-    if (newState == AssistantState::StartingSession) {
-        MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_pause\"}");
-    }
-    if (oldState != AssistantState::Idle &&
-        (newState == AssistantState::Idle || newState == AssistantState::Closing || newState == AssistantState::ErrorCooldown)) {
-        MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"assistant_play\"}");
     }
 }

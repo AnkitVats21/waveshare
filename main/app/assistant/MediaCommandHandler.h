@@ -6,7 +6,7 @@
 class MediaCommandHandler {
 public:
     /**
-     * @brief Translates Gemini tool calls into MQTT messages published to HiveMQ mpv/command topic.
+     * @brief Executes Gemini media tool calls using on-device MusicPlaybackService and NexusPlayer.
      * @param skill_call The decoded skill call details and arguments.
      * @param response_doc The output JSON response to return to Gemini.
      * @return true if handled, false if unsupported.

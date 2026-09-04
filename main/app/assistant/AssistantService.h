@@ -19,7 +19,6 @@ protected:
 private:
     void handleStateTransition(AssistantState oldState, AssistantState newState, const SystemState& snap);
     void transitionTo(AssistantState newState, const SystemState* snap_ptr = nullptr);
-    void publishMusicCommand(AssistantState oldState, AssistantState newState);
 
     static void connectTimeoutCallback(void* arg);
     static void idleTimeoutCallback(void* arg);

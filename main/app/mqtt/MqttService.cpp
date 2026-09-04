@@ -13,12 +13,20 @@
 #include <sstream>
 #include <ArduinoJson.h>
 #include "app/media_player/NexusPlayer.h"
+#include "app/media_player/MusicPlaybackService.h"
 
-// MQTT configuration from Kconfig
+// MQTT configuration from Kconfig with fallback defaults
+#ifdef CONFIG_WAVESHARE_MQTT_BROKER_URI
 static constexpr const char *MQTTS_BROKER_URI  = CONFIG_WAVESHARE_MQTT_BROKER_URI;
 static constexpr const char *MQTT_USERNAME     = CONFIG_WAVESHARE_MQTT_USERNAME;
 static constexpr const char *MQTT_PASSWORD     = CONFIG_WAVESHARE_MQTT_PASSWORD;
 static constexpr const char *MQTT_CLIENT_ID    = CONFIG_WAVESHARE_MQTT_CLIENT_ID;
+#else
+static constexpr const char *MQTTS_BROKER_URI  = "mqtt://broker.emqx.io";
+static constexpr const char *MQTT_USERNAME     = "";
+static constexpr const char *MQTT_PASSWORD     = "";
+static constexpr const char *MQTT_CLIENT_ID    = "waveshare-esp32";
+#endif
 static constexpr const char *TOPIC_CONFIG      = "device/waveshare/config";
 static constexpr const char *TOPIC_DYNAMIC_SUB = "device/subscribe/topic";
 static constexpr const char *TOPIC_CONFIG_GET  = "device/waveshare/config/get";
@@ -76,6 +84,7 @@ bool MqttService::publish(const char* topic, const char* payload, int qos, int r
 // ─────────────────────────────────────────────────────────────────────────────
 
 void MqttService::onStateChanged(ComponentMask changed, const SystemState& snap) {
+#if CONFIG_WAVESHARE_MQTT_ENABLE
     if (changed & BIT_SYSTEM::WIFI_CONNECTED) {
         bool wifi_ok = snap.system.wifi_connected;
 
@@ -84,16 +93,22 @@ void MqttService::onStateChanged(ComponentMask changed, const SystemState& snap)
             LOGI_SYSTEM("WiFi connected — initializing MQTT client.");
             
             esp_mqtt_client_config_t mqtt_cfg = {};
-            std::string broker_uri = MQTTS_BROKER_URI;
+
+            Services::SystemConfig sd_cfg = Services::GetConfig();
+            std::string broker_uri = (sd_cfg.mqtt.broker_uri[0] != '\0') ? sd_cfg.mqtt.broker_uri : MQTTS_BROKER_URI;
+            std::string username   = (sd_cfg.mqtt.username[0] != '\0')   ? sd_cfg.mqtt.username   : MQTT_USERNAME;
+            std::string password   = (sd_cfg.mqtt.password[0] != '\0')   ? sd_cfg.mqtt.password   : MQTT_PASSWORD;
+            std::string client_id  = (sd_cfg.mqtt.client_id[0] != '\0')  ? sd_cfg.mqtt.client_id  : MQTT_CLIENT_ID;
+
             if (broker_uri.find("mqtt://") != 0 && broker_uri.find("mqtts://") != 0 && 
                 broker_uri.find("ws://") != 0 && broker_uri.find("wss://") != 0) {
                 broker_uri = "mqtts://" + broker_uri;
             }
             mqtt_cfg.broker.address.uri = broker_uri.c_str();
             mqtt_cfg.broker.verification.certificate = BROKER_ROOT_CA_PEM;
-            mqtt_cfg.credentials.username = MQTT_USERNAME;
-            mqtt_cfg.credentials.authentication.password = MQTT_PASSWORD;
-            mqtt_cfg.credentials.client_id = MQTT_CLIENT_ID;
+            mqtt_cfg.credentials.username = username.c_str();
+            mqtt_cfg.credentials.authentication.password = password.c_str();
+            mqtt_cfg.credentials.client_id = client_id.c_str();
 
             m_mqtt_handle = esp_mqtt_client_init(&mqtt_cfg);
             if (m_mqtt_handle) {
@@ -114,6 +129,7 @@ void MqttService::onStateChanged(ComponentMask changed, const SystemState& snap)
             });
         }
     }
+#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,7 +147,6 @@ void MqttService::handleMqttEvent(int32_t event_id, esp_mqtt_event_handle_t even
         case MQTT_EVENT_CONNECTED:
             ESP_LOGI(TAG, "Connected to MQTT broker securely!");
             m_connected = true;
-            esp_mqtt_client_subscribe(m_mqtt_handle, "device/esp32s3/commands", 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG, 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_DYNAMIC_SUB, 0);
             esp_mqtt_client_subscribe(m_mqtt_handle, TOPIC_CONFIG_GET, 0);
@@ -250,19 +265,60 @@ void MqttService::processIncomingData(esp_mqtt_event_handle_t event) {
             }
         }
     } else if (topic == TOPIC_MEDIA) {
-        ESP_LOGI(TAG, "Media command received");
+        ESP_LOGI(TAG, "Media command received: %s", payload.c_str());
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, payload);
         if (error) {
             ESP_LOGE(TAG, "Failed to parse media command JSON: %s", error.c_str());
         } else {
-            const char* song_id = doc["song_id"];
-            const char* song_url = doc["song_url"];
-            if (song_id && song_url) {
-                ESP_LOGI(TAG, "Forwarding media command to NexusPlayer: song_id=%s, url=%s", song_id, song_url);
-                NexusPlayer::getInstance().play(song_id, song_url);
+            const char* cmd = doc["cmd"];
+            const char* query = doc["query"] | doc["title"];
+
+            if (cmd) {
+                if (strcmp(cmd, "play") == 0) {
+                    if (query && query[0] != '\0') {
+                        ESP_LOGI(TAG, "MQTT Media: play '%s'", query);
+                        MusicPlaybackService::getInstance().play(query);
+                    } else {
+                        ESP_LOGI(TAG, "MQTT Media: resume");
+                        MusicPlaybackService::getInstance().resume();
+                    }
+                } else if (strcmp(cmd, "pause") == 0) {
+                    ESP_LOGI(TAG, "MQTT Media: pause");
+                    MusicPlaybackService::getInstance().pause();
+                } else if (strcmp(cmd, "resume") == 0) {
+                    ESP_LOGI(TAG, "MQTT Media: resume");
+                    MusicPlaybackService::getInstance().resume();
+                } else if (strcmp(cmd, "stop") == 0) {
+                    ESP_LOGI(TAG, "MQTT Media: stop");
+                    MusicPlaybackService::getInstance().stop();
+                } else if (strcmp(cmd, "next") == 0) {
+                    ESP_LOGI(TAG, "MQTT Media: next");
+                    MusicPlaybackService::getInstance().next();
+                } else if (strcmp(cmd, "previous") == 0 || strcmp(cmd, "prev") == 0) {
+                    ESP_LOGI(TAG, "MQTT Media: previous");
+                    MusicPlaybackService::getInstance().previous();
+                } else if (strcmp(cmd, "volume") == 0) {
+                    int level = doc["level"] | -1;
+                    if (level >= 0 && level <= 100) {
+                        ESP_LOGI(TAG, "MQTT Media: set volume %d", level);
+                        sysdb.mutate([level](SystemState& s) {
+                            s.audio.speaker_volume = level;
+                        });
+                    }
+                }
+            } else if (query && query[0] != '\0') {
+                ESP_LOGI(TAG, "MQTT Media: play '%s'", query);
+                MusicPlaybackService::getInstance().play(query);
             } else {
-                ESP_LOGE(TAG, "Media command payload missing song_id or song_url");
+                const char* song_id = doc["song_id"];
+                const char* song_url = doc["song_url"];
+                if (song_id && song_url) {
+                    ESP_LOGI(TAG, "Forwarding media command to NexusPlayer: song_id=%s, url=%s", song_id, song_url);
+                    NexusPlayer::getInstance().play(song_id, song_url);
+                } else {
+                    ESP_LOGE(TAG, "Media command payload missing recognized command or song info");
+                }
             }
         }
     }
