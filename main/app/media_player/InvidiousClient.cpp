@@ -40,11 +40,32 @@ bool containsIgnoreCase(const std::string& haystack, const std::string& needle) 
     return (it != haystack.end());
 }
 
+struct HttpLock {
+    SemaphoreHandle_t sem;
+    explicit HttpLock(SemaphoreHandle_t s) : sem(s) {
+        if (sem) xSemaphoreTake(sem, portMAX_DELAY);
+    }
+    ~HttpLock() {
+        if (sem) xSemaphoreGive(sem);
+    }
+};
+
 } // namespace
 
-InvidiousClient::InvidiousClient() : _forcedHost("") {}
+InvidiousClient::InvidiousClient() : _forcedHost("") {
+    _mutex = xSemaphoreCreateMutex();
+}
 
-InvidiousClient::InvidiousClient(const std::string& forcedHost) : _forcedHost(forcedHost) {}
+InvidiousClient::InvidiousClient(const std::string& forcedHost) : _forcedHost(forcedHost) {
+    _mutex = xSemaphoreCreateMutex();
+}
+
+InvidiousClient::~InvidiousClient() {
+    if (_mutex) {
+        vSemaphoreDelete(_mutex);
+        _mutex = nullptr;
+    }
+}
 
 std::string InvidiousClient::getHost() const {
     if (!_forcedHost.empty()) return _forcedHost;
@@ -66,6 +87,8 @@ esp_err_t InvidiousClient::httpEventHandler(esp_http_client_event_t* evt) {
 }
 
 esp_err_t InvidiousClient::httpGet(const std::string& pathWithQuery, std::string& outResponse) {
+    HttpLock lock(_mutex);
+
     const std::string host = getHost();
     if (host.empty() || pathWithQuery.empty()) return ESP_ERR_INVALID_ARG;
 
@@ -181,11 +204,17 @@ esp_err_t InvidiousClient::searchList(const std::string& query, std::vector<Invi
     return ESP_OK;
 }
 
-esp_err_t InvidiousClient::resolveOpusUrl(const std::string& videoId, std::string& outUrl) {
+esp_err_t InvidiousClient::resolveWithRecommendations(
+    const std::string& videoId, 
+    std::string& outUrl, 
+    std::vector<InvidiousTrack>& outRecommendations,
+    size_t recLimit
+) {
+    outRecommendations.clear();
     if (videoId.empty()) return ESP_ERR_INVALID_ARG;
 
     const std::string path = "/api/v1/videos/" + urlEncode(videoId) +
-                             "?fields=adaptiveFormats(type,url,bitrate,qualityLabel)";
+                             "?fields=adaptiveFormats(type,url,bitrate,qualityLabel),recommendedVideos(videoId,title,author,lengthSeconds)";
 
     std::string response;
     esp_err_t err = httpGet(path, response);
@@ -198,11 +227,15 @@ esp_err_t InvidiousClient::resolveOpusUrl(const std::string& videoId, std::strin
     filter["adaptiveFormats"][0]["url"] = true;
     filter["adaptiveFormats"][0]["bitrate"] = true;
     filter["adaptiveFormats"][0]["qualityLabel"] = true;
+    filter["recommendedVideos"][0]["videoId"] = true;
+    filter["recommendedVideos"][0]["title"] = true;
+    filter["recommendedVideos"][0]["author"] = true;
+    filter["recommendedVideos"][0]["lengthSeconds"] = true;
 
     JsonDocument doc;
     DeserializationError jsonErr = deserializeJson(doc, response, DeserializationOption::Filter(filter));
     if (jsonErr) {
-        ESP_LOGE(TAG, "Video format JSON deserialize failed: %s", jsonErr.c_str());
+        ESP_LOGE(TAG, "Video format/recs JSON deserialize failed: %s", jsonErr.c_str());
         return ESP_FAIL;
     }
 
@@ -245,17 +278,50 @@ esp_err_t InvidiousClient::resolveOpusUrl(const std::string& videoId, std::strin
         }
     }
 
-    if (!bestUrl.empty()) {
-        outUrl = bestUrl;
-        ESP_LOGI(TAG, "Resolved stream URL (bitrate=%d, length=%zu)", bestBitrate, outUrl.length());
-        return ESP_OK;
+    if (bestUrl.empty()) {
+        ESP_LOGE(TAG, "Failed to resolve usable audio format for %s", videoId.c_str());
+        return ESP_ERR_NOT_FOUND;
     }
 
-    ESP_LOGE(TAG, "Failed to resolve usable audio format for %s", videoId.c_str());
-    return ESP_ERR_NOT_FOUND;
+    outUrl = bestUrl;
+    ESP_LOGI(TAG, "Resolved stream URL (bitrate=%d, length=%zu)", bestBitrate, outUrl.length());
+
+    // Extract recommendations if available
+    JsonArray recs = doc["recommendedVideos"].as<JsonArray>();
+    if (!recs.isNull() && recLimit > 0) {
+        for (JsonObject item : recs) {
+            const char* vid = item["videoId"];
+            const char* title = item["title"];
+            const char* author = item["author"];
+            int duration = item["lengthSeconds"] | 0;
+
+            if (vid && vid[0] != '\0' && title && title[0] != '\0' && vid != videoId) {
+                InvidiousTrack track;
+                track.videoId = vid;
+                track.title = title;
+                track.author = author ? author : "";
+                track.durationSeconds = duration;
+                outRecommendations.push_back(track);
+                if (outRecommendations.size() >= recLimit) break;
+            }
+        }
+        ESP_LOGI(TAG, "Extracted %zu recommendations for %s", outRecommendations.size(), videoId.c_str());
+    }
+
+    return ESP_OK;
 }
 
-esp_err_t InvidiousClient::getRecommendedTrack(const std::string& currentVideoId, InvidiousTrack& outTrack) {
+esp_err_t InvidiousClient::resolveOpusUrl(const std::string& videoId, std::string& outUrl) {
+    std::vector<InvidiousTrack> dummy;
+    return resolveWithRecommendations(videoId, outUrl, dummy, 0);
+}
+
+esp_err_t InvidiousClient::getRecommendedTracks(
+    const std::string& currentVideoId, 
+    std::vector<InvidiousTrack>& outTracks, 
+    size_t limit
+) {
+    outTracks.clear();
     if (currentVideoId.empty()) return ESP_ERR_INVALID_ARG;
 
     const std::string path = "/api/v1/videos/" + urlEncode(currentVideoId) +
@@ -284,20 +350,34 @@ esp_err_t InvidiousClient::getRecommendedTrack(const std::string& currentVideoId
         return ESP_ERR_NOT_FOUND;
     }
 
-    JsonObject first = recs[0];
-    const char* vid = first["videoId"];
-    const char* title = first["title"];
-    const char* author = first["author"];
-    int duration = first["lengthSeconds"] | 0;
+    for (JsonObject item : recs) {
+        const char* vid = item["videoId"];
+        const char* title = item["title"];
+        const char* author = item["author"];
+        int duration = item["lengthSeconds"] | 0;
 
-    if (!vid || !title) return ESP_ERR_NOT_FOUND;
+        if (vid && vid[0] != '\0' && title && title[0] != '\0' && vid != currentVideoId) {
+            InvidiousTrack track;
+            track.videoId = vid;
+            track.title = title;
+            track.author = author ? author : "";
+            track.durationSeconds = duration;
+            outTracks.push_back(track);
+            if (outTracks.size() >= limit) break;
+        }
+    }
 
-    outTrack.videoId = vid;
-    outTrack.title = title;
-    outTrack.author = author ? author : "";
-    outTrack.durationSeconds = duration;
+    return outTracks.empty() ? ESP_ERR_NOT_FOUND : ESP_OK;
+}
 
-    ESP_LOGI(TAG, "Autoplay recommended: '%s' by '%s' (%s)",
-             outTrack.title.c_str(), outTrack.author.c_str(), outTrack.videoId.c_str());
-    return ESP_OK;
+esp_err_t InvidiousClient::getRecommendedTrack(const std::string& currentVideoId, InvidiousTrack& outTrack) {
+    std::vector<InvidiousTrack> tracks;
+    esp_err_t err = getRecommendedTracks(currentVideoId, tracks, 1);
+    if (err == ESP_OK && !tracks.empty()) {
+        outTrack = tracks[0];
+        ESP_LOGI(TAG, "Autoplay recommended: '%s' by '%s' (%s)",
+                 outTrack.title.c_str(), outTrack.author.c_str(), outTrack.videoId.c_str());
+        return ESP_OK;
+    }
+    return (err != ESP_OK) ? err : ESP_ERR_NOT_FOUND;
 }

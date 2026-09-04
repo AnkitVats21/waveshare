@@ -434,7 +434,6 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                     s.audio.assistant_speaking = true;
                 });
                 AudioOrchestrator::getInstance().notifyVoiceStarted();
-                vTaskDelay(pdMS_TO_TICKS(10));
             }
 
             size_t b64_len = data_end - data_start;

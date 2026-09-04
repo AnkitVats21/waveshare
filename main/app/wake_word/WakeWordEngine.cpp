@@ -266,6 +266,8 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         // Feed 16kHz data to AFE SR engine
         m_afe_handle->feed(afe_data, afe_buff);
         esp_task_wdt_reset();
+        // Yield 1 tick so lower-priority tasks and IDLE1 (CPU 1) can run and pet watchdog
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     heap_caps_free(hw_buff);

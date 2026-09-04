@@ -166,6 +166,66 @@ func (s *AppState) Search(ctx context.Context, query string) ([]InvidiousTrack, 
 	return tracks, nil
 }
 
+func (s *AppState) GetRecommendations(ctx context.Context, videoID string) []InvidiousTrack {
+	cacheKey := "recs:" + videoID
+	if cached, ok := s.GetCache(cacheKey); ok {
+		return cached.([]InvidiousTrack)
+	}
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, s.ytdlpPath,
+		"--no-warnings",
+		"--skip-download",
+		"--flat-playlist",
+		"--playlist-end", "8",
+		"--dump-json",
+		fmt.Sprintf("https://www.youtube.com/watch?v=%s&list=RD%s", videoID, videoID),
+	)
+
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("[WARN] Recommendations extraction failed for %s: %v", videoID, err)
+		return nil
+	}
+
+	var tracks []InvidiousTrack
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var item map[string]any
+		if err := json.Unmarshal([]byte(line), &item); err == nil {
+			vid, _ := item["id"].(string)
+			title, _ := item["title"].(string)
+			author, _ := item["uploader"].(string)
+			if author == "" {
+				author, _ = item["channel"].(string)
+			}
+			duration := 0
+			if d, ok := item["duration"].(float64); ok {
+				duration = int(d)
+			}
+			if vid != "" && title != "" && vid != videoID {
+				tracks = append(tracks, InvidiousTrack{
+					VideoID:       vid,
+					Title:         title,
+					Author:        author,
+					LengthSeconds: duration,
+				})
+			}
+		}
+	}
+
+	if len(tracks) > 0 {
+		s.SetCache(cacheKey, tracks, 2*time.Hour)
+	}
+	return tracks
+}
+
 func (s *AppState) ResolveVideo(ctx context.Context, videoID string) (*VideoDetails, error) {
 	cacheKey := "video:" + videoID
 	if cached, ok := s.GetCache(cacheKey); ok {
@@ -202,6 +262,15 @@ func (s *AppState) ResolveVideo(ctx context.Context, videoID string) (*VideoDeta
 	s.workerSem <- struct{}{}
 	defer func() { <-s.workerSem }()
 
+	// Concurrently extract recommendations via YouTube Radio Mix
+	var recs []InvidiousTrack
+	var recWg sync.WaitGroup
+	recWg.Add(1)
+	go func() {
+		defer recWg.Done()
+		recs = s.GetRecommendations(ctx, videoID)
+	}()
+
 	cmdCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 
@@ -216,6 +285,7 @@ func (s *AppState) ResolveVideo(ctx context.Context, videoID string) (*VideoDeta
 
 	out, err := cmd.Output()
 	if err != nil {
+		recWg.Wait()
 		return nil, fmt.Errorf("video extraction failed: %w", err)
 	}
 
@@ -228,6 +298,7 @@ func (s *AppState) ResolveVideo(ctx context.Context, videoID string) (*VideoDeta
 	}
 
 	if len(lines) < 2 {
+		recWg.Wait()
 		return nil, fmt.Errorf("insufficient output lines from yt-dlp: %d", len(lines))
 	}
 
@@ -239,6 +310,8 @@ func (s *AppState) ResolveVideo(ctx context.Context, videoID string) (*VideoDeta
 			bitrate = int(abr * 1000)
 		}
 	}
+
+	recWg.Wait()
 
 	details := &VideoDetails{
 		VideoID: videoID,
@@ -252,6 +325,7 @@ func (s *AppState) ResolveVideo(ctx context.Context, videoID string) (*VideoDeta
 				Container: "webm",
 			},
 		},
+		RecommendedVideos: recs,
 	}
 
 	s.SetCache(cacheKey, details, 1*time.Hour)
@@ -326,8 +400,29 @@ func main() {
 			return
 		}
 
-		log.Printf("[RESOLVE RESULT] '%s' -> %s (%d bps)", videoID, details.AdaptiveFormats[0].Type, details.AdaptiveFormats[0].Bitrate)
+		log.Printf("[RESOLVE RESULT] '%s' -> %s (%d bps, %d recs)", videoID, details.AdaptiveFormats[0].Type, details.AdaptiveFormats[0].Bitrate, len(details.RecommendedVideos))
 		writeJSON(w, http.StatusOK, details)
+	})
+
+	// 4. Mixes / Radio: /api/v1/mixes/<rdid>
+	mux.HandleFunc("/api/v1/mixes/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(r.URL.Path, "/")
+		if len(parts) < 5 || parts[4] == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Missing mix ID"})
+			return
+		}
+		mixID := parts[4]
+		videoID := strings.TrimPrefix(mixID, "RD")
+		log.Printf("[MIX] Request for mix '%s' (video '%s') from %s", mixID, videoID, r.RemoteAddr)
+		tracks := state.GetRecommendations(r.Context(), videoID)
+		if tracks == nil {
+			tracks = []InvidiousTrack{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"title":  "Mix",
+			"mixId":  mixID,
+			"videos": tracks,
+		})
 	})
 
 	// Root status

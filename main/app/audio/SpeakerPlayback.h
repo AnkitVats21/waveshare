@@ -100,7 +100,7 @@ private:
   static constexpr uint32_t TARGET_FRAME_MS           = 20;
   static constexpr uint32_t EMPTY_FILL_MS             = 10;
   static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 15;
-  static constexpr size_t   MIN_JITTER_CUSHION_BYTES  = 4800;
+  static constexpr size_t   MIN_JITTER_CUSHION_BYTES  = 7200; // ~150ms of 24kHz 16-bit mono
 
   // ── I/O chunk sizing ─────────────────────────────────────────────────────
   static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 2048;

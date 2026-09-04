@@ -42,6 +42,9 @@ public:
     const std::deque<InvidiousTrack>& getQueue() const { return _queue; }
     const std::vector<InvidiousTrack>& getHistory() const { return _history; }
 
+    InvidiousClient& getInvidiousClient() { return _invidious; }
+    void populateRecommendations(const std::vector<InvidiousTrack>& recs, const std::string& title);
+
     // IPlaybackObserver implementation
     void onTrackStarted(const char* songId) override;
     void onTrackFinished(const char* songId) override;

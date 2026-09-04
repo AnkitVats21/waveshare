@@ -223,6 +223,7 @@ void NexusPlayer::pause_internal() {
         ESP_LOGI(TAG, "Pausing playback");
         _audioEngine.pause();
         _state = STATE_PAUSED;
+        AudioOrchestrator::getInstance().notifyMediaStopped();
     }
 }
 
@@ -246,6 +247,7 @@ void NexusPlayer::resume_internal() {
         } else {
             _state = STATE_LOCAL_PLAYBACK;
         }
+        AudioOrchestrator::getInstance().notifyMediaStarted();
     }
 }
 

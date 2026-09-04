@@ -155,6 +155,9 @@ void SpeakerPlaybackTask::run() {
           upsample_3to4((const int16_t*)rx_ptr, voice_pcm, samples_24k);
           bm.returnItem(Buffers::VOICE_RX_BUF, rx_ptr);
           has_voice = true;
+        } else if (!snap.audio.turn_complete_pending) {
+          // Starved mid-speech: rebuffer to avoid playing chopped syllables
+          m_buffering = true;
         }
       }
     } else {
@@ -176,7 +179,8 @@ void SpeakerPlaybackTask::run() {
     }
 
     // 3. Media Track (32kHz music playback / WAV)
-    {
+    bool is_media_active = AudioOrchestrator::getInstance().isMediaActive();
+    if (is_media_active) {
       size_t target_media_bytes = target_samples * sizeof(int16_t);
       size_t rx_bytes = 0;
       void *rx_ptr = bm.receive(Buffers::MEDIA_RX_BUF, &rx_bytes, 0, target_media_bytes);
@@ -193,7 +197,22 @@ void SpeakerPlaybackTask::run() {
     if (has_voice || has_alert || has_media) {
       sustained_empty = 0;
 
-      for (size_t i = 0; i < target_samples; ++i) {
+      // Determine actual frames to write based on active sources
+      size_t frames_to_write = target_samples;
+      if (has_voice && !has_media && !has_alert) {
+        // Pure voice: write exact number of decoded samples (never zero-pad!)
+        frames_to_write = num_voice_32k;
+      } else if (!has_voice && has_media && !has_alert) {
+        frames_to_write = num_media;
+      } else if (!has_voice && !has_media && has_alert) {
+        frames_to_write = num_alert;
+      } else {
+        frames_to_write = std::max(num_voice_32k, std::max(num_alert, num_media));
+      }
+      if (frames_to_write > MAX_AUDIO_CHUNK_SAMPLES) frames_to_write = MAX_AUDIO_CHUNK_SAMPLES;
+      if (frames_to_write == 0) frames_to_write = target_samples;
+
+      for (size_t i = 0; i < frames_to_write; ++i) {
         // Linear slew rate interpolation for ducking gain
         if (m_media_gain != m_target_media_gain) {
           m_media_gain += m_media_ramp_step;
@@ -225,8 +244,9 @@ void SpeakerPlaybackTask::run() {
         expanded_buffer[2 * i + 1] = sample32; // R
       }
 
-      esp_codec_dev_write(device, expanded_buffer, target_samples * 2 * sizeof(int32_t));
-      wake_period_ticks = ticksForAtLeastOnePeriod(TARGET_FRAME_MS);
+      esp_codec_dev_write(device, expanded_buffer, frames_to_write * 2 * sizeof(int32_t));
+      uint32_t duration_ms = static_cast<uint32_t>((static_cast<uint64_t>(frames_to_write) * 1000 + NATIVE_RATE - 1) / NATIVE_RATE);
+      wake_period_ticks = ticksForAtLeastOnePeriod(duration_ms);
 
     } else {
       // All tracks starved/idle — output silence to keep I2S DMA alive

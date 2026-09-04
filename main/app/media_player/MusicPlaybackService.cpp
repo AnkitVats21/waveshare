@@ -1,6 +1,7 @@
 #include "MusicPlaybackService.h"
 #include "esp_log.h"
 #include "common/sysdb/EmbeddedSysDb.h"
+#include "common/thread_config.h"
 #include <algorithm>
 #include <random>
 
@@ -48,6 +49,15 @@ bool MusicPlaybackService::isCachingEnabled() const {
     return EmbeddedSysDb::getInstance().snapshot().audio.cache_downloads;
 }
 
+void MusicPlaybackService::populateRecommendations(const std::vector<InvidiousTrack>& recs, const std::string& title) {
+    if (recs.empty()) return;
+    for (const auto& r : recs) {
+        _queue.push_back(r);
+    }
+    ESP_LOGI(TAG, "Populated queue with %zu recommended tracks for '%s'", _queue.size(), title.c_str());
+    prefetchNextTrack();
+}
+
 bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
     if (track.videoId.empty()) return false;
 
@@ -57,17 +67,35 @@ bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
                  track.title.c_str(), track.videoId.c_str());
         _currentTrack = track;
         NexusPlayer::getInstance().play(track.videoId.c_str(), "");
+
+        // If queue is empty, asynchronously populate recommendations in background so playback starts instantly
+        if (_queue.empty() && isAutoplayEnabled()) {
+            std::string vid = track.videoId;
+            std::string tTitle = track.title;
+            xTaskCreate([](void* arg) {
+                auto* info = static_cast<std::pair<std::string, std::string>*>(arg);
+                std::vector<InvidiousTrack> recs;
+                if (MusicPlaybackService::getInstance().getInvidiousClient().getRecommendedTracks(info->first, recs, 8) == ESP_OK) {
+                    MusicPlaybackService::getInstance().populateRecommendations(recs, info->second);
+                }
+                delete info;
+                vTaskDelete(NULL);
+            }, "bg_recs", ThreadConfig::StackSize::STACK_PLAYER, new std::pair<std::string, std::string>(vid, tTitle), ThreadConfig::Priority::LOW, NULL);
+        }
         return true;
     }
 
     std::string streamUrl;
+    std::vector<InvidiousTrack> recommendations;
+
     if (_prefetchedVideoId == track.videoId && !_prefetchedUrl.empty()) {
         ESP_LOGI(TAG, "Using pre-fetched stream URL for '%s' (0ms network delay!)", track.videoId.c_str());
         streamUrl = _prefetchedUrl;
         _prefetchedUrl.clear();
         _prefetchedVideoId.clear();
     } else {
-        esp_err_t err = _invidious.resolveOpusUrl(track.videoId, streamUrl);
+        // Resolve stream URL and piggyback recommendation fetch in a single HTTP roundtrip
+        esp_err_t err = _invidious.resolveWithRecommendations(track.videoId, streamUrl, recommendations, 8);
         if (err != ESP_OK || streamUrl.empty()) {
             ESP_LOGE(TAG, "Failed to resolve stream for '%s' (%s): %s",
                      track.title.c_str(), track.videoId.c_str(), esp_err_to_name(err));
@@ -80,6 +108,14 @@ bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
 
     _currentTrack = track;
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
+
+    // If queue is empty, populate it with recommendations from this track
+    if (_queue.empty() && isAutoplayEnabled()) {
+        if (!recommendations.empty()) {
+            populateRecommendations(recommendations, track.title);
+        }
+    }
+
     return true;
 }
 
@@ -89,8 +125,7 @@ bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
     std::string streamUrl;
     esp_err_t err = _invidious.resolveOpusUrl(track.videoId, streamUrl);
     if (err != ESP_OK || streamUrl.empty()) {
-        ESP_LOGE(TAG, "Fallback failed to resolve stream for '%s' (%s): %s",
-                 track.title.c_str(), track.videoId.c_str(), esp_err_to_name(err));
+        ESP_LOGE(TAG, "Fallback failed to resolve Opus stream for '%s'", track.title.c_str());
         return false;
     }
 
@@ -108,19 +143,19 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
         return false;
     }
 
+    // Stop current playback immediately to clear network, decoding, and Core 1 AEC load
+    NexusPlayer::getInstance().stop();
+
     std::vector<InvidiousTrack> tracks;
-    esp_err_t err = _invidious.searchList(query, tracks, 10);
+    esp_err_t err = _invidious.searchList(query, tracks, 1);
     if (err != ESP_OK || tracks.empty()) {
         ESP_LOGE(TAG, "Search failed for '%s': %s", query, esp_err_to_name(err));
         return false;
     }
 
     _queue.clear();
-    for (size_t i = 1; i < tracks.size(); ++i) {
-        _queue.push_back(tracks[i]);
-    }
-    ESP_LOGI(TAG, "Populated playlist with %zu tracks from search '%s' (1 playing + %zu queued)",
-             tracks.size(), query, _queue.size());
+    ESP_LOGI(TAG, "Search for '%s' resolved to: '%s' by '%s' [%s]",
+             query, tracks[0].title.c_str(), tracks[0].author.c_str(), tracks[0].videoId.c_str());
 
     return playTrack(tracks[0]);
 }
@@ -215,11 +250,16 @@ bool MusicPlaybackService::next() {
     }
 
     if (isAutoplayEnabled() && !_currentTrack.videoId.empty()) {
-        ESP_LOGI(TAG, "Queue empty; attempting autoplay recommendation for %s", _currentTrack.videoId.c_str());
-        InvidiousTrack recTrack;
-        esp_err_t err = _invidious.getRecommendedTrack(_currentTrack.videoId, recTrack);
-        if (err == ESP_OK && !recTrack.videoId.empty()) {
-            return playTrack(recTrack);
+        ESP_LOGI(TAG, "Queue empty; attempting autoplay recommendations for %s", _currentTrack.videoId.c_str());
+        std::vector<InvidiousTrack> recTracks;
+        esp_err_t err = _invidious.getRecommendedTracks(_currentTrack.videoId, recTracks, 8);
+        if (err == ESP_OK && !recTracks.empty()) {
+            InvidiousTrack first = recTracks[0];
+            for (size_t i = 1; i < recTracks.size(); ++i) {
+                _queue.push_back(recTracks[i]);
+            }
+            ESP_LOGI(TAG, "Autoplay populated %zu recommended tracks (playing: '%s')", recTracks.size(), first.title.c_str());
+            return playTrack(first);
         }
     }
 
