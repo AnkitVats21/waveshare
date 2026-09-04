@@ -80,7 +80,11 @@ private:
   static constexpr uint32_t EMPTY_FILL_MS             = 10;
 
   // Number of consecutive empty ticks required before acting on turn_complete.
-  static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 2;
+  // 15 ticks * 10 ms = 150 ms cushion to prevent cutting off words on WebSocket pauses.
+  static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 15;
+
+  // Pre-buffering jitter cushion for Gemini live speech (~100 ms of 24kHz 16-bit mono)
+  static constexpr size_t   MIN_JITTER_CUSHION_BYTES  = 4800;
 
   // ── I/O chunk sizing ─────────────────────────────────────────────────────
   static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 2048;
@@ -91,6 +95,7 @@ private:
   // ── State ─────────────────────────────────────────────────────────────────
   volatile bool             m_hw_valid      = true;
   volatile bool             m_hw_paused_ack = false; ///< Set when task exits codec_dev_write
+  bool                      m_buffering     = true;  ///< Pre-buffer cushion state
   esp_codec_dev_handle_t    m_device        = nullptr;
   SemaphoreHandle_t         m_pause_sem     = nullptr;
 };

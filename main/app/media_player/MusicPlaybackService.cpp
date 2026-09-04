@@ -25,6 +25,15 @@ bool MusicPlaybackService::begin() {
 bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
     if (track.videoId.empty()) return false;
 
+    // Check if the track is already cached locally on the SD card
+    if (NexusPlayer::getInstance().getStorageManager().fileExists(track.videoId.c_str())) {
+        ESP_LOGI(TAG, "Track '%s' [%s] found in local cache! Playing immediately (0ms network delay)",
+                 track.title.c_str(), track.videoId.c_str());
+        _currentTrack = track;
+        NexusPlayer::getInstance().play(track.videoId.c_str(), "");
+        return true;
+    }
+
     std::string streamUrl;
     if (_prefetchedVideoId == track.videoId && !_prefetchedUrl.empty()) {
         ESP_LOGI(TAG, "Using pre-fetched stream URL for '%s' (0ms network delay!)", track.videoId.c_str());
@@ -130,6 +139,9 @@ void MusicPlaybackService::shuffleQueue() {
 void MusicPlaybackService::prefetchNextTrack() {
     if (_queue.empty()) return;
     const std::string& nextId = _queue.front().videoId;
+    if (NexusPlayer::getInstance().getStorageManager().fileExists(nextId.c_str())) {
+        return; // Already cached on SD card
+    }
     if (_prefetchedVideoId == nextId && !_prefetchedUrl.empty()) {
         return; // Already prefetched
     }

@@ -38,6 +38,10 @@ DecodeResult OggOpusDecoderStrategy::decode(const uint8_t* inData, size_t inLen,
         return DecodeResult::NEED_MORE_DATA;
     }
 
+    if (samplesDecoded > 0) {
+        samplesDecoded *= getSourceChannels();
+    }
+
     return DecodeResult::OK;
 }
 

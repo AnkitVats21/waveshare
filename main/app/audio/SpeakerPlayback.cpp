@@ -159,6 +159,29 @@ void SpeakerPlaybackTask::run() {
     }
     size_t target_chunk_bytes = target_samples * sizeof(int16_t);
 
+    // Jitter buffering cushion for assistant speech:
+    // When assistant speech starts or after an underflow, wait until
+    // MIN_JITTER_CUSHION_BYTES are queued before playing.
+    if (is_gemini_upsample) {
+      if (m_buffering) {
+        size_t buffered = bm.getUsedBytes(Buffers::SPK_RX_BUF);
+        if (buffered >= MIN_JITTER_CUSHION_BYTES || snap.audio.turn_complete_pending) {
+          m_buffering = false;
+        } else {
+          size_t silence_samples = samplesForDurationMs(active_sample_rate, EMPTY_FILL_MS);
+          if (silence_samples > MAX_SILENCE_SAMPLES) {
+            silence_samples = MAX_SILENCE_SAMPLES;
+          }
+          esp_codec_dev_write(device, silence_buffer,
+                              silence_samples * 2 * sizeof(int32_t));
+          wake_period_ticks = ticksForAtLeastOnePeriod(EMPTY_FILL_MS);
+          continue;
+        }
+      }
+    } else {
+      m_buffering = true;
+    }
+
     // ── Drain one chunk (non-blocking) ───────────────────────────────────────
     size_t rx_bytes = 0;
     void  *rx_ptr   = bm.receive(Buffers::SPK_RX_BUF, &rx_bytes, 0, target_chunk_bytes);
@@ -217,6 +240,11 @@ void SpeakerPlaybackTask::run() {
       wake_period_ticks = ticksForAtLeastOnePeriod(EMPTY_FILL_MS);
       sustained_empty++;
 
+      // If buffer starved during active speech, re-cushion before next burst
+      if (is_gemini_upsample && sustained_empty >= 2 && !snap.audio.turn_complete_pending) {
+        m_buffering = true;
+      }
+
       // Only finalize turn_complete after SUSTAINED silence to avoid
       // cutting off the last PCM frames that arrive just before the
       // turnComplete JSON message over the WebSocket.
@@ -228,6 +256,7 @@ void SpeakerPlaybackTask::run() {
             s.audio.assistant_speaking    = false;
           });
           sustained_empty = 0;
+          m_buffering = true;
         }
       }
     }
