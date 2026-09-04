@@ -2,21 +2,34 @@
 #include "app/media_player/MusicPlaybackService.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
+#include "common/thread_config.h"
 #include <ArduinoJson.h>
 
 bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call, JsonDocument& response_doc) {
     switch (skill_call.type) {
         case GeminiSkills::SkillType::PLAY: {
             LOGI_SYSTEM("Media PLAY command received: '%s'", skill_call.args.play->query.c_str());
-            const bool ok = MusicPlaybackService::getInstance().play(skill_call.args.play->query.c_str());
-            response_doc["status"] = ok ? "success" : "error";
+            std::string q = skill_call.args.play->query;
+            xTaskCreate([](void* arg) {
+                std::string* query_str = static_cast<std::string*>(arg);
+                MusicPlaybackService::getInstance().play(query_str->c_str());
+                delete query_str;
+                vTaskDelete(NULL);
+            }, "bg_play", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+            response_doc["status"] = "success";
             return true;
         }
 
         case GeminiSkills::SkillType::PLAY_NEXT: {
             LOGI_SYSTEM("Media PLAY_NEXT command received: '%s'", skill_call.args.play_next->query.c_str());
-            const bool ok = MusicPlaybackService::getInstance().playNext(skill_call.args.play_next->query.c_str());
-            response_doc["status"] = ok ? "success" : "error";
+            std::string q = skill_call.args.play_next->query;
+            xTaskCreate([](void* arg) {
+                std::string* query_str = static_cast<std::string*>(arg);
+                MusicPlaybackService::getInstance().playNext(query_str->c_str());
+                delete query_str;
+                vTaskDelete(NULL);
+            }, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+            response_doc["status"] = "success";
             return true;
         }
 

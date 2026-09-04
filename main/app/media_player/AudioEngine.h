@@ -2,7 +2,7 @@
 
 #include "services/BufferManager.h"
 #include "IAudioDecoder.h"
-#include "AudioSource.h" // For ChunkType, AudioChunkHeader
+#include "PlayerTypes.h" // For ChunkType, AudioChunkHeader
 #include "freertos/event_groups.h"
 #include <memory>
 

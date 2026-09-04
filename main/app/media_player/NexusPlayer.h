@@ -36,6 +36,7 @@ public:
     void playAlert(AlertType type);
     
     PlayerState getState() { return _state; }
+    StorageManager& getStorageManager() { return _storageManager; }
 
     // Observer Pattern registration
     void addObserver(IPlaybackObserver* observer);

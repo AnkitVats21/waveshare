@@ -19,6 +19,7 @@ namespace ThreadConfig {
     enum Priority : UBaseType_t {
         IDLE             = 0,
         LOW              = 2,
+        STORAGE_IO       = 3,   ///< Low-priority SD card disk I/O (Core 0)
         NORMAL           = 5,
         KEY_POLL         = 5,   ///< KeyService polling loop
         AUDIO_ALERT      = 5,   ///< Fire-and-forget audio alert tasks
@@ -39,6 +40,7 @@ namespace ThreadConfig {
         STACK_SMALL     = 3 * 1024,
         STACK_NORMAL    = 4 * 1024,  ///< Bumped from 3K — STACK_SMALL alias was too tight
         STACK_MEDIUM    = 6 * 1024,
+        STACK_STORAGE   = 4 * 1024,  ///< SD Card disk writer and reader tasks
         STACK_LARGE     = 8 * 1024,
         STACK_ASSISTANT = 6 * 1024,  ///< AssistantService — transitionTo() frames carry a SystemState copy
         STACK_GEMINI    = 8 * 1024,  ///< GeminiProtocol — needs room for ArduinoJson tool-call serialization
@@ -49,6 +51,7 @@ namespace ThreadConfig {
 
     // ── Core affinities ────────────────────────────────────────────────────
     static constexpr BaseType_t CORE_NETWORK = 0; ///< WiFi, WebSocket, MQTT
+    static constexpr BaseType_t CORE_STORAGE = 0; ///< SD Card disk I/O (Core 0, off Core 1 DSP)
     static constexpr BaseType_t CORE_AUDIO   = 1; ///< I2S DMA, AFE, audio pump
     static constexpr BaseType_t CORE_ANY     = tskNO_AFFINITY;
 

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cerrno>
 #include "PlayerTypes.h"
+#include "common/thread_config.h"
 
 static const char* TAG = "StorageManager";
 
@@ -21,9 +22,11 @@ StorageManager::~StorageManager() {
 }
 
 bool StorageManager::fileExists(const char* songId) {
-    if (!songId) return false;
+    if (!songId || songId[0] == '\0') return false;
     char path[128];
     snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
+    if (_storageService.fileExists(path)) return true;
+    snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
     return _storageService.fileExists(path);
 }
 
@@ -58,10 +61,10 @@ bool StorageManager::openFileForCaching(const char* songId) {
     _writerTaskRunning = true;
     _readerTaskRunning = true;
 
-    // Spawn concurrent SD Writer task
+    // Spawn concurrent SD Writer task on Core 0 (off audio DSP core)
     BaseType_t ret = xTaskCreatePinnedToCore(
-        sdWriterTaskThunk, "sd_writer_task", 4096, this,
-        4, &_writerTaskHandle, 1
+        sdWriterTaskThunk, "sd_writer_task", ThreadConfig::StackSize::STACK_STORAGE, this,
+        ThreadConfig::Priority::STORAGE_IO, &_writerTaskHandle, ThreadConfig::CORE_STORAGE
     );
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_writer_task");
@@ -69,10 +72,10 @@ bool StorageManager::openFileForCaching(const char* songId) {
         return false;
     }
 
-    // Spawn concurrent SD Reader task
+    // Spawn concurrent SD Reader task on Core 0 (off audio DSP core)
     ret = xTaskCreatePinnedToCore(
-        sdReaderTaskThunk, "sd_reader_task", 4096, this,
-        4, &_readerTaskHandle, 1
+        sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
+        ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
     );
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_reader_task");
@@ -89,6 +92,9 @@ bool StorageManager::openFileForReading(const char* songId) {
 
     char path[128];
     snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
+    if (!_storageService.fileExists(path)) {
+        snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
+    }
 
     ESP_LOGI(TAG, "Opening local playback stream at: %s", path);
     _readStream = _storageService.openStream(path, "rb");
@@ -103,10 +109,10 @@ bool StorageManager::openFileForReading(const char* songId) {
     _isWritingMode = false;
     _readerTaskRunning = true;
 
-    // Spawn concurrent SD Reader task
+    // Spawn concurrent SD Reader task on Core 0 (off audio DSP core)
     BaseType_t ret = xTaskCreatePinnedToCore(
-        sdReaderTaskThunk, "sd_reader_task", 4096, this,
-        4, &_readerTaskHandle, 1
+        sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
+        ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
     );
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_reader_task");

@@ -320,7 +320,7 @@ void AudioEngine::playTone(float freq_hz, int16_t volume, uint32_t duration_ms, 
     const uint32_t total_samples = (SAMPLE_RATE * duration_ms) / 1000;
     const uint32_t fade_samples  = (SAMPLE_RATE * fade_ms) / 1000;
     
-    constexpr uint32_t BLOCK = 128;
+    constexpr uint32_t BLOCK = 640; // 20 ms @ 32 kHz to match TARGET_FRAME_MS
     int16_t buf[BLOCK];
     
     uint32_t sent = 0;
@@ -342,7 +342,7 @@ void AudioEngine::playTone(float freq_hz, int16_t volume, uint32_t duration_ms, 
             buf[i] = (int16_t)(env * (float)volume * sinf(angle));
         }
         
-        _bm.send(_pcmOutId, reinterpret_cast<uint8_t*>(buf), n * sizeof(int16_t), pdMS_TO_TICKS(10));
+        _bm.send(_pcmOutId, reinterpret_cast<uint8_t*>(buf), n * sizeof(int16_t), pdMS_TO_TICKS(50));
         sent += n;
     }
 }

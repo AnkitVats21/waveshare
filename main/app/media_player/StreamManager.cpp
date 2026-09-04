@@ -42,8 +42,8 @@ void StreamManager::stopStreaming() {
     if (_isStreaming || _networkTaskHandle != nullptr) {
         ESP_LOGI(TAG, "Stopping streaming...");
         _isStreaming = false;
-        _http.close();
 
+        // Wait for network task to finish cleanly and close its own connection
         while (_networkTaskHandle != nullptr) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
