@@ -13,6 +13,7 @@
 #include "services/BufferManager.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/BtSpeakerPlaybackTask.h"
 #include "app/audio/GeminiPCMDrainerTask.h"
 #include "app/audio/AudioPipelineManager.h"
 #include "app/media_player/NexusPlayer.h"
@@ -432,11 +433,14 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         if (data_end) {
             *data_end = '\0';
 
-            // If transitioning to speaking, flush stale data from both buffers and
+            // If transitioning to speaking, flush stale data from all buffers and
             // advance the session state so AudioService and LED react correctly.
             if (!sysdb.assistantSpeaking()) {
                 BufferManager::getInstance().flush(Buffers::GEMINI_PCM_BUF);
                 BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+                if (BufferManager::getInstance().handle(Buffers::BT_SPK_BUF)) {
+                    BufferManager::getInstance().flush(Buffers::BT_SPK_BUF);
+                }
                 sysdb.mutate([](SystemState& s) {
                     s.assistant.session_state = AssistantState::AssistantSpeaking;
                     s.assistant.visual_state  = AssistantVisualState::Speaking;

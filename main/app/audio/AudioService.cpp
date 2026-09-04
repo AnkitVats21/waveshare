@@ -2,6 +2,7 @@
 #include "app/audio/AudioPipelineManager.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/BtSpeakerPlaybackTask.h"
 #include "app/audio/GeminiPCMDrainerTask.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/AppLogger.h"
@@ -279,6 +280,9 @@ void AudioService::returnToWakeMode() {
     AudioPipelineManager::setRtpRxInterrupted(false);
     BufferManager::getInstance().flush(Buffers::GEMINI_PCM_BUF);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+    if (BufferManager::getInstance().handle(Buffers::BT_SPK_BUF)) {
+        BufferManager::getInstance().flush(Buffers::BT_SPK_BUF);
+    }
 
     LOGI_AUDIO("Wake mode restored.");
 }
