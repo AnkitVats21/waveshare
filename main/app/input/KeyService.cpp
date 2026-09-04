@@ -4,6 +4,7 @@
 #include "common/thread_config.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/MusicPlaybackService.h"
+#include "freertos/idf_additions.h"
 #include <algorithm>
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
@@ -11,7 +12,7 @@ static auto& sysdb = EmbeddedSysDb::getInstance();
 KeyService::KeyService(ExpanderKeyInput &input)
     : ReactorTask({
           "key_svc",
-          ThreadConfig::StackSize::STACK_SMALL,
+          ThreadConfig::StackSize::STACK_MEDIUM,
           ThreadConfig::Priority::KEY_POLL,
           ThreadConfig::CORE_NETWORK,
           0 // Pure writer, does not watch any state components
@@ -48,16 +49,21 @@ void KeyService::run() {
                     m_longPressedTriggered[i] = false;
                     ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
 
-                    // Key 4: toggle Play/Pause on press down
+                    // Key 4: toggle Play/Pause on press down (dispatched to task to prevent key_svc stack overflow)
                     if (keys[i] == KeyId::KEY_4) {
-                        PlayerState state = NexusPlayer::getInstance().getState();
-                        if (state == STATE_PAUSED) {
-                            ESP_LOGI(TAG, "Key 4: Resuming NexusPlayer");
-                            NexusPlayer::getInstance().resume();
-                        } else if (state == STATE_STREAMING_AND_CACHING || state == STATE_LOCAL_PLAYBACK) {
-                            ESP_LOGI(TAG, "Key 4: Pausing NexusPlayer");
-                            NexusPlayer::getInstance().pause();
-                        }
+                        xTaskCreatePinnedToCoreWithCaps([](void*) {
+                            PlayerState state = NexusPlayer::getInstance().getState();
+                            if (state == STATE_PAUSED) {
+                                ESP_LOGI("KeySvc", "Key 4: Resuming NexusPlayer");
+                                NexusPlayer::getInstance().resume();
+                            } else if (state == STATE_STREAMING_AND_CACHING || state == STATE_LOCAL_PLAYBACK) {
+                                ESP_LOGI("KeySvc", "Key 4: Pausing NexusPlayer");
+                                NexusPlayer::getInstance().pause();
+                            }
+                            vTaskDelete(NULL);
+                        }, "key_pause", ThreadConfig::StackSize::STACK_PLAYER, nullptr,
+                           ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK,
+                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
                     }
                     // Key 2: stop alarm on press down
                     else if (keys[i] == KeyId::KEY_2) {
@@ -77,10 +83,20 @@ void KeyService::run() {
 
                         if (keys[i] == KeyId::KEY_3) {
                             ESP_LOGI(TAG, "Key 3 long press: requesting next track");
-                            MusicPlaybackService::getInstance().next();
+                            xTaskCreatePinnedToCoreWithCaps([](void*) {
+                                MusicPlaybackService::getInstance().next();
+                                vTaskDelete(NULL);
+                            }, "key_next", ThreadConfig::StackSize::STACK_PLAYER, nullptr,
+                               ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK,
+                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
                         } else if (keys[i] == KeyId::KEY_5) {
                             ESP_LOGI(TAG, "Key 5 long press: requesting previous track");
-                            MusicPlaybackService::getInstance().previous();
+                            xTaskCreatePinnedToCoreWithCaps([](void*) {
+                                MusicPlaybackService::getInstance().previous();
+                                vTaskDelete(NULL);
+                            }, "key_prev", ThreadConfig::StackSize::STACK_PLAYER, nullptr,
+                               ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK,
+                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
                         }
                     }
                 }

@@ -1,5 +1,6 @@
 #include "common/ReactorTask.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
 
 static const char* TAG = "ReactorTask";
 
@@ -28,6 +29,20 @@ bool ReactorTask::start() {
         &m_task_handle,
         m_cfg.core_id
     );
+
+    if (result != pdPASS || m_task_handle == nullptr) {
+        // Fallback to PSRAM if internal memory is tight
+        result = xTaskCreatePinnedToCoreWithCaps(
+            taskEntry,
+            m_cfg.name,
+            m_cfg.stack_size,
+            this,
+            m_cfg.priority,
+            &m_task_handle,
+            m_cfg.core_id,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+        );
+    }
 
     if (result != pdPASS || m_task_handle == nullptr) {
         ESP_LOGE(TAG, "Failed to create task '%s'", m_cfg.name);

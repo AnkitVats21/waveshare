@@ -8,6 +8,7 @@
 #include <cerrno>
 #include "PlayerTypes.h"
 #include "common/thread_config.h"
+#include "freertos/idf_additions.h"
 
 static const char* TAG = "StorageManager";
 
@@ -98,10 +99,17 @@ bool StorageManager::openFileForCaching(const char* songId) {
     _readerTaskRunning = true;
 
     // Spawn concurrent SD Writer task on Core 0 (off audio DSP core)
-    BaseType_t ret = xTaskCreatePinnedToCore(
+    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
         sdWriterTaskThunk, "sd_writer_task", ThreadConfig::StackSize::STACK_STORAGE, this,
-        ThreadConfig::Priority::STORAGE_IO, &_writerTaskHandle, ThreadConfig::CORE_STORAGE
+        ThreadConfig::Priority::STORAGE_IO, &_writerTaskHandle, ThreadConfig::CORE_STORAGE,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
+    if (ret != pdPASS) {
+        ret = xTaskCreatePinnedToCore(
+            sdWriterTaskThunk, "sd_writer_task", ThreadConfig::StackSize::STACK_STORAGE, this,
+            ThreadConfig::Priority::STORAGE_IO, &_writerTaskHandle, ThreadConfig::CORE_STORAGE
+        );
+    }
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_writer_task");
         closeActiveFile();
@@ -109,10 +117,17 @@ bool StorageManager::openFileForCaching(const char* songId) {
     }
 
     // Spawn concurrent SD Reader task on Core 0 (off audio DSP core)
-    ret = xTaskCreatePinnedToCore(
+    ret = xTaskCreatePinnedToCoreWithCaps(
         sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
-        ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
+        ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
+    if (ret != pdPASS) {
+        ret = xTaskCreatePinnedToCore(
+            sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
+            ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
+        );
+    }
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_reader_task");
         closeActiveFile();
@@ -171,10 +186,17 @@ bool StorageManager::openFileForReading(const char* songId) {
     _readerTaskRunning = true;
 
     // Spawn concurrent SD Reader task on Core 0 (off audio DSP core)
-    BaseType_t ret = xTaskCreatePinnedToCore(
+    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
         sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
-        ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
+        ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
+    if (ret != pdPASS) {
+        ret = xTaskCreatePinnedToCore(
+            sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
+            ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
+        );
+    }
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_reader_task");
         closeActiveFile();
@@ -295,7 +317,7 @@ void StorageManager::runWriterTaskLoop() {
 }
 
 void StorageManager::runReaderTaskLoop() {
-    ESP_LOGI(TAG, "Reader Task running on Core 1");
+    ESP_LOGI(TAG, "Reader Task running on Core %d", (int)xPortGetCoreID());
 
     // Pre-allocate read buffer in PSRAM to prevent stack overflows (32KB payload)
     size_t allocSize = sizeof(AudioChunkHeader) + AUDIO_CHUNK_SIZE;

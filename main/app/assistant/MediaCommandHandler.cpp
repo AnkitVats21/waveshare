@@ -3,6 +3,7 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
+#include "freertos/idf_additions.h"
 #include <ArduinoJson.h>
 
 bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call, JsonDocument& response_doc) {
@@ -10,12 +11,20 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
         case GeminiSkills::SkillType::PLAY: {
             LOGI_SYSTEM("Media PLAY command received: '%s'", skill_call.args.play->query.c_str());
             std::string q = skill_call.args.play->query;
-            xTaskCreate([](void* arg) {
+            BaseType_t ret = xTaskCreatePinnedToCoreWithCaps([](void* arg) {
                 std::string* query_str = static_cast<std::string*>(arg);
                 MusicPlaybackService::getInstance().play(query_str->c_str());
                 delete query_str;
                 vTaskDelete(NULL);
-            }, "bg_play", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+            }, "bg_play", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (ret != pdPASS) {
+                xTaskCreate([](void* arg) {
+                    std::string* query_str = static_cast<std::string*>(arg);
+                    MusicPlaybackService::getInstance().play(query_str->c_str());
+                    delete query_str;
+                    vTaskDelete(NULL);
+                }, "bg_play", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+            }
             response_doc["status"] = "success";
             return true;
         }
@@ -23,12 +32,20 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
         case GeminiSkills::SkillType::PLAY_NEXT: {
             LOGI_SYSTEM("Media PLAY_NEXT command received: '%s'", skill_call.args.play_next->query.c_str());
             std::string q = skill_call.args.play_next->query;
-            xTaskCreate([](void* arg) {
+            BaseType_t ret = xTaskCreatePinnedToCoreWithCaps([](void* arg) {
                 std::string* query_str = static_cast<std::string*>(arg);
                 MusicPlaybackService::getInstance().playNext(query_str->c_str());
                 delete query_str;
                 vTaskDelete(NULL);
-            }, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+            }, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (ret != pdPASS) {
+                xTaskCreate([](void* arg) {
+                    std::string* query_str = static_cast<std::string*>(arg);
+                    MusicPlaybackService::getInstance().playNext(query_str->c_str());
+                    delete query_str;
+                    vTaskDelete(NULL);
+                }, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+            }
             response_doc["status"] = "success";
             return true;
         }

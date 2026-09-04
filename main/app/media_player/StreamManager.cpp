@@ -3,7 +3,8 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "PlayerTypes.h"
-
+#include "freertos/idf_additions.h"
+#include "common/thread_config.h"
 
 static const char* TAG = "StreamManager";
 
@@ -25,13 +26,21 @@ bool StreamManager::beginStreaming(const char* url, bool cacheMode) {
     _cacheMode = cacheMode;
     _isStreaming = true;
 
-    xTaskCreatePinnedToCore(
-        networkTaskThunk, "net_stream_task", 4096, this,
-        5, &_networkTaskHandle, 0
+    // Prefer allocating stack in PSRAM to conserve internal SRAM for network buffers
+    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
+        networkTaskThunk, "net_stream_task", 6 * 1024, this,
+        ThreadConfig::Priority::NORMAL, &_networkTaskHandle, ThreadConfig::CORE_NETWORK,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
+    if (ret != pdPASS) {
+        ret = xTaskCreatePinnedToCore(
+            networkTaskThunk, "net_stream_task", 4096, this,
+            ThreadConfig::Priority::NORMAL, &_networkTaskHandle, ThreadConfig::CORE_NETWORK
+        );
+    }
 
-    if (!_networkTaskHandle) {
-        ESP_LOGE(TAG, "Failed to spawn net_stream_task");
+    if (ret != pdPASS || !_networkTaskHandle) {
+        ESP_LOGE(TAG, "Failed to spawn net_stream_task (ret=%d)", (int)ret);
         _isStreaming = false;
         return false;
     }

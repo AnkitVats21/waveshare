@@ -3,6 +3,7 @@
 #include "BufferManager.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
 #include <cstdio>
 #include <cmath>
 
@@ -237,7 +238,13 @@ void AudioEngine::start() {
     if (_eventGroup) {
         xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
     }
-    xTaskCreatePinnedToCore(decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0);
+    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
+        decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+    );
+    if (ret != pdPASS) {
+        xTaskCreatePinnedToCore(decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0);
+    }
 }
 
 void AudioEngine::pause() { 
