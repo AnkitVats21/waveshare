@@ -94,21 +94,48 @@ void MqttService::onStateChanged(ComponentMask changed, const SystemState& snap)
             
             esp_mqtt_client_config_t mqtt_cfg = {};
 
-            Services::SystemConfig sd_cfg = Services::GetConfig();
-            std::string broker_uri = (sd_cfg.mqtt.broker_uri[0] != '\0') ? sd_cfg.mqtt.broker_uri : MQTTS_BROKER_URI;
-            std::string username   = (sd_cfg.mqtt.username[0] != '\0')   ? sd_cfg.mqtt.username   : MQTT_USERNAME;
-            std::string password   = (sd_cfg.mqtt.password[0] != '\0')   ? sd_cfg.mqtt.password   : MQTT_PASSWORD;
-            std::string client_id  = (sd_cfg.mqtt.client_id[0] != '\0')  ? sd_cfg.mqtt.client_id  : MQTT_CLIENT_ID;
+            std::string broker_uri = MQTTS_BROKER_URI;
+            std::string username   = MQTT_USERNAME;
+            std::string password   = MQTT_PASSWORD;
+            std::string client_id  = MQTT_CLIENT_ID;
+
+            // Only override from SD card if an explicit settings file was present with non-default broker
+            if (Services::StorageService::getInstance().isMounted() &&
+                Services::StorageService::getInstance().fileExists("/sdcard/settings.txt")) {
+                Services::SystemConfig sd_cfg = Services::GetConfig();
+                if (sd_cfg.mqtt.broker_uri[0] != '\0' && strcmp(sd_cfg.mqtt.broker_uri, "mqtt://broker.emqx.io") != 0) {
+                    broker_uri = sd_cfg.mqtt.broker_uri;
+                }
+                if (sd_cfg.mqtt.username[0] != '\0') username = sd_cfg.mqtt.username;
+                if (sd_cfg.mqtt.password[0] != '\0') password = sd_cfg.mqtt.password;
+                if (sd_cfg.mqtt.client_id[0] != '\0') client_id = sd_cfg.mqtt.client_id;
+            }
 
             if (broker_uri.find("mqtt://") != 0 && broker_uri.find("mqtts://") != 0 && 
                 broker_uri.find("ws://") != 0 && broker_uri.find("wss://") != 0) {
                 broker_uri = "mqtts://" + broker_uri;
             }
+
+            ESP_LOGI(TAG, "Connecting to MQTT broker: %s (client_id: %s)", broker_uri.c_str(), client_id.c_str());
             mqtt_cfg.broker.address.uri = broker_uri.c_str();
-            mqtt_cfg.broker.verification.certificate = BROKER_ROOT_CA_PEM;
-            mqtt_cfg.credentials.username = username.c_str();
-            mqtt_cfg.credentials.authentication.password = password.c_str();
-            mqtt_cfg.credentials.client_id = client_id.c_str();
+
+            // Only set SSL certificate if the URI is a secure scheme (mqtts:// or wss://)
+            bool is_tls = (broker_uri.find("mqtts://") == 0 || broker_uri.find("wss://") == 0);
+            if (is_tls) {
+                mqtt_cfg.broker.verification.certificate = BROKER_ROOT_CA_PEM;
+            } else {
+                mqtt_cfg.broker.verification.certificate = nullptr;
+            }
+
+            if (!username.empty()) {
+                mqtt_cfg.credentials.username = username.c_str();
+            }
+            if (!password.empty()) {
+                mqtt_cfg.credentials.authentication.password = password.c_str();
+            }
+            if (!client_id.empty()) {
+                mqtt_cfg.credentials.client_id = client_id.c_str();
+            }
 
             m_mqtt_handle = esp_mqtt_client_init(&mqtt_cfg);
             if (m_mqtt_handle) {
