@@ -10,11 +10,11 @@ static const char* TAG = "InvidiousResolver";
 namespace {
 
 static const std::vector<std::string> DEFAULT_FALLBACK_INSTANCES = {
+    "stream.ankitm.xyz",
+    "192.168.1.21:8088",
     "invidious.flokinet.to",
     "invidious.f5.si",
-    "invidious.tiekoetter.com",
-    "inv.nadeko.net",
-    "yt.chocolatemoo53.com"
+    "invidious.tiekoetter.com"
 };
 
 esp_err_t httpEventCollector(esp_http_client_event_t* evt) {
@@ -35,10 +35,19 @@ InvidiousInstanceResolver& InvidiousInstanceResolver::getInstance() {
 }
 
 InvidiousInstanceResolver::InvidiousInstanceResolver() {
+    _customHost = "stream.ankitm.xyz";
     _instances = DEFAULT_FALLBACK_INSTANCES;
 }
 
+void InvidiousInstanceResolver::setCustomInstance(const std::string& host) {
+    _customHost = host;
+    ESP_LOGI(TAG, "Custom Invidious instance host configured: %s", _customHost.c_str());
+}
+
 std::string InvidiousInstanceResolver::getActiveInstance() {
+    if (!_customHost.empty()) {
+        return _customHost;
+    }
     if (!_initialized || _instances.empty()) {
         refreshInstances();
     }

@@ -7,6 +7,12 @@
 #include <deque>
 #include <vector>
 
+enum class RepeatMode {
+    Off,
+    One,
+    All
+};
+
 class MusicPlaybackService : public IPlaybackObserver {
 public:
     static MusicPlaybackService& getInstance();
@@ -15,12 +21,24 @@ public:
     
     bool play(const char* query);
     bool playNext(const char* query);
+    bool queue(const char* query);
     bool next();
     bool previous();
     void pause();
     void resume();
     void stop();
+
+    // Playlist / Queue Management
+    void clearQueue();
+    void shuffleQueue();
+    void setRepeatMode(RepeatMode mode) { _repeatMode = mode; }
+    RepeatMode getRepeatMode() const { return _repeatMode; }
     void setAutoplay(bool enabled) { _autoplayEnabled = enabled; }
+    bool isAutoplayEnabled() const { return _autoplayEnabled; }
+
+    const InvidiousTrack& getCurrentTrack() const { return _currentTrack; }
+    const std::deque<InvidiousTrack>& getQueue() const { return _queue; }
+    const std::vector<InvidiousTrack>& getHistory() const { return _history; }
 
     // IPlaybackObserver implementation
     void onTrackStarted(const char* songId) override;
@@ -34,11 +52,16 @@ private:
     InvidiousClient _invidious;
     bool _initialized = false;
     bool _autoplayEnabled = true;
+    RepeatMode _repeatMode = RepeatMode::Off;
 
     InvidiousTrack _currentTrack;
     std::deque<InvidiousTrack> _queue;
     std::vector<InvidiousTrack> _history;
 
+    std::string _prefetchedVideoId;
+    std::string _prefetchedUrl;
+
     bool playTrack(const InvidiousTrack& track);
     bool resolveAndPlayImmediate(const char* query);
+    void prefetchNextTrack();
 };

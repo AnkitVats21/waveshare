@@ -69,13 +69,20 @@ esp_err_t InvidiousClient::httpGet(const std::string& pathWithQuery, std::string
     const std::string host = getHost();
     if (host.empty() || pathWithQuery.empty()) return ESP_ERR_INVALID_ARG;
 
-    const std::string url = "https://" + host + pathWithQuery;
+    std::string url;
+    if (host.rfind("http://", 0) == 0 || host.rfind("https://", 0) == 0) {
+        url = host + pathWithQuery;
+    } else if (host.find(":") != std::string::npos) {
+        url = "http://" + host + pathWithQuery;
+    } else {
+        url = "https://" + host + pathWithQuery;
+    }
 
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.event_handler = httpEventHandler;
     config.user_data = &outResponse;
-    config.timeout_ms = 8000;
+    config.timeout_ms = 25000;
     config.buffer_size = 4096;
     config.crt_bundle_attach = esp_crt_bundle_attach;
     config.skip_cert_common_name_check = true;

@@ -17,8 +17,13 @@ public:
     // Discovers alive instances from api.invidious.io or internal fallback list
     bool refreshInstances();
 
+    // Sets a custom instance host (e.g. "raspberrypi:8080" or "192.168.1.50:8080")
+    void setCustomInstance(const std::string& host);
+
 private:
     InvidiousInstanceResolver();
+
+    std::string _customHost;
 
     std::vector<std::string> _instances;
     size_t _currentIndex = 0;
