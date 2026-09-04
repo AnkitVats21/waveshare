@@ -8,6 +8,7 @@
 #include "app/gemini_live/GeminiProtocol.h"
 #include "app/gemini_live/GeminiAudioPump.h"
 #include "app/media_player/NexusPlayer.h"
+#include "app/media_player/MusicPlaybackService.h"
 #include "common/AppLogger.h"
 #include "common/LogRouter.h"
 #include "common/sysdb/EmbeddedSysDb.h"
@@ -132,6 +133,7 @@ extern "C" void app_main(void) {
     mqtt_svc.begin();
     // rtp_player.begin();
     NexusPlayer::getInstance().begin();
+    MusicPlaybackService::getInstance().begin();
     gemini_pump.start();
     app_ctrl.begin();
     // alarm_svc.begin();

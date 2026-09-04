@@ -1,9 +1,9 @@
 #include "NexusPlayer.h"
 #include "esp_log.h"
 #include <cstring>
+#include <algorithm>
 #include "app/audio/SpeakerPlayback.h"
 #include "common/thread_config.h"
-#include "app/mqtt/MqttService.h"
 
 static const char* TAG = "NexusPlayer";
 
@@ -83,6 +83,36 @@ bool NexusPlayer::begin() {
     return _audioEngine.initialize(32000, 1);
 }
 
+void NexusPlayer::addObserver(IPlaybackObserver* observer) {
+    PlayerLock lock(_mutex);
+    if (observer) {
+        _observers.push_back(observer);
+    }
+}
+
+void NexusPlayer::removeObserver(IPlaybackObserver* observer) {
+    PlayerLock lock(_mutex);
+    _observers.erase(std::remove(_observers.begin(), _observers.end(), observer), _observers.end());
+}
+
+void NexusPlayer::notifyTrackStarted(const char* songId) {
+    for (auto* obs : _observers) {
+        if (obs) obs->onTrackStarted(songId);
+    }
+}
+
+void NexusPlayer::notifyTrackFinished(const char* songId) {
+    for (auto* obs : _observers) {
+        if (obs) obs->onTrackFinished(songId);
+    }
+}
+
+void NexusPlayer::notifyPlaybackError(const char* songId, int err) {
+    for (auto* obs : _observers) {
+        if (obs) obs->onPlaybackError(songId, err);
+    }
+}
+
 void NexusPlayer::play(const char* songId, const char* downloadUrl) {
     PlayerLock lock(_mutex);
 
@@ -93,10 +123,8 @@ void NexusPlayer::play(const char* songId, const char* downloadUrl) {
 
     if (_session_active) {
         ESP_LOGI(TAG, "Play requested during active session. Deferring songId: %s until session ends.", songId);
-        strncpy(_pendingSongId, songId, sizeof(_pendingSongId) - 1);
-        _pendingSongId[sizeof(_pendingSongId) - 1] = '\0';
-        strncpy(_pendingDownloadUrl, downloadUrl, sizeof(_pendingDownloadUrl) - 1);
-        _pendingDownloadUrl[sizeof(_pendingDownloadUrl) - 1] = '\0';
+        _pendingSongId = songId;
+        _pendingDownloadUrl = downloadUrl;
         _should_play_after_session = true;
         _should_resume_after_session = false; // Overridden by new play request
         return;
@@ -125,6 +153,8 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
     BufferManager::getInstance().flush(_storageId);
     BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
 
+    notifyTrackStarted(songId);
+
     if (_storageManager.fileExists(songId)) {
         ESP_LOGI(TAG, "Cache Hit! Playing local file for songId: %s", songId);
         _state = STATE_LOCAL_PLAYBACK;
@@ -137,6 +167,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
             ESP_LOGE(TAG, "Failed to open local file for reading");
             stopActivePipelines();
             _state = STATE_IDLE;
+            notifyPlaybackError(songId, -1);
             return;
         }
     } else {
@@ -147,11 +178,11 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
         _audioEngine.start();
 
         // Open temp file for caching (writes stream to it and reads progressively)
-        // Spawns Writer and Reader tasks.
         if (!_storageManager.openFileForCaching(songId)) {
             ESP_LOGE(TAG, "Failed to open file for caching");
             stopActivePipelines();
             _state = STATE_IDLE;
+            notifyPlaybackError(songId, -2);
             return;
         }
 
@@ -160,6 +191,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
             ESP_LOGE(TAG, "Failed to start streaming");
             stopActivePipelines();
             _state = STATE_IDLE;
+            notifyPlaybackError(songId, -3);
             return;
         }
     }
@@ -177,7 +209,6 @@ void NexusPlayer::pause_internal() {
         ESP_LOGI(TAG, "Pausing playback");
         _audioEngine.pause();
 
-        // Give the audio engine a tiny delay to yield if it was actively running
         vTaskDelay(pdMS_TO_TICKS(5));
 
         // Save the current contents of SPK_RX_BUF to the SPIRAM buffer
@@ -256,6 +287,8 @@ void NexusPlayer::stop() {
     _activeSongId[0] = '\0';
     _should_resume_after_session = false;
     _should_play_after_session = false;
+    _pendingSongId.clear();
+    _pendingDownloadUrl.clear();
 }
 
 void NexusPlayer::stopActivePipelines() {
@@ -263,11 +296,8 @@ void NexusPlayer::stopActivePipelines() {
     _streamManager.stopStreaming();
 
     // 2. Unblock AudioEngine decoder task from waiting on PLAYER_BUF
-    // We send an EOF chunk to PLAYER_BUF to unblock the receive
     AudioChunkHeader eof_header = {ChunkType::EOF_STREAM, 0};
     BufferManager::getInstance().send(_playbackId, &eof_header, sizeof(eof_header));
-
-    // Also send to storageId just in case writer is waiting
     BufferManager::getInstance().send(_storageId, &eof_header, sizeof(eof_header));
 
     // 3. Stop AudioEngine (kills decoder task)
@@ -298,7 +328,7 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
             _session_active = true;
             if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
                 _should_resume_after_session = true;
-                _should_play_after_session = false; // Playing is overridden if we are already playing
+                _should_play_after_session = false;
                 pause_internal();
             } else {
                 _should_resume_after_session = false;
@@ -307,8 +337,10 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
         else if (!new_session_active && _session_active) {
             ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
             _session_active = false;
-            if (_should_play_after_session) {
-                play_internal(_pendingSongId, _pendingDownloadUrl);
+            if (_should_play_after_session && !_pendingDownloadUrl.empty()) {
+                play_internal(_pendingSongId.c_str(), _pendingDownloadUrl.c_str());
+                _pendingSongId.clear();
+                _pendingDownloadUrl.clear();
                 _should_play_after_session = false;
             } else if (_should_resume_after_session) {
                 resume_internal();
@@ -341,13 +373,16 @@ void NexusPlayer::checkPlaybackFinished() {
         if (!_audioEngine.isPlaying()) {
             auto &bm = BufferManager::getInstance();
             if (bm.getUsedBytes(Buffers::SPK_RX_BUF) == 0) {
-                ESP_LOGI(TAG, "Playback naturally finished for songId: %s. Trigger next song.", _activeSongId);
+                ESP_LOGI(TAG, "Playback naturally finished for songId: %s. Notifying observers.", _activeSongId);
+                char finishedSong[64];
+                strncpy(finishedSong, _activeSongId, sizeof(finishedSong) - 1);
+                finishedSong[sizeof(finishedSong) - 1] = '\0';
                 
-                // Clean up playback state using stop()
+                // Clean up playback state
                 stop();
 
-                // Publish "next" command via MQTT
-                MqttService::getInstance().publish("mpv/command", "{\"cmd\":\"next\"}");
+                // Notify observers (MusicPlaybackService) to advance queue natively
+                notifyTrackFinished(finishedSong);
             }
         }
     }

@@ -3,8 +3,11 @@
 #include "StorageManager.h"
 #include "StreamManager.h"
 #include "AudioEngine.h"
+#include "IPlaybackObserver.h"
 #include "common/ReactorTask.h"
 #include "freertos/semphr.h"
+#include <string>
+#include <vector>
 
 // Declare the playback and storage buffers for NexusPlayer
 DECLARE_BUFFER(PLAYER_BUF, "player_buf", 512 * 1024)
@@ -34,6 +37,10 @@ public:
     
     PlayerState getState() { return _state; }
 
+    // Observer Pattern registration
+    void addObserver(IPlaybackObserver* observer);
+    void removeObserver(IPlaybackObserver* observer);
+
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
     void run() override;
@@ -58,13 +65,19 @@ private:
     bool _session_active = false;
     bool _should_resume_after_session = false;
 
-    // Deferred playback state cache
+    // Deferred playback state cache (dynamic string to avoid URL truncation)
     bool _should_play_after_session = false;
-    char _pendingSongId[64] = {0};
-    char _pendingDownloadUrl[256] = {0};
+    std::string _pendingSongId;
+    std::string _pendingDownloadUrl;
+
+    // Registered playback lifecycle observers
+    std::vector<IPlaybackObserver*> _observers;
 
     void pause_internal();
     void resume_internal();
     void play_internal(const char* songId, const char* downloadUrl);
     void checkPlaybackFinished();
+    void notifyTrackStarted(const char* songId);
+    void notifyTrackFinished(const char* songId);
+    void notifyPlaybackError(const char* songId, int err);
 };

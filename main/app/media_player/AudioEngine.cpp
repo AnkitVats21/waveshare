@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "AudioDecoderFactory.h"
 #include "BufferManager.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -34,6 +35,7 @@ bool AudioEngine::initialize(int sampleRate, int channels) {
     _sampleRate = sampleRate;
     _channels = channels;
     _decoder.reset();
+    _decoderIdentified = false;
 
     // Create FreeRTOS EventGroup for zero-CPU task suspension
     if (!_eventGroup) {
@@ -55,42 +57,58 @@ bool AudioEngine::initialize(int sampleRate, int channels) {
 }
 
 void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload_len, size_t& bytes_consumed) {
-    size_t samples_decoded = 0;
+    bytes_consumed = 0;
+    if (!payload_data || payload_len == 0) return;
 
-    // Decode Ogg/Opus packet to PCM
-    micro_opus::OggOpusResult result = _decoder.decode(
+    if (!_decoder || !_decoderIdentified) {
+        _decoder = AudioDecoderFactory::createDecoder(payload_data, payload_len);
+        if (_decoder) {
+            _decoder->init(_sampleRate, _channels);
+            _decoderIdentified = true;
+            ESP_LOGI(TAG, "Initialized decoder strategy: %s", _decoder->getName());
+        }
+    }
+
+    if (!_decoder) {
+        bytes_consumed = payload_len; // Drop if no decoder
+        return;
+    }
+
+    size_t samples_decoded = 0;
+    size_t max_samples = _pcm_buffer_size / sizeof(int16_t);
+    DecodeResult result = _decoder->decode(
         payload_data, payload_len,
-        reinterpret_cast<uint8_t*>(_pcm_buffer), _pcm_buffer_size,
+        _pcm_buffer, max_samples,
         bytes_consumed, samples_decoded
     );
 
-    if (result == micro_opus::OGG_OPUS_OUTPUT_BUFFER_TOO_SMALL) {
-        ESP_LOGE(TAG, "PCM buffer too small (%zu bytes), required %zu.",
-                 _pcm_buffer_size, _decoder.get_required_output_buffer_size());
+    if (result == DecodeResult::OUTPUT_BUFFER_FULL) {
+        ESP_LOGE(TAG, "PCM buffer too small for decoder.");
         return;
-    } else if (result != micro_opus::OGG_OPUS_OK) {
-        ESP_LOGE(TAG, "Opus decode error: %d", result);
+    } else if (result == DecodeResult::ERROR_INVALID_STREAM || result == DecodeResult::ERROR_DECODE_FAILED) {
+        ESP_LOGD(TAG, "Decoder error result: %d", (int)result);
         return;
     }
 
     // Process and output PCM samples
     if (samples_decoded > 0) {
-        uint8_t channels = _decoder.get_channels();
+        uint8_t src_channels = _decoder->getSourceChannels();
         int16_t* pcm_mono = _pcm_buffer;
         size_t mono_samples = samples_decoded;
 
         // Stereo to Mono downmix in-place
-        if (channels == 2) {
-            for (size_t i = 0; i < samples_decoded; ++i) {
+        if (src_channels == 2) {
+            mono_samples = samples_decoded / 2;
+            for (size_t i = 0; i < mono_samples; ++i) {
                 int32_t mix = (static_cast<int32_t>(_pcm_buffer[2 * i]) +
                                static_cast<int32_t>(_pcm_buffer[2 * i + 1])) / 2;
                 _pcm_buffer[i] = static_cast<int16_t>(mix);
             }
         }
 
-        // Resample mono to 32 kHz mono
-        uint32_t src_rate = _decoder.get_sample_rate();
-        uint32_t dst_rate = 32000;
+        // Resample mono to target rate (typically 32 kHz)
+        uint32_t src_rate = _decoder->getSourceSampleRate();
+        uint32_t dst_rate = _sampleRate;
 
         size_t resampled_count = static_cast<size_t>(mono_samples * dst_rate / src_rate);
         if (resampled_count > _resample_buffer_samples) {
@@ -113,7 +131,7 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
             }
         }
 
-        // Push final 32 kHz mono PCM to SPK_RX_BUF with backpressure throttling
+        // Push final PCM to SPK_RX_BUF with backpressure throttling
         size_t send_bytes = resampled_count * sizeof(int16_t);
         bool sent = _bm.send(_pcmOutId, _resample_buffer, send_bytes, pdMS_TO_TICKS(100));
         if (!sent) {
@@ -128,7 +146,8 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
 void AudioEngine::runDecodeLoop() {
     ESP_LOGI(TAG, "AudioEngine decode task started");
     _isPlaying = true;
-    _decoder.reset();
+    _decoderIdentified = false;
+    if (_decoder) _decoder->reset();
 
     AudioChunkHeader* current_chunk = nullptr;
     size_t current_offset = 0;
@@ -199,6 +218,8 @@ void AudioEngine::runDecodeLoop() {
     }
 
     _isPlaying = false;
+    _decoderIdentified = false;
+    if (_decoder) _decoder->reset();
     ESP_LOGI(TAG, "AudioEngine decode task exiting");
 }
 
@@ -208,6 +229,7 @@ void AudioEngine::start() {
     }
     _isPlaying = true;
     _isPaused = false;
+    _decoderIdentified = false;
     if (_eventGroup) {
         xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
     }
@@ -230,6 +252,7 @@ void AudioEngine::resume() {
 
 void AudioEngine::stop() { 
     _isPlaying = false; 
+    _decoderIdentified = false;
     if (_eventGroup) {
         // Clear pause status and unblock task if it was waiting so it can exit cleanly
         xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
@@ -246,11 +269,11 @@ bool AudioEngine::playAlertFile(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return false;
 
-    ESP_LOGI(TAG, "Playing custom alert Ogg file via AudioEngine: %s", path);
+    ESP_LOGI(TAG, "Playing custom alert audio file via AudioEngine: %s", path);
 
-    _decoder.reset();
+    _decoderIdentified = false;
+    if (_decoder) _decoder->reset();
 
-    // Heap-allocate the read buffer to save stack space during VFS filesystem calls
     constexpr size_t READ_BUF_SIZE = 1024;
     uint8_t* read_buf = (uint8_t*)malloc(READ_BUF_SIZE);
     if (!read_buf) {
@@ -283,7 +306,8 @@ bool AudioEngine::playAlertFile(const char* path) {
 
     free(read_buf);
     fclose(f);
-    _decoder.reset(); // Reset again so music decoder starts clean
+    _decoderIdentified = false;
+    if (_decoder) _decoder->reset();
     return true;
 }
 

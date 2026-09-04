@@ -1,9 +1,10 @@
 #pragma once
 
 #include "services/BufferManager.h"
-#include "micro_opus/ogg_opus_decoder.h"
+#include "IAudioDecoder.h"
 #include "AudioSource.h" // For ChunkType, AudioChunkHeader
 #include "freertos/event_groups.h"
+#include <memory>
 
 enum AlertType {
     ALERT_WAKE_CONFIRM,
@@ -39,8 +40,9 @@ private:
     BufferManager::BufferId _rawOpusInId;
     BufferManager::BufferId _pcmOutId;
 
-    // Use micro-opus Ogg parser for file container structures
-    micro_opus::OggOpusDecoder _decoder;
+    // Pluggable audio decoder strategy
+    std::unique_ptr<IAudioDecoder> _decoder;
+    bool _decoderIdentified = false;
     
     // PSRAM Buffers for working data
     int16_t* _pcm_buffer = nullptr;        // Pre-allocated 32KB

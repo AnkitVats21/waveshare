@@ -1,4 +1,5 @@
 #include "HttpClientStream.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 
 static const char* TAG = "HttpStream";
@@ -39,15 +40,15 @@ bool HttpClientStream::open(const std::string& url) {
     config.url = url.c_str();
     config.event_handler = _httpEventThunk;
     config.is_async = false;
+    config.timeout_ms = 10000;
+    config.max_redirection_count = 5;
 
     // --- HTTPS Security Layer Enhancements ---
     if (url.rfind("https://", 0) == 0) {
         config.transport_type = HTTP_TRANSPORT_OVER_SSL;
-        
-        // --- Bypasses the text parser error while preserving full TLS Handshake ---
+        config.crt_bundle_attach = esp_crt_bundle_attach;
         config.skip_cert_common_name_check = true; 
         
-        // Tells ESP-TLS to negotiate encryption directly without manually parsing a local string
         #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
         config.use_global_ca_store = false;
         #endif
@@ -63,6 +64,8 @@ bool HttpClientStream::open(const std::string& url) {
         ESP_LOGE(TAG, "Failed to initialize HTTP client");
         return false;
     }
+
+    esp_http_client_set_header(_clientHandle, "User-Agent", "Mozilla/5.0 (ESP32-S3 Waveshare)");
 
     // Open the connection and fetch headers only. The body is then consumed
     // incrementally via esp_http_client_read() in the network task.
