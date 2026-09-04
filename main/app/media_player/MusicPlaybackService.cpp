@@ -1,5 +1,8 @@
 #include "MusicPlaybackService.h"
 #include "esp_log.h"
+#include "common/sysdb/EmbeddedSysDb.h"
+#include <algorithm>
+#include <random>
 
 static const char* TAG = "MusicPlayback";
 
@@ -14,13 +17,36 @@ bool MusicPlaybackService::begin() {
     if (_initialized) return true;
     
     NexusPlayer::getInstance().addObserver(this);
+    _autoplayEnabled = EmbeddedSysDb::getInstance().snapshot().audio.autoplay_enabled;
     _initialized = true;
-    ESP_LOGI(TAG, "MusicPlaybackService initialized and registered as NexusPlayer observer");
+    ESP_LOGI(TAG, "MusicPlaybackService initialized (autoplay=%s, caching=%s)",
+             _autoplayEnabled ? "true" : "false",
+             EmbeddedSysDb::getInstance().snapshot().audio.cache_downloads ? "true" : "false");
     return true;
 }
 
-#include <algorithm>
-#include <random>
+void MusicPlaybackService::setAutoplay(bool enabled) {
+    _autoplayEnabled = enabled;
+    EmbeddedSysDb::getInstance().mutate([enabled](SystemState& s) {
+        s.audio.autoplay_enabled = enabled;
+    });
+    ESP_LOGI(TAG, "Autoplay set to %s (persisted to SysDb)", enabled ? "true" : "false");
+}
+
+bool MusicPlaybackService::isAutoplayEnabled() const {
+    return EmbeddedSysDb::getInstance().snapshot().audio.autoplay_enabled;
+}
+
+void MusicPlaybackService::setCaching(bool enabled) {
+    EmbeddedSysDb::getInstance().mutate([enabled](SystemState& s) {
+        s.audio.cache_downloads = enabled;
+    });
+    ESP_LOGI(TAG, "Live caching set to %s (persisted to SysDb)", enabled ? "true" : "false");
+}
+
+bool MusicPlaybackService::isCachingEnabled() const {
+    return EmbeddedSysDb::getInstance().snapshot().audio.cache_downloads;
+}
 
 bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
     if (track.videoId.empty()) return false;
@@ -57,20 +83,46 @@ bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
     return true;
 }
 
+bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
+    if (track.videoId.empty()) return false;
+
+    std::string streamUrl;
+    esp_err_t err = _invidious.resolveOpusUrl(track.videoId, streamUrl);
+    if (err != ESP_OK || streamUrl.empty()) {
+        ESP_LOGE(TAG, "Fallback failed to resolve stream for '%s' (%s): %s",
+                 track.title.c_str(), track.videoId.c_str(), esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Fallback playing live stream: '%s' by '%s' [%s]",
+             track.title.c_str(), track.author.c_str(), track.videoId.c_str());
+
+    _currentTrack = track;
+    NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
+    return true;
+}
+
 bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
     if (!query || query[0] == '\0') {
         ESP_LOGE(TAG, "Empty music query");
         return false;
     }
 
-    InvidiousTrack track;
-    esp_err_t err = _invidious.search(query, track);
-    if (err != ESP_OK) {
+    std::vector<InvidiousTrack> tracks;
+    esp_err_t err = _invidious.searchList(query, tracks, 10);
+    if (err != ESP_OK || tracks.empty()) {
         ESP_LOGE(TAG, "Search failed for '%s': %s", query, esp_err_to_name(err));
         return false;
     }
 
-    return playTrack(track);
+    _queue.clear();
+    for (size_t i = 1; i < tracks.size(); ++i) {
+        _queue.push_back(tracks[i]);
+    }
+    ESP_LOGI(TAG, "Populated playlist with %zu tracks from search '%s' (1 playing + %zu queued)",
+             tracks.size(), query, _queue.size());
+
+    return playTrack(tracks[0]);
 }
 
 bool MusicPlaybackService::play(const char* query) {
@@ -162,7 +214,7 @@ bool MusicPlaybackService::next() {
         return playTrack(nextTrack);
     }
 
-    if (_autoplayEnabled && !_currentTrack.videoId.empty()) {
+    if (isAutoplayEnabled() && !_currentTrack.videoId.empty()) {
         ESP_LOGI(TAG, "Queue empty; attempting autoplay recommendation for %s", _currentTrack.videoId.c_str());
         InvidiousTrack recTrack;
         esp_err_t err = _invidious.getRecommendedTrack(_currentTrack.videoId, recTrack);
@@ -234,6 +286,13 @@ void MusicPlaybackService::onTrackFinished(const char* songId) {
 
 void MusicPlaybackService::onPlaybackError(const char* songId, int errorCode) {
     ESP_LOGE(TAG, "Observer event: Playback error %d for [%s]", errorCode, songId ? songId : "");
+    if (errorCode == -1 && songId && _currentTrack.videoId == songId) {
+        ESP_LOGW(TAG, "Local file error for %s. Deleting corrupted cache and falling back to live stream!", songId);
+        NexusPlayer::getInstance().getStorageManager().deleteFile(songId);
+        if (playTrackFallback(_currentTrack)) {
+            return;
+        }
+    }
     if (!_queue.empty()) {
         next();
     }

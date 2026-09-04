@@ -24,10 +24,46 @@ StorageManager::~StorageManager() {
 bool StorageManager::fileExists(const char* songId) {
     if (!songId || songId[0] == '\0') return false;
     char path[128];
+    struct stat st;
+
     snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
-    if (_storageService.fileExists(path)) return true;
+    if (stat(path, &st) == 0) {
+        if (st.st_size >= 32768) {
+            return true;
+        }
+        ESP_LOGW(TAG, "Cached file %s is corrupt or incomplete (size=%ld < 32KB). Deleting.", path, (long)st.st_size);
+        _storageService.deleteFile(path);
+    }
+
     snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
-    return _storageService.fileExists(path);
+    if (stat(path, &st) == 0) {
+        if (st.st_size >= 32768) {
+            return true;
+        }
+        ESP_LOGW(TAG, "Cached file %s is corrupt or incomplete (size=%ld < 32KB). Deleting.", path, (long)st.st_size);
+        _storageService.deleteFile(path);
+    }
+
+    return false;
+}
+
+bool StorageManager::deleteFile(const char* songId) {
+    if (!songId || songId[0] == '\0') return false;
+    char path[128];
+    bool deleted = false;
+
+    snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
+    if (_storageService.fileExists(path)) {
+        deleted = _storageService.deleteFile(path) || deleted;
+    }
+    snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
+    if (_storageService.fileExists(path)) {
+        deleted = _storageService.deleteFile(path) || deleted;
+    }
+    if (deleted) {
+        ESP_LOGI(TAG, "Deleted local cached audio file(s) for songId: %s", songId);
+    }
+    return deleted;
 }
 
 bool StorageManager::openFileForCaching(const char* songId) {
@@ -91,12 +127,37 @@ bool StorageManager::openFileForReading(const char* songId) {
     closeActiveFile();
 
     char path[128];
+    bool fileFound = false;
+    struct stat st;
+
     snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
-    if (!_storageService.fileExists(path)) {
-        snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
+    if (stat(path, &st) == 0) {
+        if (st.st_size >= 32768) {
+            fileFound = true;
+        } else {
+            ESP_LOGW(TAG, "Corrupt file detected: %s (size=%ld < 32KB). Deleting.", path, (long)st.st_size);
+            _storageService.deleteFile(path);
+        }
     }
 
-    ESP_LOGI(TAG, "Opening local playback stream at: %s", path);
+    if (!fileFound) {
+        snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
+        if (stat(path, &st) == 0) {
+            if (st.st_size >= 32768) {
+                fileFound = true;
+            } else {
+                ESP_LOGW(TAG, "Corrupt file detected: %s (size=%ld < 32KB). Deleting.", path, (long)st.st_size);
+                _storageService.deleteFile(path);
+            }
+        }
+    }
+
+    if (!fileFound) {
+        ESP_LOGE(TAG, "No valid local audio file found for songId: %s", songId);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Opening local playback stream at: %s (size=%ld bytes)", path, (long)st.st_size);
     _readStream = _storageService.openStream(path, "rb");
     if (!_readStream) {
         ESP_LOGE(TAG, "Failed to open playback stream: %s", path);

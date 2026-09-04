@@ -171,28 +171,48 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
             return;
         }
     } else {
-        ESP_LOGI(TAG, "Cache Miss! Downloading and streaming songId: %s", songId);
-        _state = STATE_STREAMING_AND_CACHING;
+        auto snap = EmbeddedSysDb::getInstance().snapshot();
+        bool doCache = snap.audio.cache_downloads;
 
-        // Start decoding engine
-        _audioEngine.start();
+        if (doCache) {
+            ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);
+            _state = STATE_STREAMING_AND_CACHING;
 
-        // Open temp file for caching (writes stream to it and reads progressively)
-        if (!_storageManager.openFileForCaching(songId)) {
-            ESP_LOGE(TAG, "Failed to open file for caching");
-            stopActivePipelines();
-            _state = STATE_IDLE;
-            notifyPlaybackError(songId, -2);
-            return;
-        }
+            // Start decoding engine
+            _audioEngine.start();
 
-        // Start downloading HTTP stream chunk-by-chunk. Spawns Network Task.
-        if (!_streamManager.beginStreaming(downloadUrl)) {
-            ESP_LOGE(TAG, "Failed to start streaming");
-            stopActivePipelines();
-            _state = STATE_IDLE;
-            notifyPlaybackError(songId, -3);
-            return;
+            // Open temp file for caching (writes stream to it and reads progressively)
+            if (!_storageManager.openFileForCaching(songId)) {
+                ESP_LOGE(TAG, "Failed to open file for caching");
+                stopActivePipelines();
+                _state = STATE_IDLE;
+                notifyPlaybackError(songId, -2);
+                return;
+            }
+
+            // Start downloading HTTP stream chunk-by-chunk to STREAM_BUF. Spawns Network Task.
+            if (!_streamManager.beginStreaming(downloadUrl, true)) {
+                ESP_LOGE(TAG, "Failed to start streaming");
+                stopActivePipelines();
+                _state = STATE_IDLE;
+                notifyPlaybackError(songId, -3);
+                return;
+            }
+        } else {
+            ESP_LOGI(TAG, "Cache Miss! Pure live streaming (no SD cache) songId: %s", songId);
+            _state = STATE_STREAMING_AND_CACHING;
+
+            // Start decoding engine
+            _audioEngine.start();
+
+            // Start downloading HTTP stream chunk-by-chunk DIRECTLY to PLAYER_BUF. Spawns Network Task.
+            if (!_streamManager.beginStreaming(downloadUrl, false)) {
+                ESP_LOGE(TAG, "Failed to start live streaming");
+                stopActivePipelines();
+                _state = STATE_IDLE;
+                notifyPlaybackError(songId, -3);
+                return;
+            }
         }
     }
 }

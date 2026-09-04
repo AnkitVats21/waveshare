@@ -17,11 +17,12 @@ StreamManager::~StreamManager() {
     stopStreaming();
 }
 
-bool StreamManager::beginStreaming(const char* url) {
+bool StreamManager::beginStreaming(const char* url, bool cacheMode) {
     if (!url) return false;
     stopStreaming();
 
     _url = url;
+    _cacheMode = cacheMode;
     _isStreaming = true;
 
     xTaskCreatePinnedToCore(
@@ -59,12 +60,13 @@ void StreamManager::networkTaskThunk(void* pvParameters) {
 }
 
 void StreamManager::runStreamLoop() {
-    ESP_LOGI(TAG, "Network Task running on Core 0");
+    ESP_LOGI(TAG, "Network Task running on Core 0 (cacheMode=%s)", _cacheMode ? "true" : "false");
+    BufferManager::BufferId targetBuf = _cacheMode ? _storageId : _playbackId;
 
     if (!_http.open(_url)) {
         ESP_LOGE(TAG, "Failed to connect to stream: %s", _url.c_str());
         AudioChunkHeader err_chunk = {ChunkType::ERROR, 0};
-        _bm.send(_storageId, &err_chunk, sizeof(err_chunk), portMAX_DELAY);
+        _bm.send(targetBuf, &err_chunk, sizeof(err_chunk), portMAX_DELAY);
         _isStreaming = false;
         return;
     }
@@ -74,7 +76,7 @@ void StreamManager::runStreamLoop() {
     if (!net_buf) {
         ESP_LOGE(TAG, "Failed to allocate network read buffer in PSRAM!");
         AudioChunkHeader err_chunk = {ChunkType::ERROR, 0};
-        _bm.send(_storageId, &err_chunk, sizeof(err_chunk), portMAX_DELAY);
+        _bm.send(targetBuf, &err_chunk, sizeof(err_chunk), portMAX_DELAY);
         _http.close();
         _isStreaming = false;
         return;
@@ -90,12 +92,13 @@ void StreamManager::runStreamLoop() {
         if (bytes_read > 0) {
             header->type = ChunkType::DATA;
             header->size = bytes_read;
-            ESP_LOGD(TAG, "Network chunk received: %d bytes", bytes_read);
+            ESP_LOGD(TAG, "Network chunk received: %d bytes (sent to %s)", bytes_read,
+                     _cacheMode ? "STREAM_BUF" : "PLAYER_BUF");
 
-            // Send chunk to STREAM_BUF (blocks with timeout to throttle socket reads)
+            // Send chunk to targetBuf (blocks with timeout to throttle socket reads)
             bool sent = false;
             while (_isStreaming && !sent) {
-                sent = _bm.send(_storageId, net_buf, sizeof(AudioChunkHeader) + bytes_read, pdMS_TO_TICKS(100));
+                sent = _bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader) + bytes_read, pdMS_TO_TICKS(100));
             }
         } else if (bytes_read == 0) {
             ESP_LOGI(TAG, "Network stream completed naturally");
@@ -107,15 +110,15 @@ void StreamManager::runStreamLoop() {
         }
     }
 
-    // Wrap-up and notify downstream task (StorageManager)
+    // Wrap-up and notify downstream task (AudioEngine or StorageManager)
     if (error_occurred) {
         header->type = ChunkType::ERROR;
         header->size = 0;
-        _bm.send(_storageId, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
+        _bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
     } else {
         header->type = ChunkType::EOF_STREAM;
         header->size = 0;
-        _bm.send(_storageId, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
+        _bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
     }
 
     ESP_LOGI(TAG, "Network Task wrap-up: error=%d", error_occurred ? 1 : 0);

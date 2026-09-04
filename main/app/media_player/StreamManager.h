@@ -10,7 +10,7 @@ public:
     StreamManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId, StorageManager& storageMngr);
     ~StreamManager();
 
-    bool beginStreaming(const char* url);
+    bool beginStreaming(const char* url, bool cacheMode = false);
     void stopStreaming();
     bool isStreaming() const { return _isStreaming; }
 
@@ -22,6 +22,7 @@ private:
     
     HttpClientStream _http;
     std::string _url;
+    bool _cacheMode = false;
     TaskHandle_t _networkTaskHandle = nullptr;
     volatile bool _isStreaming = false;
     

@@ -49,7 +49,7 @@ void SysDbSyncReactor::run() {
             
             // Check if mutated bits contain the fields we care about persisting
             bool has_audio_change = (m_last_changed & COMP::AUDIO) && 
-                                    (m_last_changed & BIT_AUDIO::SPEAKER_VOLUME);
+                                    (m_last_changed & (BIT_AUDIO::SPEAKER_VOLUME | BIT_AUDIO::AUTOPLAY | BIT_AUDIO::CACHE_DOWNLOADS));
             bool has_led_change = (m_last_changed & COMP::LED) && 
                                   (m_last_changed & BIT_LED::COLOR);
 
@@ -76,13 +76,15 @@ void SysDbSyncReactor::writeStateToSD() {
     }
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
-    char buf[128];
+    char buf[160];
     snprintf(buf, sizeof(buf),
-             "speaker_volume=%d\nled_color=%d,%d,%d\n",
+             "speaker_volume=%d\nled_color=%d,%d,%d\nautoplay=%d\ncache_downloads=%d\n",
              snap.audio.speaker_volume,
              snap.led.color.r,
              snap.led.color.g,
-             snap.led.color.b);
+             snap.led.color.b,
+             snap.audio.autoplay_enabled ? 1 : 0,
+             snap.audio.cache_downloads ? 1 : 0);
 
     if (StorageService::getInstance().writeFile("/sdcard/state_sync.txt", buf)) {
         ESP_LOGI(TAG, "Persistent state successfully synchronized to /sdcard/state_sync.txt");

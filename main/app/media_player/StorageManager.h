@@ -9,6 +9,7 @@ public:
     ~StorageManager();
 
     bool fileExists(const char* songId);
+    bool deleteFile(const char* songId);
     
     // Cache Miss Path (concurrent download, write and progressive read)
     bool openFileForCaching(const char* songId);

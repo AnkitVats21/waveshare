@@ -95,6 +95,15 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
             return true;
         }
 
+        case GeminiSkills::SkillType::SET_CACHING: {
+            bool enabled = skill_call.args.set_caching->enabled;
+            LOGI_SYSTEM("Media SET_CACHING command received: %s", enabled ? "enabled" : "disabled");
+            MusicPlaybackService::getInstance().setCaching(enabled);
+            response_doc["status"] = "success";
+            response_doc["caching"] = enabled;
+            return true;
+        }
+
         default:
             break;
     }

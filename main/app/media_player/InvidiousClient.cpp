@@ -111,7 +111,18 @@ esp_err_t InvidiousClient::httpGet(const std::string& pathWithQuery, std::string
 }
 
 esp_err_t InvidiousClient::search(const std::string& query, InvidiousTrack& outTrack) {
-    if (query.empty()) return ESP_ERR_INVALID_ARG;
+    std::vector<InvidiousTrack> tracks;
+    esp_err_t err = searchList(query, tracks, 1);
+    if (err == ESP_OK && !tracks.empty()) {
+        outTrack = tracks[0];
+        return ESP_OK;
+    }
+    return (err != ESP_OK) ? err : ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t InvidiousClient::searchList(const std::string& query, std::vector<InvidiousTrack>& outTracks, size_t limit) {
+    outTracks.clear();
+    if (query.empty() || limit == 0) return ESP_ERR_INVALID_ARG;
 
     const std::string path = "/api/v1/search?q=" + urlEncode(query) +
                              "&type=video&fields=videoId,title,author,lengthSeconds";
@@ -141,23 +152,32 @@ esp_err_t InvidiousClient::search(const std::string& query, InvidiousTrack& outT
         return ESP_ERR_NOT_FOUND;
     }
 
-    JsonObject first = arr[0];
-    const char* videoId = first["videoId"];
-    const char* title = first["title"];
-    const char* author = first["author"];
-    int duration = first["lengthSeconds"] | 0;
+    for (JsonObject item : arr) {
+        const char* videoId = item["videoId"];
+        const char* title = item["title"];
+        const char* author = item["author"];
+        int duration = item["lengthSeconds"] | 0;
 
-    if (!videoId || !title) {
+        if (videoId && videoId[0] != '\0' && title && title[0] != '\0') {
+            InvidiousTrack track;
+            track.videoId = videoId;
+            track.title = title;
+            track.author = author ? author : "";
+            track.durationSeconds = duration;
+            outTracks.push_back(track);
+            if (outTracks.size() >= limit) {
+                break;
+            }
+        }
+    }
+
+    if (outTracks.empty()) {
         return ESP_ERR_NOT_FOUND;
     }
 
-    outTrack.videoId = videoId;
-    outTrack.title = title;
-    outTrack.author = author ? author : "";
-    outTrack.durationSeconds = duration;
-
-    ESP_LOGI(TAG, "Search matched: '%s' by '%s' (%s)",
-             outTrack.title.c_str(), outTrack.author.c_str(), outTrack.videoId.c_str());
+    ESP_LOGI(TAG, "Search for '%s' returned %zu tracks (top: '%s' by '%s' [%s])",
+             query.c_str(), outTracks.size(),
+             outTracks[0].title.c_str(), outTracks[0].author.c_str(), outTracks[0].videoId.c_str());
     return ESP_OK;
 }
 

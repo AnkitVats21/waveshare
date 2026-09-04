@@ -33,8 +33,10 @@ public:
     void shuffleQueue();
     void setRepeatMode(RepeatMode mode) { _repeatMode = mode; }
     RepeatMode getRepeatMode() const { return _repeatMode; }
-    void setAutoplay(bool enabled) { _autoplayEnabled = enabled; }
-    bool isAutoplayEnabled() const { return _autoplayEnabled; }
+    void setAutoplay(bool enabled);
+    bool isAutoplayEnabled() const;
+    void setCaching(bool enabled);
+    bool isCachingEnabled() const;
 
     const InvidiousTrack& getCurrentTrack() const { return _currentTrack; }
     const std::deque<InvidiousTrack>& getQueue() const { return _queue; }
@@ -62,6 +64,7 @@ private:
     std::string _prefetchedUrl;
 
     bool playTrack(const InvidiousTrack& track);
+    bool playTrackFallback(const InvidiousTrack& track);
     bool resolveAndPlayImmediate(const char* query);
     void prefetchNextTrack();
 };

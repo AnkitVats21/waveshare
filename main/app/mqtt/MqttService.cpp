@@ -333,6 +333,14 @@ void MqttService::processIncomingData(esp_mqtt_event_handle_t event) {
                             s.audio.speaker_volume = level;
                         });
                     }
+                } else if (strcmp(cmd, "autoplay") == 0) {
+                    bool enabled = doc["enabled"] | true;
+                    ESP_LOGI(TAG, "MQTT Media: autoplay %s", enabled ? "true" : "false");
+                    MusicPlaybackService::getInstance().setAutoplay(enabled);
+                } else if (strcmp(cmd, "caching") == 0 || strcmp(cmd, "cache") == 0) {
+                    bool enabled = doc["enabled"] | true;
+                    ESP_LOGI(TAG, "MQTT Media: caching %s", enabled ? "true" : "false");
+                    MusicPlaybackService::getInstance().setCaching(enabled);
                 }
             } else if (query && query[0] != '\0') {
                 ESP_LOGI(TAG, "MQTT Media: play '%s'", query);
@@ -381,6 +389,14 @@ void MqttService::handleAudioConfig(const std::string& key, const std::string& v
                 s.audio.mic_enabled = enabled;
             });
             ESP_LOGI(TAG, "Parsed config: mic_enabled = %d", enabled);
+        } else if (key == "autoplay") {
+            bool enabled = (val == "1" || val == "true");
+            MusicPlaybackService::getInstance().setAutoplay(enabled);
+            ESP_LOGI(TAG, "Parsed config: autoplay = %d", enabled);
+        } else if (key == "cache_downloads" || key == "caching" || key == "cache") {
+            bool enabled = (val == "1" || val == "true");
+            MusicPlaybackService::getInstance().setCaching(enabled);
+            ESP_LOGI(TAG, "Parsed config: cache_downloads = %d", enabled);
         }
     } catch (...) {
         ESP_LOGE(TAG, "Failed to parse audio config: %s=%s", key.c_str(), val.c_str());
@@ -403,7 +419,8 @@ void MqttService::handleLedConfig(const std::string& val) {
 void MqttService::onMqttConfigPair(const std::string& key, const std::string& val, void* ctx) {
     auto* self = static_cast<MqttService*>(ctx);
     if (key == "speaker_volume" || key == "mic_volume" ||
-        key == "sample_rate" || key == "mic_enabled") {
+        key == "sample_rate" || key == "mic_enabled" ||
+        key == "autoplay" || key == "cache_downloads" || key == "caching" || key == "cache") {
         self->handleAudioConfig(key, val);
     } else if (key == "led_color") {
         self->handleLedConfig(val);

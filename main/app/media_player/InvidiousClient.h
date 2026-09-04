@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include "esp_err.h"
 
 struct InvidiousTrack {
@@ -18,6 +19,7 @@ public:
     explicit InvidiousClient(const std::string& forcedHost);
 
     esp_err_t search(const std::string& query, InvidiousTrack& outTrack);
+    esp_err_t searchList(const std::string& query, std::vector<InvidiousTrack>& outTracks, size_t limit = 10);
     esp_err_t resolveOpusUrl(const std::string& videoId, std::string& outUrl);
     esp_err_t getRecommendedTrack(const std::string& currentVideoId, InvidiousTrack& outTrack);
 

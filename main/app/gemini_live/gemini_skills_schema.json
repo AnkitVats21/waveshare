@@ -109,6 +109,22 @@
     }
   },
   {
+    "name": "set_caching",
+    "description": "Enables or disables downloading and saving live music streams to the SD card cache during playback. When disabled, playback streams directly for fastest response.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "enabled": {
+          "type": "BOOLEAN",
+          "description": "Set to true to enable caching music to SD card, or false to disable caching (pure live streaming)."
+        }
+      },
+      "required": [
+        "enabled"
+      ]
+    }
+  },
+  {
     "name": "write_file",
     "description": "Writes text content to a local file on the device SD Card storage.",
     "parameters": {
@@ -175,13 +191,13 @@
     "parameters": {
       "type": "OBJECT",
       "properties": {
-        "r": {
-          "type": "NUMBER",
-          "description": "Red component value (0-255)."
-        },
         "g": {
           "type": "NUMBER",
           "description": "Green component value (0-255)."
+        },
+        "r": {
+          "type": "NUMBER",
+          "description": "Red component value (0-255)."
         },
         "b": {
           "type": "NUMBER",
