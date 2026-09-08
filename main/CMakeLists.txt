@@ -27,7 +27,6 @@ set(srcs
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
-            "app/audio/AudioPipelineManager.cpp"
             "app/audio/AudioOrchestrator.cpp"
             "app/audio/AlertPlayer.cpp"
             "app/audio/MicCapture.cpp"

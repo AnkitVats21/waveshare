@@ -1,5 +1,4 @@
 #include "AudioOrchestrator.h"
-#include "app/audio/AudioPipelineManager.h"
 #include "app/audio/SpeakerPlayback.h"
 #include "esp_log.h"
 #include <algorithm>
@@ -144,15 +143,13 @@ void AudioOrchestrator::notifyMediaStopped() {
 }
 
 void AudioOrchestrator::duckMedia(float targetGain, uint32_t rampMs) {
-    SpeakerPlaybackTask* spk = AudioPipelineManager::getSpeakerTask();
-    if (spk) {
-        spk->setMediaGain(targetGain, rampMs);
+    if (m_speaker_task) {
+        m_speaker_task->setMediaGain(targetGain, rampMs);
     }
 }
 
 void AudioOrchestrator::unduckMedia(uint32_t rampMs) {
-    SpeakerPlaybackTask* spk = AudioPipelineManager::getSpeakerTask();
-    if (spk) {
-        spk->setMediaGain(1.0f, rampMs);
+    if (m_speaker_task) {
+        m_speaker_task->setMediaGain(1.0f, rampMs);
     }
 }

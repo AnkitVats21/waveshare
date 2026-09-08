@@ -5,8 +5,10 @@
 #include "common/hw_types.h"
 #include "app/wake_word/IWakeWordListener.h"
 #include "services/BufferManager.h"
+#include <memory>
 
 class AudioHal;
+class SpeakerPlaybackTask;
 
 /**
  * @brief Unified Audio Service — ReactorTask + IWakeWordListener.
@@ -19,7 +21,7 @@ class AudioHal;
  *
  * Owns:
  *   WakeWordEngine lifecycle (start/stop/pause/resume)
- *   AudioPipelineManager (static, controlled via SysDb mutations)
+ *   SpeakerPlaybackTask lifecycle (mixing & I2S playback)
  *   AudioAlertPlayer async dispatch
  *
  * Injected:
@@ -28,6 +30,7 @@ class AudioHal;
 class AudioService : public ReactorTask, public IWakeWordListener {
 public:
     explicit AudioService(AudioHal& hal, const HardwareAudioHandles& handles);
+    ~AudioService() override;
 
     bool begin();
 
@@ -54,6 +57,8 @@ private:
     void applyPipelineModeSwitch(PipelineMode mode);
     void enterAssistantPlaybackModeNow();
     void returnToWakeMode();
+
+    std::unique_ptr<SpeakerPlaybackTask> m_speaker_task;
 
     static constexpr const char* TAG = "AudioSvc";
 };

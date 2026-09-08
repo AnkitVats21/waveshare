@@ -1,5 +1,4 @@
 #include "AppController.h"
-#include "app/audio/AudioPipelineManager.h"
 #include "app/audio/AudioService.h"
 #include "app/gemini_live/GeminiProtocol.h"
 #include "app/gemini_live/gemini_skills_generated.h"

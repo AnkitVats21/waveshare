@@ -1,5 +1,5 @@
 #include "AudioService.h"
-#include "app/audio/AudioPipelineManager.h"
+#include "app/audio/AudioOrchestrator.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
 #include "app/wake_word/WakeWordEngine.h"
@@ -27,6 +27,12 @@ AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles)
     , m_handles(handles)
 {}
 
+AudioService::~AudioService() {
+    if (m_speaker_task) {
+        m_speaker_task->stop();
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Begin — called once after Board::begin()
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,10 +42,18 @@ bool AudioService::begin() {
 
     auto snap = sysdb.snapshot();
 
-    if (!AudioPipelineManager::initialize(snap.audio.sample_rate, m_hal, m_handles)) {
-        LOGE_AUDIO("Failed to initialize AudioPipelineManager.");
+    // Verify ring buffers are allocated (done in app_main via BufferManager)
+    if (!BufferManager::getInstance().handle(Buffers::MIC_TX_BUF) ||
+        !BufferManager::getInstance().handle(Buffers::VOICE_RX_BUF) ||
+        !BufferManager::getInstance().handle(Buffers::ALERT_RX_BUF) ||
+        !BufferManager::getInstance().handle(Buffers::MEDIA_RX_BUF)) {
+        LOGE_AUDIO("Ring buffers not allocated — was BufferManager initialized?");
         return false;
     }
+
+    m_speaker_task = std::make_unique<SpeakerPlaybackTask>();
+    m_speaker_task->start(m_handles.play_dev);
+    AudioOrchestrator::getInstance().setSpeakerPlayback(m_speaker_task.get());
 
     // Wire WakeWordEngine — inject AudioHal& as IAudioFeedSource, self as listener
     auto& ww = WakeWordEngine::getInstance();
@@ -60,7 +74,6 @@ bool AudioService::begin() {
     // Sync initial hardware levels to match boot SysDb values
     m_hal.setPlayVolume(snap.audio.speaker_volume);
     m_hal.setRecordGain(snap.audio.mic_gain_db);
-    AudioPipelineManager::setMicEnabled(snap.audio.mic_enabled);
     m_last_applied_mic_enabled = snap.audio.mic_enabled;
 
     LOGI_AUDIO("AudioService operational at %lu Hz (native 32kHz, no clock switches).",
@@ -94,7 +107,6 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
     // 3. Reconcile Mic Enablement
     if ((changed & BIT_AUDIO::MIC_ENABLED) || (changed == 0)) {
         if (snap.audio.mic_enabled != m_last_applied_mic_enabled) {
-            AudioPipelineManager::setMicEnabled(snap.audio.mic_enabled);
             m_last_applied_mic_enabled = snap.audio.mic_enabled;
         }
     }
@@ -140,7 +152,6 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         ww.setAssistantActive(false);
         ww.setVadDeferred(false);
         ww.resumeHardware();
-        AudioPipelineManager::setRtpRxInterrupted(false);
         
         sysdb.mutate([](SystemState& s) {
             s.pipeline.rtp_enabled = true;
@@ -212,20 +223,16 @@ void AudioService::applyPipelineModeSwitch(PipelineMode mode) {
     bool rx = false;
     switch (mode) {
         case PipelineMode::WAKE_IDLE:
-            AudioPipelineManager::setRtpEnabled(false);
             WakeWordEngine::getInstance().resumeHardware();
             break;
         case PipelineMode::GEMINI_LIVE:
             // GeminiAudioPump handles its own uplink
-            AudioPipelineManager::setRtpEnabled(false);
             break;
         case PipelineMode::RTP_REMOTE:
-            AudioPipelineManager::setRtpEnabled(true);
             tx = true;
             rx = true;
             break;
         case PipelineMode::RTP_WAKEWORD:
-            AudioPipelineManager::setRtpEnabled(true);
             tx = true;
             rx = true;
             break;
@@ -253,7 +260,6 @@ void AudioService::returnToWakeMode() {
     ww.setAssistantActive(false);
     ww.setVadDeferred(false);
     ww.resumeHardware();
-    AudioPipelineManager::setRtpRxInterrupted(false);
 
     LOGI_AUDIO("Wake mode restored.");
 }

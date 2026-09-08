@@ -19,6 +19,8 @@ enum class FocusEvent : uint8_t {
     LOSS_STOP   // Stop playback completely
 };
 
+class SpeakerPlaybackTask;
+
 class IAudioFocusObserver {
 public:
     virtual ~IAudioFocusObserver() = default;
@@ -37,6 +39,8 @@ public:
     static AudioOrchestrator& getInstance();
 
     bool begin();
+
+    void setSpeakerPlayback(SpeakerPlaybackTask* spk) { m_speaker_task = spk; }
 
     // Observer management
     void addObserver(IAudioFocusObserver* observer);
@@ -80,6 +84,8 @@ private:
     volatile bool m_alarm_active = false;
     volatile bool m_media_paused_by_voice = false;
     volatile bool m_media_ducked = false;
+
+    SpeakerPlaybackTask* m_speaker_task = nullptr;
 
     static constexpr const char* TAG = "AudioOrch";
 };
