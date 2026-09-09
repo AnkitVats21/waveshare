@@ -34,6 +34,32 @@ public:
      */
     bool begin();
 
+    /**
+     * @brief Load credentials following the precedence: SD card -> NVS -> Kconfig.
+     * @param outSsid Loaded SSID
+     * @param outPassword Loaded Password
+     * @return true if valid (non-empty SSID) credentials were found.
+     */
+    bool loadCredentials(std::string& outSsid, std::string& outPassword);
+
+    /**
+     * @brief Save Wi-Fi credentials to NVS flash.
+     * @return true if successfully committed to NVS.
+     */
+    static bool saveCredentials(const std::string& ssid, const std::string& password);
+
+    /**
+     * @brief Clear stored Wi-Fi credentials in NVS.
+     */
+    static bool clearStoredCredentials();
+
+    /**
+     * @brief Reconfigure and connect using new credentials (e.g. from SoftAP portal).
+     */
+    bool connectWithCredentials(const std::string& ssid, const std::string& password);
+
+    const Config& getConfig() const { return m_config; }
+
 private:
     Config m_config;
     int    m_retry_cnt = 0;
