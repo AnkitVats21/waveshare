@@ -1,84 +1,147 @@
 # 🎙️ Waveshare Audio Development Board Firmware
 
-[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.0+-blue.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
-[![Language](https://img.shields.io/badge/Language-C%2B%2B-green.svg)](https://en.cppreference.com/)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.0%2B%20%7C%20v6.0%2B-blue.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
+[![Language](https://img.shields.io/badge/Language-C%2B%2B17-green.svg)](https://en.cppreference.com/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](https://www.espressif.com/en/products/socs/esp32-s3)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
-An advanced C++ firmware project for the **Waveshare Audio Development Board (ESP32-S3)**. This firmware integrates a highly modular, event-driven voice-assistant client supporting hands-free wake word detection, real-time audio streaming (RTP), dynamic audio sample rate switching, and direct WebSocket-based streaming connection to Google's **Gemini Live API** with full tool/function calling support.
+An advanced, production-grade C++17 firmware for the **Waveshare ESP32-S3 Audio Development Board**. This firmware combines an event-driven conversational voice assistant powered by **Google Gemini Live (Bidirectional WebSocket API)**, an intelligent streaming music player powered by **Invidious (NexusPlayer)** with zero-latency autoplay and local SD caching, hands-free **ESP-SR Wake Word detection with Acoustic Echo Cancellation (AEC)**, and a reactive state machine (**EmbeddedSysDb**).
 
 ---
 
 ## 📖 Table of Contents
 1. [System Architecture](#-system-architecture)
-2. [Key Features](#-key-features)
-3. [Repository Structure](#-repository-structure)
-4. [State Management (EmbeddedSysDb)](#-state-management-embeddedsysdb)
-5. [Audio Pipeline & Playback](#-audio-pipeline--playback)
-6. [Gemini Live Protocol Integration](#-gemini-live-protocol-integration)
-7. [Getting Started & Configuration](#-getting-started--configuration)
-8. [Building & Flashing](#-building--flashing)
-9. [Development Conventions](#-development-conventions)
+2. [Key Highlights](#-key-highlights)
+3. [Subsystems Deep Dive](#-subsystems-deep-dive)
+   - [Audio Orchestration & Lifecycle](#1-audio-orchestration--lifecycle-audioorchestrator)
+   - [NexusPlayer & Invidious Music Engine](#2-nexusplayer--invidious-music-engine)
+   - [Gemini Live Voice Assistant & Tool Calling](#3-gemini-live-voice-assistant--tool-calling)
+   - [Wake Word Engine & AFE DSP](#4-wake-word-engine--afe-dsp)
+   - [EmbeddedSysDb & Reactor Tasks](#5-embeddedsysdb--reactor-tasks)
+4. [Repository Structure](#-repository-structure)
+5. [Hardware Specifications](#-hardware-specifications)
+6. [Getting Started & Configuration](#-getting-started--configuration)
+7. [Building & Flashing](#-building--flashing)
+8. [Development Guidelines](#-development-guidelines)
 
 ---
 
 ## 🏗️ System Architecture
 
-The firmware utilizes a strict layered architecture to decouple hardware, state management, background services, and application control logic:
+The firmware is designed with a strict multi-tier architecture separating hardware abstraction, reactive state management, audio lifecycle orchestration, and application tasks:
 
 ```mermaid
 graph TD
     %% Hardware layer
-    SubGraphHAL["Hardware Abstraction Layer (HAL)"]
-    Board["Board Manager"] --> AudioHal["Audio HAL (ES8311 DAC/ADC)"]
-    Board --> IoExpander["TCA9555 IO Expander"]
-    Board --> SdCard["SDCard Manager"]
-    Board --> LedStrip["WS2812 LED Strip"]
+    subgraph HAL["Hardware Abstraction Layer (HAL)"]
+        Board["Board Manager"]
+        AudioHal["Audio HAL (ES8311 DAC/ADC)"]
+        IoExpander["TCA9555 I2C Expander"]
+        SdCard["SD Card (FATFS / SPI)"]
+        LedStrip["WS2812 RGB LED Strip"]
+        Board --> AudioHal
+        Board --> IoExpander
+        Board --> SdCard
+        Board --> LedStrip
+    end
 
-    %% Database
-    SysDb[("EmbeddedSysDb (State Database)")]
-    
-    %% Services layer
-    SubGraphServices["Core Services"]
-    BufferMgr["Buffer Manager (PSRAM Pools)"]
-    AlarmSvc["Alarm Service"]
-    WifiSvc["Wifi Service"]
-    StorageSvc["Storage Service"]
-    
-    %% Application / Tasks Layer
-    SubGraphApp["Application Tasks (ReactorTasks)"]
-    AppCtrl["App Controller"]
-    AssistSvc["Assistant Service"]
-    AudioSvc["Audio Service (AFE/WakeNet)"]
-    GeminiProto["Gemini Protocol (WebSocket Client)"]
-    GeminiPump["Gemini Audio Pump"]
-    MqttSvc["MQTT Service"]
-    LedSvc["LED Strip Reactor"]
-    KeySvc["Key Service"]
+    %% State Management
+    SysDb[("EmbeddedSysDb (Single Source of Truth)")]
 
-    %% Interaction Paths
-    Board -.-> SubGraphHAL
-    SubGraphHAL --> SubGraphServices
-    SubGraphServices --> SubGraphApp
-    SubGraphApp <-->|State Mutation & Notifications| SysDb
+    %% Audio Core
+    subgraph AudioCore["Audio & Playback Pipeline"]
+        AudioOrch["AudioOrchestrator (Focus & Ducking)"]
+        SpkPlayback["SpeakerPlayback Task (Core 1)"]
+        MicCapture["MicCapture Task (Core 1)"]
+        AlertPlyr["AlertPlayer (Chimes & Tones)"]
+        NexusPlyr["NexusPlayer (Stream Engine)"]
+        MusicSvc["MusicPlaybackService"]
+        Invidious["InvidiousClient & Resolver"]
+        
+        MusicSvc --> NexusPlyr
+        NexusPlyr --> AudioOrch
+        AlertPlyr --> AudioOrch
+        AudioOrch --> SpkPlayback
+        Invidious -.-> MusicSvc
+    end
+
+    %% Assistant & Protocol
+    subgraph AssistantCore["Voice Assistant & Networking"]
+        WakeWord["WakeWordEngine (ESP-SR / AEC on Core 1)"]
+        GeminiProto["GeminiProtocol (WebSocket / JSON)"]
+        GeminiPump["GeminiAudioPump (Core 1 Uplink)"]
+        AssistSvc["AssistantService (State Machine)"]
+        AppCtrl["AppController (Command Router)"]
+        MqttSvc["MqttService (MQTT Bridge)"]
+        
+        MicCapture --> WakeWord
+        WakeWord --> AssistSvc
+        AssistSvc --> GeminiProto
+        MicCapture --> GeminiPump
+        GeminiProto --> AppCtrl
+        AppCtrl --> MusicSvc
+    end
+
+    %% System Interactions
+    HAL <--> AudioCore
+    HAL <--> AssistantCore
+    SysDb <--> AudioCore
+    SysDb <--> AssistantCore
 ```
 
 ---
 
-## 🌟 Key Features
+## 🌟 Key Highlights
 
-*   **Dual Voice Backends**:
-    *   **Direct Gemini Live**: Direct, secure WebSockets (`wss://`) stream to Google AI Studio with zero proxy overhead.
-    *   **Legacy RTP Proxy**: Stream raw PCM audio via UDP to a local Go/Python media relay server.
-*   **Local Wake Word Engine**: Implemented via Espressif's ESP-SR (WakeNet) supporting local hands-free activation (default: *"Hi Esp"*).
-*   **EmbeddedSysDb State Management**: A reactive, single-source-of-truth state machine waking up tasks instantly using FreeRTOS notifications (no busy loops).
-*   **Robust Audio Pipeline**:
-    *   Leaky bucket playback execution at 5ms intervals keeping I2S DMA clocks stable.
-    *   Dynamic sample rate switching (16kHz / 24kHz / 32kHz) according to DAC/ADC demands.
-    *   On-the-fly 3:4 upsampling (24kHz assistant audio to 32kHz native hardware playback).
-    *   On-the-fly 3:2 and 2:1 downsampling (to feed 16kHz audio to WakeWord/AFE engine).
-*   **Gemini Tool Calling**: Converts Gemini-generated tool requests (function calls) into local actions (alarms, volume changes) or publishes them to MQTT to control external devices (like an MPV media player).
-*   **Persistent Configuration**: SD-card state sync engine updates `/sdcard/state_sync.txt` automatically on change and reloads settings upon boot.
+* **Proactive Queue Replenishment & 0 ms Gapless Autoplay**: `MusicPlaybackService` monitors playback depth using a low-watermark algorithm (`QUEUE_LOW_WATERMARK = 2`). Upcoming stream URLs and recommended tracks are prefetched in the background into PSRAM stacks (`MALLOC_CAP_SPIRAM`), guaranteeing seamless, zero-latency transitions between songs without stalling the audio clock.
+* **Intelligent Audio Orchestration (`AudioOrchestrator`)**: Centralized media lifecycle coordination between Gemini Voice Assistant, NexusPlayer streaming, and AlertPlayer. Automatically pauses/ducks background music when a wake word is detected or the user speaks, and gracefully resumes when the assistant completes its turn.
+* **Direct Google Gemini Live Integration**: Bidirectional streaming WebSocket client communicating directly with Google AI Studio (`wss://generativelanguage.googleapis.com`). Zero proxy requirement, dynamic tool/function calling for local and MQTT commands, and real-time linear 3:4 upsampling (24kHz to 32kHz native hardware DAC rate).
+* **Hands-free ESP-SR Wake Word & AEC**: Local WakeNet model running on dedicated DSP Core 1 (`CORE_AUDIO`) with real-time Acoustic Echo Cancellation (AEC) and Voice Activity Detection (VAD).
+* **EmbeddedSysDb State Pattern**: Zero-allocation, trivially copyable POD system state snapshot with 32-bit component bitmasks. Eliminates busy polling loops via FreeRTOS task notification wakeups (`xTaskNotify`).
+* **Persistent SD State & Caching**: Local caching of streaming audio tracks to microSD card (`StorageManager`), automatic state synchronization (`/sdcard/state_sync.txt`), and external JSON configuration loading (`gemini_config.json`, `mqtt_config.json`).
+
+---
+
+## 🧩 Subsystems Deep Dive
+
+### 1. Audio Orchestration & Lifecycle (`AudioOrchestrator`)
+The `AudioOrchestrator` replaces monolithic audio managers with an observer-driven priority coordinator:
+- **Priority Hierarchy**: Voice Assistant (`GEMINI_SPEAKING`) > Alert Tones (`ALERT`) > Music Playback (`NEXUS_STREAMING`) > Idle.
+- **Ducking & Interruption**: When wake-word or Gemini activation occurs while music is playing, `AudioOrchestrator` immediately signals `NexusPlayer::pause()`. Once the assistant transitions to `IDLE`, playback resumes automatically.
+- **Resource Management**: Ensures that heavy audio decoders and WebSocket pump buffers yield when higher-priority system alerts execute.
+
+### 2. NexusPlayer & Invidious Music Engine
+A streaming media engine engineered specifically for ESP32-S3 constraints:
+- **Invidious Client & Instance Resolver**: Queries public or self-hosted Invidious instances (`/api/v1/videos`, `/api/v1/search`) with dynamic fallback handling and JSON response parsing.
+- **Modular Decoding (`AudioDecoderFactory`)**: Strategy-based decoding architecture supporting Ogg/Opus (`OggOpusDecoderStrategy`) and WebM/Opus (`WebMOpusDecoder`) using `micro-opus`.
+- **PSRAM Task Stacks**: All background prefetch (`bg_prefetch`) and queue replenishment (`bg_replenish`) tasks use `xTaskCreatePinnedToCoreWithCaps` with `MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`, eliminating internal SRAM exhaustion.
+- **SD Card Stream Caching (`StorageManager`)**: When enabled via SysDb (`cache_downloads`), downloaded audio streams are saved directly to `/sdcard/cache/<videoId>.opus` for immediate offline replay.
+
+### 3. Gemini Live Voice Assistant & Tool Calling
+- **Bi-directional WebSocket**: Streams 16-bit PCM audio uplink (16kHz from AFE) and downlink (24kHz from Gemini Live API) in real time.
+- **Tool / Function Calling Router**: Converts Gemini JSON function calls into native actions:
+  - `play_music(query)` / `next_track` / `pause_music` -> `MusicPlaybackService`
+  - `set_volume(level)` -> `AudioHal` / `EmbeddedSysDb`
+  - `set_led(color, mode)` -> `LedService`
+  - External IoT actions -> `MqttService`
+- **Linear Resampler**: Converts incoming 24kHz audio from Gemini into 32kHz native I2S output on-the-fly with fixed-point arithmetic.
+
+### 4. Wake Word Engine & AFE DSP
+- **Core Affinity Partitioning**:
+  - **Core 0 (`CORE_NETWORK`)**: Network stack, mbedTLS, WebSockets, MQTT, and background HTTP prefetch tasks.
+  - **Core 1 (`CORE_AUDIO`)**: I2S DMA, `MicCapture`, `SpeakerPlayback`, `ww_feed`, and `ww_detect`.
+  - Isolating AFE feed/detect tasks to Core 1 prevents network/TLS CPU bursts from starving the microphone ring buffer.
+
+### 5. EmbeddedSysDb & Reactor Tasks
+- State changes trigger bitmask notifications that wake up only the affected `ReactorTask` instances:
+  ```cpp
+  // Reactive state mutation example:
+  EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+      s.audio.speaker_volume = 90;
+      s.audio.autoplay_enabled = true;
+  });
+  ```
+- Subsystems subscribe to specific component bitmasks (`COMP::AUDIO`, `COMP::LED`, `COMP::WIFI`, etc.) without cross-component polling.
 
 ---
 
@@ -87,144 +150,140 @@ graph TD
 ```
 waveshare/
 ├── main/
-│   ├── app/                      # Application Logic & Tasks
-│   │   ├── assistant/            # Assistant state machine & Command handlers (Local / MPV)
-│   │   ├── audio/                # Audio task, Alert Player, and RTP receiver
-│   │   ├── gemini_live/          # WebSocket client & base64/JSON protocol handling
-│   │   ├── input/                # User input processing
-│   │   ├── led/                  # LED animations based on system state
-│   │   ├── mqtt/                 # MQTT client for status/configuration sync
-│   │   └── wake_word/            # Local WakeNet model & VAD detection
+│   ├── app/                              # Application Logic & Tasks
+│   │   ├── assistant/                    # Assistant state machine & command handlers
+│   │   ├── audio/                        # Audio service, orchestrator, capture, & playback
+│   │   │   ├── AlertPlayer.h/.cpp        # Chime & tone generator
+│   │   │   ├── AudioOrchestrator.h/.cpp  # Focus, ducking, & lifecycle manager
+│   │   │   ├── AudioService.h/.cpp       # Audio reactor loop & AFE bridge
+│   │   │   ├── MicCapture.h/.cpp         # Microphone I2S DMA reader
+│   │   │   └── SpeakerPlayback.h/.cpp    # Speaker I2S DMA writer with jitter control
+│   │   ├── gemini_live/                  # WebSocket Gemini Live client & audio pump
+│   │   ├── input/                        # KeyService & expander button handling
+│   │   ├── led/                          # WS2812 LED strip animations
+│   │   ├── media_player/                 # NexusPlayer streaming audio engine
+│   │   │   ├── AudioDecoderFactory.h/.cpp# Factory for Opus / WebM decoders
+│   │   │   ├── AudioEngine.h/.cpp        # Audio decoding pipeline
+│   │   │   ├── HttpClientStream.h/.cpp   # HTTP stream buffer
+│   │   │   ├── InvidiousClient.h/.cpp    # Invidious API search & stream resolution
+│   │   │   ├── InvidiousInstanceResolver # Dynamic host resolver
+│   │   │   ├── MusicPlaybackService.h/.cpp# Queue, prefetch, & autoplay manager
+│   │   │   ├── NexusPlayer.h/.cpp        # High-level player interface
+│   │   │   ├── OggOpusDecoderStrategy    # Ogg/Opus stream decoder
+│   │   │   ├── StorageManager.h/.cpp     # SD card audio file caching
+│   │   │   ├── StreamManager.h/.cpp      # HTTP stream lifecycles
+│   │   │   └── WebMOpusDecoder.h/.cpp    # WebM container demuxer & decoder
+│   │   ├── mqtt/                         # MQTT client for home automation sync
+│   │   └── wake_word/                    # ESP-SR WakeNet detection & AFE tasks
 │   │
-│   ├── common/                   # Shared Utilities & Structures
-│   │   ├── sysdb/                # EmbeddedSysDb state definitions
-│   │   ├── AppLogger.h           # Unified console logging macros
-│   │   ├── ReactorTask.h         # EmbeddedSysDb-reactive task base class
-│   │   ├── TaskBase.h            # Basic FreeRTOS wrapper class
-│   │   └── thread_config.h       # Task priorities and PSRAM stack sizes
+│   ├── common/                           # Cross-cutting Utilities
+│   │   ├── sysdb/                        # EmbeddedSysDb state definitions
+│   │   ├── AppLogger.h                   # Colorized console logging macros
+│   │   ├── ReactorTask.h                 # Reactive thread base class
+│   │   └── thread_config.h               # Priorities, core affinities, & stack sizes
 │   │
-│   ├── hal/                      # Hardware Abstraction Layer
-│   │   ├── audio/                # ES8311 DAC and I2S configuration
-│   │   ├── input/                # ExpanderKeyInput driver
-│   │   ├── io/                   # I2C Bus and TCA9555 IO expander drivers
-│   │   ├── led/                  # WS2812 RGB LED controller
-│   │   ├── network/              # WiFi hardware management
-│   │   ├── storage/              # SD Card mount and read/write drivers
-│   │   └── Board.cpp             # Central hardware initiator
+│   ├── hal/                              # Hardware Abstraction Layer
+│   │   ├── audio/                        # ES8311 I2S codec driver
+│   │   ├── input/                        # TCA9555 keypad driver
+│   │   ├── io/                           # I2C bus manager
+│   │   ├── led/                          # WS2812 RMT driver
+│   │   ├── network/                      # Wi-Fi station connection manager
+│   │   ├── storage/                      # SD card SPI / FATFS mounter
+│   │   └── Board.cpp                     # Central board hardware initializer
 │   │
-│   ├── services/                 # Infrastructure Services
-│   │   ├── alarm/                # Alarm triggers and WAV playbacks
-│   │   ├── config_manager/       # Kconfig and JSON schema managers
-│   │   ├── storage/              # Storage abstraction layer
-│   │   ├── time/                 # SNTP synchronization task
-│   │   └── BufferManager.cpp     # Pre-allocated ring buffers in PSRAM
+│   ├── services/                         # Core Infrastructure
+│   │   ├── alarm/                        # Alarm clock service
+│   │   ├── storage/                      # SD card state sync & persistence
+│   │   ├── time/                         # SNTP network clock sync
+│   │   └── BufferManager.cpp             # Statically allocated PSRAM ring buffers
 │   │
-│   ├── CMakeLists.txt            # Main component build instructions
-│   ├── Kconfig.projbuild         # Kconfig configuration menus
-│   └── main.cpp                  # Firmware entrypoint (app_main)
+│   ├── CMakeLists.txt                    # Component build definitions
+│   ├── Kconfig.projbuild                 # Menuconfig schema
+│   └── main.cpp                          # System entry point (app_main)
 │
-├── components/                   # External components (led_strip, etc.)
-├── scripts/                      # PC-side utilities (RTP testers, streams, makefiles)
-├── sdkconfig                     # Local project configuration (gitignored)
-└── CMakeLists.txt                # Root project build instructions
+├── components/                           # Managed & external ESP-IDF components
+├── scripts/                              # Host testing tools & Invidious utilities
+├── sdkconfig                             # Active project configuration
+└── CMakeLists.txt                        # Root CMake file
 ```
 
 ---
 
-## ⚡ State Management (EmbeddedSysDb)
+## ⚡ Hardware Specifications
 
-The project handles inter-thread communication and synchronization through a lightweight state-reactor pattern called **EmbeddedSysDb**:
-
-*   **Trivially Copyable Snapshot**: System state is declared in a flat Plain Old Data (POD) structure (`SystemState`). This permits lock-free, zero-allocation snap-taking.
-*   **Hierarchical Masking**: State changes use a 32-bit `ComponentMask`. The upper 16 bits filter by subsystem categories (e.g. `COMP::AUDIO`, `COMP::WIFI`), while the lower 16 bits target detailed fields (e.g. `BIT_AUDIO::SPEAKER_VOLUME`).
-*   **Zero-Latency ReactorTask Wakeups**: Tasks inherit from `ReactorTask`. State mutations wake up appropriate threads instantly and synchronously via FreeRTOS task notification bits (`xTaskNotify`), completely eliminating polling loops.
-
-```cpp
-// Example: Mutating the volume state
-EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-    s.audio.speaker_volume = 85;
-});
-// (EmbeddedSysDb automatically alerts any task registered to COMP::AUDIO via task notifications)
-```
-
----
-
-## 🎵 Audio Pipeline & Playback
-
-The audio pipeline utilizes a **Leaky Bucket Playback** method to optimize audio latency and maintain stability under fluctuating network conditions:
-
-*   **DMA Clock Continuity**: Rather than waiting for a buffer threshold and switching the I2S clock on and off, `SpeakerPlayback` runs continuously at a fixed rate (every 5ms / 120 samples at 24kHz) using `vTaskDelayUntil()`. It drains the ring buffer (`SPK_RX_BUF`) directly and writes silent frames when dry to preserve DMA clock integrity.
-*   **AFE Downsampling**: The board records audio at 32kHz or 48kHz. Since the local Wake Word engine (WakeNet) and VAD run at 16kHz, a real-time downsampler extracts 16kHz audio frames to feed the ESP-SR algorithms.
-*   **Gemini Upsampling**: The Gemini Live assistant streams audio at 24kHz. The speaker hardware operates at 32kHz native. A real-time 3:4 linear upsampler converts the 24kHz incoming stream to 32kHz on-the-fly, preventing hardware clock switches and clicking noises.
-
----
-
-## 🤖 Gemini Live Protocol Integration
-
-The direct WebSocket-based Gemini Live connection in `GeminiProtocol` is engineered for high performance on embedded chips:
-
-*   **Zero-Allocation Buffers**: Memory blocks for Base64 decoding, WebSocket payloads, and resampling workspace are allocated statically in PSRAM (`MALLOC_CAP_SPIRAM`) during boot, eliminating heap fragmentation risks.
-*   **Single-Pass Base64 Decoder**: Decodes Base64 payloads directly into the pre-allocated PSRAM scratchpad to reduce CPU usage.
-*   **Tool Calling Flow**:
-    ```
-    Gemini Live (JSON) ──> GeminiProtocol ──> AppController ──> DeviceCommandHandler (Local Action)
-                                                                 └──> MpvCommandHandler (MQTT topic: mpv/command)
-    ```
+| Component | Specification |
+| :--- | :--- |
+| **MCU** | ESP32-S3 (Dual-Core Xtensa LX7, 240 MHz, Wi-Fi 4 + BLE 5) |
+| **SRAM / PSRAM** | 512 KB Internal SRAM + 8 MB Octal PSRAM |
+| **Audio DAC/ADC** | Everest Semi ES8311 (I2S, low-power mono DAC + ADC) |
+| **Microphone** | Dual onboard MEMS microphones with ESP-SR AEC/VAD |
+| **Audio Amplifier** | Class-D Speaker Driver connected to ES8311 DAC output |
+| **I/O Expander** | TI TCA9555 (16-bit I2C GPIO expander for buttons) |
+| **Storage** | MicroSD Card slot connected via SPI / FATFS |
+| **Visual Indicator** | WS2812 Addressable RGB LED Strip (RMT driver) |
 
 ---
 
 ## ⚙️ Getting Started & Configuration
 
-All options are configurable using the standard ESP-IDF Kconfig menu:
+### 1. Hardware Setup
+1. Insert a formatted FAT32 MicroSD card into the board's slot.
+2. Optional: Place a `gemini_config.json` file in the root of the SD card:
+   ```json
+   {
+       "api_key": "YOUR_GOOGLE_AI_STUDIO_API_KEY",
+       "model": "gemini-2.0-flash-exp"
+   }
+   ```
+3. Optional: Place an `mqtt_config.json` file for MQTT broker settings.
 
+### 2. Kconfig Configuration
+Run `menuconfig` to adjust Wi-Fi credentials and runtime defaults:
 ```bash
 idf.py menuconfig
 ```
-
-### Key Configuration Menus
-Under **Waveshare Audio Development Board Config**:
-*   **Board Pin Defaults**: Define I2S (MCLK, BCLK, LRCK, DOUT, DIN), I2C, and SD Card GPIO pins.
-*   **Wi-Fi Station Settings**: Configure Wi-Fi SSID, Password, and target Audio Relay Server IP.
-*   **MQTT Runtime Configuration**: Set up your broker URI (TLS/TLS-less), username, password, and last will topics.
-*   **Voice Assistant Backend**: Choose between `Legacy RTP Streamer/Receiver Proxy` or `Standalone Gemini Live Direct Integration`. Enter your Google AI Studio API Key under `Gemini API Key`.
+Navigate to **Waveshare Audio Development Board Config**:
+- **Wi-Fi Station Settings**: Set SSID and Password.
+- **Voice Assistant Backend**: Select `Standalone Gemini Live Direct Integration` and configure API key.
+- **Invidious Configuration**: Set default Invidious API host or local proxy.
 
 ---
 
 ## 🛠️ Building & Flashing
 
-This project utilizes the **ESP-IDF Build System** (v5.0+ recommended).
+This project is built using the **ESP-IDF v5.x / v6.x toolchain**.
 
 ### Environment Setup
-If using VS Code, a pre-configured `.devcontainer` configuration is available to pull the correct ESP-IDF Docker container automatically. 
-
-Alternatively, load the environment manually:
 ```bash
-# Load esp-idf environment (if installed locally)
-. $IDF_PATH/export.sh
+# Load ESP-IDF environment variables
+. /home/ankitm/.espressif/v6.0.1/esp-idf/export.sh
+
+# Activate Python virtual environment
+. /home/ankitm/.espressif/tools/python/v6.0.1/venv/bin/activate
 ```
 
-### Build and Flash Commands
+### Build & Flash
 ```bash
-# 1. Configure the project
-idf.py menuconfig
+# Clean build (optional)
+idf.py fullclean
 
-# 2. Build the firmware
+# Build firmware
 idf.py build
 
-# 3. Flash to ESP32-S3 and open serial monitor
-idf.py -p <PORT> flash monitor
+# Flash to device and open serial monitor (replace PORT with e.g. /dev/ttyACM0 or /dev/ttyUSB0)
+idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 ---
 
-## 📝 Development Conventions
+## 📝 Development Guidelines
 
-To keep the codebase clean, stable, and readable, adhere to the following rules:
-
-1.  **Memory Management**:
-    *   Never perform dynamic allocations (`malloc`, `new`, `std::vector`) inside the real-time audio pipeline or high-frequency loops. Use statically pre-allocated PSRAM buffers.
-    *   Avoid deep stacks in tasks. Adjust stack sizes within `main/common/thread_config.h`.
-2.  **State Modifications**:
-    *   Always modify system state inside the `mutate()` lambda block of `EmbeddedSysDb` to ensure mutations trigger event bitmasks and wake up reactor threads correctly.
-3.  **Logging**:
-    *   Use `LOGI_SYSTEM`, `LOGW_SYSTEM`, `LOGE_SYSTEM` (or component specific log macros) defined in `AppLogger.h` for clean and formatted console output.
+1. **PSRAM Task Stack Allocations**:
+   Any background task requiring a stack larger than `STACK_NORMAL` (4 KB) must be created using `xTaskCreatePinnedToCoreWithCaps` with `MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT` to protect internal SRAM from fragmentation.
+2. **Core Affinity Discipline**:
+   - **Core 0**: Network I/O, mbedTLS handshakes, HTTP streaming, MQTT, SD card file writes.
+   - **Core 1**: Real-time audio processing (`SpeakerPlayback`, `MicCapture`, `ww_feed`, `ww_detect`, and `GeminiAudioPump`).
+3. **State Mutation**:
+   Never modify `SystemState` variables directly. Always wrap mutations in `EmbeddedSysDb::getInstance().mutate([...](SystemState& s) { ... });` to trigger reactor wakeups.
+4. **Thread Safety**:
+   Use `std::recursive_mutex` or scoped lock guards when modifying queue and playback state across FreeRTOS background tasks. Do not hold locks while making synchronous network calls.
