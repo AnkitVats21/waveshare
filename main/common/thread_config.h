@@ -22,7 +22,6 @@ namespace ThreadConfig {
         STORAGE_IO       = 3,   ///< Low-priority SD card disk I/O (Core 0)
         NORMAL           = 5,
         KEY_POLL         = 5,   ///< KeyService polling loop
-        AUDIO_ALERT      = 5,   ///< Fire-and-forget audio alert tasks
         MQTT             = 5,   ///< MqttService background loop
         ASSISTANT        = 6,   ///< AssistantService state machine
         LED              = 6,   ///< LedService animation loop
@@ -30,6 +29,7 @@ namespace ThreadConfig {
         AUDIO_PUMP       = 8,   ///< GeminiAudioPump uplink (Core 1)
         WAKE_WORD_FEED   = 9,   ///< WakeWordEngine feed task (DSP AFE on Core 1)
         AUDIO_SERVICE    = 10,  ///< AudioService reactor loop
+        AUDIO_ALERT      = 11,  ///< AlertPlayer chime/notification generator (Core 1)
         WAKE_WORD_DETECT = 12,  ///< WakeWordEngine detect/fetch task
         MIC_CAPTURE      = 14,  ///< MicCaptureTask I2S read task
         SPEAKER_PLAYBACK = 18,  ///< SpeakerPlayback I2S write task

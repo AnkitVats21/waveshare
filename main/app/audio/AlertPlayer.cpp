@@ -3,6 +3,7 @@
 #include "SpeakerPlayback.h"
 #include "app/media_player/AudioDecoderFactory.h"
 #include "services/BufferManager.h"
+#include "services/storage/StorageService.h"
 #include "common/thread_config.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -108,17 +109,11 @@ void AlertPlayer::processAlert(AlertType type) {
     }
 
     bool custom_played = false;
-    if (path) {
-        FILE* f = fopen(path, "rb");
-        if (f) {
-            fclose(f);
+    if (path && Services::StorageService::getInstance().isMounted()) {
+        if (Services::StorageService::getInstance().fileExists(path)) {
             custom_played = playAlertFile(path);
-        } else {
-            f = fopen("/sdcard/media/alert/alert.ogg", "rb");
-            if (f) {
-                fclose(f);
-                custom_played = playAlertFile("/sdcard/media/alert/alert.ogg");
-            }
+        } else if (Services::StorageService::getInstance().fileExists("/sdcard/media/alert/alert.ogg")) {
+            custom_played = playAlertFile("/sdcard/media/alert/alert.ogg");
         }
     }
 

@@ -15,11 +15,6 @@ DEFINE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 
 namespace {
 
-TickType_t ticksForAtLeastOnePeriod(uint32_t duration_ms) {
-  TickType_t ticks = pdMS_TO_TICKS(duration_ms);
-  return ticks > 0 ? ticks : 1;
-}
-
 size_t samplesForDurationMs(uint32_t sample_rate, uint32_t duration_ms) {
   uint64_t samples = (static_cast<uint64_t>(sample_rate) * duration_ms + 999) / 1000;
   if (samples == 0) samples = 1;
@@ -100,15 +95,12 @@ void SpeakerPlaybackTask::run() {
 
   auto &bm = BufferManager::getInstance();
 
-  TickType_t last_wake         = xTaskGetTickCount();
-  TickType_t wake_period_ticks = ticksForAtLeastOnePeriod(EMPTY_FILL_MS);
-  uint32_t   sustained_empty   = 0;
+  uint32_t sustained_empty = 0;
 
   constexpr uint32_t NATIVE_RATE = 32000;
   const size_t target_samples = samplesForDurationMs(NATIVE_RATE, TARGET_FRAME_MS);
 
   while (m_running) {
-    vTaskDelayUntil(&last_wake, wake_period_ticks);
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
 
@@ -230,17 +222,20 @@ void SpeakerPlaybackTask::run() {
         expanded_buffer[2 * i + 1] = sample32; // R
       }
 
-      esp_codec_dev_write(device, expanded_buffer, frames_to_write * 2 * sizeof(int32_t));
-      uint32_t duration_ms = static_cast<uint32_t>((static_cast<uint64_t>(frames_to_write) * 1000 + NATIVE_RATE - 1) / NATIVE_RATE);
-      wake_period_ticks = ticksForAtLeastOnePeriod(duration_ms);
+      int ret = esp_codec_dev_write(device, expanded_buffer, frames_to_write * 2 * sizeof(int32_t));
+      if (ret != ESP_CODEC_DEV_OK) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+      }
 
     } else {
       // All tracks starved/idle — output silence to keep I2S DMA alive
       size_t silence_samples = samplesForDurationMs(NATIVE_RATE, EMPTY_FILL_MS);
       if (silence_samples > MAX_SILENCE_SAMPLES) silence_samples = MAX_SILENCE_SAMPLES;
 
-      esp_codec_dev_write(device, silence_buffer, silence_samples * 2 * sizeof(int32_t));
-      wake_period_ticks = ticksForAtLeastOnePeriod(EMPTY_FILL_MS);
+      int ret = esp_codec_dev_write(device, silence_buffer, silence_samples * 2 * sizeof(int32_t));
+      if (ret != ESP_CODEC_DEV_OK) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+      }
       sustained_empty++;
 
       if (snap.audio.assistant_speaking && sustained_empty >= 2 && !snap.audio.turn_complete_pending) {

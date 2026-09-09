@@ -418,6 +418,10 @@ void AssistantService::handleStateTransition(AssistantState oldState, AssistantS
 
     // Start appropriate timers or sync database if updated externally
     switch (newState) {
+        case AssistantState::StartingSession:
+            AudioOrchestrator::getInstance().notifyWakeWordDetected();
+            playAlertAsync(ALERT_WAKE_CONFIRM);
+            break;
         case AssistantState::Idle:
             GeminiProtocol::getInstance().closeConnection();
             sysdb.mutate([](SystemState& s) {
