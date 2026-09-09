@@ -69,3 +69,12 @@ enum class WsState : uint8_t {
     ERROR_STATE,
 };
 
+// ── Network Connectivity State ───────────────────────────────────────────────
+enum class NetworkState : uint8_t {
+    Disconnected, ///< No network connection, idle
+    Connecting,   ///< STA connecting / negotiating DHCP
+    Connected,    ///< STA connected with valid IP address
+    PortalActive, ///< SoftAP active with captive portal for configuration
+    Failed,       ///< Connection failed / max retries reached
+};
+

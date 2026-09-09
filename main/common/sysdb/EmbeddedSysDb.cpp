@@ -70,6 +70,13 @@ bool EmbeddedSysDb::wifiConnected() const {
     return v;
 }
 
+NetworkState EmbeddedSysDb::networkState() const {
+    acquireRead();
+    NetworkState v = m_state.system.network_state;
+    releaseRead();
+    return v;
+}
+
 int EmbeddedSysDb::speakerVolume() const {
     acquireRead();
     int v = m_state.audio.speaker_volume;

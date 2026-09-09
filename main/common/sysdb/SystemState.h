@@ -38,6 +38,7 @@ namespace BIT_ALARM {
 namespace BIT_SYSTEM {
     static constexpr ComponentMask WIFI_CONNECTED = (1u << 0);
     static constexpr ComponentMask SERVER_IP      = (1u << 1);
+    static constexpr ComponentMask NETWORK_STATE  = (1u << 2);
 }
 namespace BIT_AUDIO {
     static constexpr ComponentMask SAMPLE_RATE    = (1u << 0);
@@ -81,6 +82,7 @@ namespace BIT_MQTT {
 
 #define SYSTEM_FIELDS \
     X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED) \
+    X(NetworkState, network_state, NetworkState::Disconnected, BIT_SYSTEM::NETWORK_STATE) \
     X_STR(server_ip, 32, "192.168.1.18", BIT_SYSTEM::SERVER_IP) \
     X(int, wifi_max_retries, 5, 0)
 

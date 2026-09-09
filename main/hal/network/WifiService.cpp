@@ -60,19 +60,27 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
     WifiService* self = static_cast<WifiService*>(arg);
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.system.network_state = NetworkState::Connecting;
+            s.system.wifi_connected = false;
+        });
         esp_wifi_connect();
 
     } else if (event_base == WIFI_EVENT &&
                event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (self->m_retry_cnt < self->m_config.max_retries) {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.system.network_state = NetworkState::Connecting;
+                s.system.wifi_connected = false;
+            });
             esp_wifi_connect();
             self->m_retry_cnt++;
             LOGI_WIFI("Retrying WiFi connection (%d/%d)...",
                       self->m_retry_cnt, self->m_config.max_retries);
         } else {
-            LOGW_WIFI("Max retries reached — marking wifi_connected = false");
-            // Write disconnected state directly into SysDb — no EventBus
+            LOGW_WIFI("Max retries reached — marking network_state = Failed");
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.system.network_state = NetworkState::Failed;
                 s.system.wifi_connected = false;
             });
         }
@@ -82,8 +90,8 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
         LOGI_WIFI("Connected! IP: " IPSTR, IP2STR(&event->ip_info.ip));
         self->m_retry_cnt = 0;
 
-        // Write connected state directly into SysDb — ReactorTasks wake automatically
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.system.network_state = NetworkState::Connected;
             s.system.wifi_connected = true;
         });
     }

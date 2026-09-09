@@ -166,18 +166,23 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
 
     // 3. React to state machine condition triggers
     switch (m_current_state) {
-        case AssistantState::Idle:
-            // If Wi-Fi link went down, update the visual state to Offline
-            if (!wifi_ok && snap.assistant.visual_state != AssistantVisualState::Offline) {
-                sysdb.mutate([](SystemState& s) {
-                    s.assistant.visual_state = AssistantVisualState::Offline;
-                });
-            } else if (wifi_ok && snap.assistant.visual_state == AssistantVisualState::Offline) {
-                sysdb.mutate([](SystemState& s) {
-                    s.assistant.visual_state = AssistantVisualState::Idle;
+        case AssistantState::Idle: {
+            AssistantVisualState targetVis = AssistantVisualState::Idle;
+            if (snap.system.network_state == NetworkState::PortalActive) {
+                targetVis = AssistantVisualState::Recovering;
+            } else if (snap.system.network_state == NetworkState::Connecting) {
+                targetVis = AssistantVisualState::Connecting;
+            } else if (!wifi_ok) {
+                targetVis = AssistantVisualState::Offline;
+            }
+
+            if (snap.assistant.visual_state != targetVis) {
+                sysdb.mutate([targetVis](SystemState& s) {
+                    s.assistant.visual_state = targetVis;
                 });
             }
             break;
+        }
 
         case AssistantState::StartingSession:
             if (!wifi_ok) {

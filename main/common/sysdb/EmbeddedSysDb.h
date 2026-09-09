@@ -78,6 +78,7 @@ public:
 
     // Hot-path single-field getters (shorter lock window than full snapshot)
     bool           wifiConnected()    const;
+    NetworkState   networkState()     const;
     int            speakerVolume()    const;
     float          micGain()          const;
     bool           assistantSpeaking() const;
