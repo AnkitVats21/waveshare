@@ -63,6 +63,7 @@ private:
     std::deque<InvidiousTrack> _queue;
     std::vector<InvidiousTrack> _history;
 
+    volatile bool _prefetchInProgress = false;
     std::string _prefetchedVideoId;
     std::string _prefetchedUrl;
 

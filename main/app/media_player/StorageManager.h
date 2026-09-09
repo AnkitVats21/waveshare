@@ -21,6 +21,8 @@ public:
     void setDownloadCompleteSignal(bool complete) { _downloadComplete = complete; }
 
 private:
+    bool getValidCachedPath(const char* songId, char* outPath, size_t maxLen);
+
     BufferManager& _bm;
     Services::StorageService& _storageService;
     

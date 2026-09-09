@@ -224,8 +224,10 @@ void MusicPlaybackService::shuffleQueue() {
 }
 
 void MusicPlaybackService::prefetchNextTrack() {
-    if (_queue.empty()) return;
-    const std::string& nextId = _queue.front().videoId;
+    if (_queue.empty() || _prefetchInProgress) return;
+    const std::string nextId = _queue.front().videoId;
+    if (nextId.empty()) return;
+
     if (NexusPlayer::getInstance().getStorageManager().fileExists(nextId.c_str())) {
         return; // Already cached on SD card
     }
@@ -233,11 +235,42 @@ void MusicPlaybackService::prefetchNextTrack() {
         return; // Already prefetched
     }
 
-    std::string url;
-    if (_invidious.resolveOpusUrl(nextId, url) == ESP_OK && !url.empty()) {
-        _prefetchedVideoId = nextId;
-        _prefetchedUrl = url;
-        ESP_LOGI(TAG, "Pre-fetched stream URL for upcoming track: %s", nextId.c_str());
+    _prefetchInProgress = true;
+    BaseType_t ret = xTaskCreatePinnedToCore(
+        [](void* arg) {
+            auto* self = static_cast<MusicPlaybackService*>(arg);
+            // Yield CPU so playback startup, I2S DMA, and AFE processing settle cleanly
+            vTaskDelay(pdMS_TO_TICKS(150));
+
+            std::string targetId;
+            if (!self->_queue.empty()) {
+                targetId = self->_queue.front().videoId;
+            }
+
+            if (!targetId.empty()) {
+                std::string url;
+                if (self->_invidious.resolveOpusUrl(targetId, url) == ESP_OK && !url.empty()) {
+                    if (!self->_queue.empty() && self->_queue.front().videoId == targetId) {
+                        self->_prefetchedVideoId = targetId;
+                        self->_prefetchedUrl = url;
+                        ESP_LOGI(TAG, "Asynchronously pre-fetched stream URL for upcoming track: %s", targetId.c_str());
+                    }
+                }
+            }
+            self->_prefetchInProgress = false;
+            vTaskDelete(NULL);
+        },
+        "bg_prefetch",
+        ThreadConfig::StackSize::STACK_PLAYER,
+        this,
+        ThreadConfig::Priority::LOW,
+        NULL,
+        ThreadConfig::CORE_NETWORK
+    );
+
+    if (ret != pdPASS) {
+        _prefetchInProgress = false;
+        ESP_LOGW(TAG, "Failed to spawn background prefetch task");
     }
 }
 

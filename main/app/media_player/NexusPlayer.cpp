@@ -45,7 +45,7 @@ NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::Buff
       _playbackId(playbackId),
       _storageId(storageId),
       _storageManager(playbackId, storageId),
-      _streamManager(playbackId, storageId, _storageManager),
+      _streamManager(playbackId, storageId),
       _audioEngine(playbackId, Buffers::MEDIA_RX_BUF) {}
 
 NexusPlayer::~NexusPlayer() {
@@ -82,19 +82,34 @@ void NexusPlayer::removeObserver(IPlaybackObserver* observer) {
 }
 
 void NexusPlayer::notifyTrackStarted(const char* songId) {
-    for (auto* obs : _observers) {
+    std::vector<IPlaybackObserver*> obsCopy;
+    {
+        PlayerLock lock(_mutex);
+        obsCopy = _observers;
+    }
+    for (auto* obs : obsCopy) {
         if (obs) obs->onTrackStarted(songId);
     }
 }
 
 void NexusPlayer::notifyTrackFinished(const char* songId) {
-    for (auto* obs : _observers) {
+    std::vector<IPlaybackObserver*> obsCopy;
+    {
+        PlayerLock lock(_mutex);
+        obsCopy = _observers;
+    }
+    for (auto* obs : obsCopy) {
         if (obs) obs->onTrackFinished(songId);
     }
 }
 
 void NexusPlayer::notifyPlaybackError(const char* songId, int err) {
-    for (auto* obs : _observers) {
+    std::vector<IPlaybackObserver*> obsCopy;
+    {
+        PlayerLock lock(_mutex);
+        obsCopy = _observers;
+    }
+    for (auto* obs : obsCopy) {
         if (obs) obs->onPlaybackError(songId, err);
     }
 }
@@ -339,22 +354,35 @@ void NexusPlayer::run() {
 }
 
 void NexusPlayer::checkPlaybackFinished() {
-    PlayerLock lock(_mutex);
-    if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
-        if (!_audioEngine.isPlaying()) {
-            auto &bm = BufferManager::getInstance();
-            if (bm.getUsedBytes(Buffers::MEDIA_RX_BUF) == 0) {
-                ESP_LOGI(TAG, "Playback naturally finished for songId: %s. Notifying observers.", _activeSongId);
-                char finishedSong[64];
-                strncpy(finishedSong, _activeSongId, sizeof(finishedSong) - 1);
-                finishedSong[sizeof(finishedSong) - 1] = '\0';
-                
-                // Clean up playback state
-                stop();
+    char finishedSong[64] = {0};
+    bool trackFinished = false;
 
-                // Notify observers (MusicPlaybackService) to advance queue natively
-                notifyTrackFinished(finishedSong);
+    {
+        PlayerLock lock(_mutex);
+        if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
+            if (!_audioEngine.isPlaying()) {
+                auto &bm = BufferManager::getInstance();
+                if (bm.getUsedBytes(Buffers::MEDIA_RX_BUF) == 0) {
+                    ESP_LOGI(TAG, "Playback naturally finished for songId: %s. Notifying observers.", _activeSongId);
+                    strncpy(finishedSong, _activeSongId, sizeof(finishedSong) - 1);
+                    finishedSong[sizeof(finishedSong) - 1] = '\0';
+                    
+                    stopActivePipelines();
+                    _state = STATE_IDLE;
+                    _activeSongId[0] = '\0';
+                    _should_resume_after_session = false;
+                    _should_play_after_session = false;
+                    _pendingSongId.clear();
+                    _pendingDownloadUrl.clear();
+                    AudioOrchestrator::getInstance().notifyMediaStopped();
+                    trackFinished = true;
+                }
             }
         }
+    }
+
+    if (trackFinished) {
+        // Notify observers (MusicPlaybackService) outside the player lock
+        notifyTrackFinished(finishedSong);
     }
 }

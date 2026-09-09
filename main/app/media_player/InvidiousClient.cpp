@@ -72,10 +72,6 @@ std::string InvidiousClient::getHost() const {
     return InvidiousInstanceResolver::getInstance().getActiveInstance();
 }
 
-std::string InvidiousClient::getCurrentHost() const {
-    return getHost();
-}
-
 esp_err_t InvidiousClient::httpEventHandler(esp_http_client_event_t* evt) {
     if (!evt) return ESP_OK;
     auto* response = static_cast<std::string*>(evt->user_data);
@@ -368,16 +364,4 @@ esp_err_t InvidiousClient::getRecommendedTracks(
     }
 
     return outTracks.empty() ? ESP_ERR_NOT_FOUND : ESP_OK;
-}
-
-esp_err_t InvidiousClient::getRecommendedTrack(const std::string& currentVideoId, InvidiousTrack& outTrack) {
-    std::vector<InvidiousTrack> tracks;
-    esp_err_t err = getRecommendedTracks(currentVideoId, tracks, 1);
-    if (err == ESP_OK && !tracks.empty()) {
-        outTrack = tracks[0];
-        ESP_LOGI(TAG, "Autoplay recommended: '%s' by '%s' (%s)",
-                 outTrack.title.c_str(), outTrack.author.c_str(), outTrack.videoId.c_str());
-        return ESP_OK;
-    }
-    return (err != ESP_OK) ? err : ESP_ERR_NOT_FOUND;
 }

@@ -1,3 +1,8 @@
+#pragma once
+
+#include <cstdint>
+#include <cstddef>
+
 enum class ChunkType : uint8_t {
     DATA,
     EOF_STREAM,

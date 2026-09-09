@@ -3,11 +3,9 @@
 #include "services/BufferManager.h"
 #include <string>
 
-class StorageManager; // Forward declaration
-
 class StreamManager {
 public:
-    StreamManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId, StorageManager& storageMngr);
+    StreamManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId);
     ~StreamManager();
 
     bool beginStreaming(const char* url, bool cacheMode = false);
@@ -18,7 +16,6 @@ private:
     BufferManager& _bm;
     BufferManager::BufferId _playbackId;
     BufferManager::BufferId _storageId;
-    StorageManager& _storage;
     
     HttpClientStream _http;
     std::string _url;

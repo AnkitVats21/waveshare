@@ -30,9 +30,6 @@ public:
     esp_err_t getRecommendedTracks(const std::string& currentVideoId, 
                                    std::vector<InvidiousTrack>& outTracks, 
                                    size_t limit = 8);
-    esp_err_t getRecommendedTrack(const std::string& currentVideoId, InvidiousTrack& outTrack);
-
-    std::string getCurrentHost() const;
 
 private:
     std::string _forcedHost;

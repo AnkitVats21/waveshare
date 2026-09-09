@@ -1,5 +1,4 @@
 #include "StreamManager.h"
-#include "StorageManager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "PlayerTypes.h"
@@ -8,11 +7,10 @@
 
 static const char* TAG = "StreamManager";
 
-StreamManager::StreamManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId, StorageManager& storageMngr)
+StreamManager::StreamManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
     : _bm(BufferManager::getInstance()),
       _playbackId(playbackId),
-      _storageId(storageId),
-      _storage(storageMngr) {}
+      _storageId(storageId) {}
 
 StreamManager::~StreamManager() {
     stopStreaming();
