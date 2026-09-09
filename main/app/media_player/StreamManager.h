@@ -22,6 +22,7 @@ private:
     bool _cacheMode = false;
     TaskHandle_t _networkTaskHandle = nullptr;
     volatile bool _isStreaming = false;
+    bool _taskCreatedWithCaps = false;
     
     static void networkTaskThunk(void* pvParameters);
     void runStreamLoop();

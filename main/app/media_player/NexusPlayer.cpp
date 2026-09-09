@@ -142,12 +142,22 @@ void NexusPlayer::play(const char* songId, const char* downloadUrl) {
     }
 
     if (_session_active) {
-        ESP_LOGI(TAG, "Play requested during active session. Deferring songId: %s until session ends.", songId);
-        _pendingSongId = songId;
-        _pendingDownloadUrl = downloadUrl;
-        _should_play_after_session = true;
-        _should_resume_after_session = false;
-        return;
+        auto snap = EmbeddedSysDb::getInstance().snapshot();
+        if (snap.assistant.session_state == AssistantState::WaitingForFollowup) {
+            ESP_LOGI(TAG, "Play requested during WaitingForFollowup. Terminating assistant session immediately to start playback.");
+            _session_active = false;
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.assistant.session_state = AssistantState::Idle;
+                s.assistant.media_pending_idle = false;
+            });
+        } else {
+            ESP_LOGI(TAG, "Play requested during active session. Deferring songId: %s until session ends.", songId);
+            _pendingSongId = songId;
+            _pendingDownloadUrl = downloadUrl;
+            _should_play_after_session = true;
+            _should_resume_after_session = false;
+            return;
+        }
     }
 
     play_internal(songId, downloadUrl);

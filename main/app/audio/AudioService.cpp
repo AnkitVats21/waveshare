@@ -180,6 +180,13 @@ void AudioService::onWakeWord(uint8_t channel) {
 }
 
 void AudioService::onVadTimeout() {
+    auto snap = sysdb.snapshot();
+    if (snap.assistant.media_pending_idle || snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
+        LOGI_AUDIO("VAD timeout suppressed (media_pending=%d, speaking=%d, turn_pending=%d).",
+                   (int)snap.assistant.media_pending_idle, (int)snap.audio.assistant_speaking, (int)snap.audio.turn_complete_pending);
+        return;
+    }
+
     LOGI_AUDIO("VAD timeout — returning to Idle.");
     sysdb.mutate([](SystemState& s) {
         if (s.assistant.session_state == AssistantState::StreamingUserAudio ||

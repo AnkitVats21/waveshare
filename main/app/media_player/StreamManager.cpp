@@ -25,12 +25,14 @@ bool StreamManager::beginStreaming(const char* url, bool cacheMode) {
     _isStreaming = true;
 
     // Prefer allocating stack in PSRAM to conserve internal SRAM for network buffers
+    _taskCreatedWithCaps = true;
     BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
         networkTaskThunk, "net_stream_task", 6 * 1024, this,
         ThreadConfig::Priority::NORMAL, &_networkTaskHandle, ThreadConfig::CORE_NETWORK,
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
     if (ret != pdPASS) {
+        _taskCreatedWithCaps = false;
         ret = xTaskCreatePinnedToCore(
             networkTaskThunk, "net_stream_task", 4096, this,
             ThreadConfig::Priority::NORMAL, &_networkTaskHandle, ThreadConfig::CORE_NETWORK
@@ -61,9 +63,14 @@ void StreamManager::stopStreaming() {
 
 void StreamManager::networkTaskThunk(void* pvParameters) {
     StreamManager* self = static_cast<StreamManager*>(pvParameters);
+    bool withCaps = self->_taskCreatedWithCaps;
     self->runStreamLoop();
     self->_networkTaskHandle = nullptr;
-    vTaskDelete(NULL);
+    if (withCaps) {
+        vTaskDeleteWithCaps(NULL);
+    } else {
+        vTaskDelete(NULL);
+    }
 }
 
 void StreamManager::runStreamLoop() {

@@ -364,7 +364,7 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
         }
 
         // ── VAD-based inactivity supervisor ──────────────────────────────────
-        if (m_streaming_active && !m_assistant_active) {
+        if (m_streaming_active && !assistant_talking) {
             if (res->vad_state == VAD_SPEECH) {
                 // Update inactivity timer on active user speech (completely immune to speaker echo)
                 m_listener->onSpeechDetected();

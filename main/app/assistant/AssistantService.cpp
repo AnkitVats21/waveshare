@@ -213,12 +213,10 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
             break;
 
         case AssistantState::AssistantSpeaking:
-            if (snap.audio.turn_complete_pending || !snap.audio.assistant_speaking) {
+            if (!snap.audio.assistant_speaking && !snap.audio.turn_complete_pending) {
                 if (snap.assistant.media_pending_idle) {
-                    if (!snap.audio.turn_complete_pending) {
-                        ESP_LOGI(TAG, "Media command was executed and speech playback completed. Transitioning directly to Closing to bypass VAD.");
-                        transitionTo(AssistantState::Closing, &snap);
-                    }
+                    ESP_LOGI(TAG, "Media command was executed and speech playback completed. Transitioning directly to Closing to bypass VAD.");
+                    transitionTo(AssistantState::Closing, &snap);
                 } else {
                     transitionTo(AssistantState::WaitingForFollowup, &snap);
                 }
