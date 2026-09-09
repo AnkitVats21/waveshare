@@ -6,6 +6,7 @@
 #include <string>
 #include <deque>
 #include <vector>
+#include <mutex>
 
 enum class RepeatMode {
     Off,
@@ -38,9 +39,18 @@ public:
     void setCaching(bool enabled);
     bool isCachingEnabled() const;
 
-    const InvidiousTrack& getCurrentTrack() const { return _currentTrack; }
-    const std::deque<InvidiousTrack>& getQueue() const { return _queue; }
-    const std::vector<InvidiousTrack>& getHistory() const { return _history; }
+    InvidiousTrack getCurrentTrack() const {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        return _currentTrack;
+    }
+    std::deque<InvidiousTrack> getQueue() const {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        return _queue;
+    }
+    std::vector<InvidiousTrack> getHistory() const {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        return _history;
+    }
 
     InvidiousClient& getInvidiousClient() { return _invidious; }
     void populateRecommendations(const std::vector<InvidiousTrack>& recs, const std::string& title);
@@ -49,6 +59,8 @@ public:
     void onTrackStarted(const char* songId) override;
     void onTrackFinished(const char* songId) override;
     void onPlaybackError(const char* songId, int errorCode) override;
+
+    static constexpr size_t QUEUE_LOW_WATERMARK = 2;
 
 private:
     MusicPlaybackService();
@@ -59,11 +71,14 @@ private:
     bool _autoplayEnabled = true;
     RepeatMode _repeatMode = RepeatMode::Off;
 
+    mutable std::recursive_mutex _serviceMutex;
     InvidiousTrack _currentTrack;
     std::deque<InvidiousTrack> _queue;
     std::vector<InvidiousTrack> _history;
 
     volatile bool _prefetchInProgress = false;
+    volatile bool _replenishInProgress = false;
+    uint32_t _queueGeneration = 0;
     std::string _prefetchedVideoId;
     std::string _prefetchedUrl;
 
@@ -71,4 +86,6 @@ private:
     bool playTrackFallback(const InvidiousTrack& track);
     bool resolveAndPlayImmediate(const char* query);
     void prefetchNextTrack();
+    void checkAndReplenishQueue();
+    bool isTrackInQueueOrHistory(const std::string& videoId) const;
 };
