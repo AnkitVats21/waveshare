@@ -10,20 +10,45 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
     switch (skill_call.type) {
         case GeminiSkills::SkillType::PLAY: {
             LOGI_SYSTEM("Media PLAY command received: '%s'", skill_call.args.play->query.c_str());
-            std::string q = skill_call.args.play->query;
-            BaseType_t ret = xTaskCreatePinnedToCoreWithCaps([](void* arg) {
-                std::string* query_str = static_cast<std::string*>(arg);
-                MusicPlaybackService::getInstance().play(query_str->c_str());
-                delete query_str;
-                vTaskDelete(NULL);
-            }, "bg_play", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (ret != pdPASS) {
-                xTaskCreate([](void* arg) {
-                    std::string* query_str = static_cast<std::string*>(arg);
-                    MusicPlaybackService::getInstance().play(query_str->c_str());
-                    delete query_str;
+            struct PlayCtx {
+                std::string query;
+                bool withCaps;
+            };
+            auto* ctx = new PlayCtx{skill_call.args.play->query, true};
+
+            auto taskFn = [](void* arg) {
+                auto* c = static_cast<PlayCtx*>(arg);
+                std::string q = std::move(c->query);
+                bool caps = c->withCaps;
+                delete c;
+                MusicPlaybackService::getInstance().play(q.c_str());
+                if (caps) {
+                    vTaskDeleteWithCaps(NULL);
+                } else {
                     vTaskDelete(NULL);
-                }, "bg_play", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+                }
+            };
+
+            BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
+                taskFn, "bg_play", ThreadConfig::StackSize::STACK_PLAYER,
+                ctx, ThreadConfig::Priority::NORMAL, NULL,
+                ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+            );
+            if (ret != pdPASS) {
+                LOGW_SYSTEM("xTaskCreatePinnedToCoreWithCaps for bg_play returned %d. Retrying internal memory...", (int)ret);
+                ctx->withCaps = false;
+                ret = xTaskCreatePinnedToCore(
+                    taskFn, "bg_play", ThreadConfig::StackSize::STACK_PLAYER,
+                    ctx, ThreadConfig::Priority::NORMAL, NULL,
+                    ThreadConfig::CORE_NETWORK
+                );
+            }
+            if (ret != pdPASS) {
+                LOGE_SYSTEM("CRITICAL: Failed to spawn bg_play task (ret=%d)!", (int)ret);
+                delete ctx;
+                response_doc["status"] = "error";
+                response_doc["message"] = "Resource exhaustion: failed to create player task";
+                return false;
             }
             response_doc["status"] = "success";
             return true;
@@ -31,20 +56,45 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
 
         case GeminiSkills::SkillType::PLAY_NEXT: {
             LOGI_SYSTEM("Media PLAY_NEXT command received: '%s'", skill_call.args.play_next->query.c_str());
-            std::string q = skill_call.args.play_next->query;
-            BaseType_t ret = xTaskCreatePinnedToCoreWithCaps([](void* arg) {
-                std::string* query_str = static_cast<std::string*>(arg);
-                MusicPlaybackService::getInstance().playNext(query_str->c_str());
-                delete query_str;
-                vTaskDelete(NULL);
-            }, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (ret != pdPASS) {
-                xTaskCreate([](void* arg) {
-                    std::string* query_str = static_cast<std::string*>(arg);
-                    MusicPlaybackService::getInstance().playNext(query_str->c_str());
-                    delete query_str;
+            struct PlayCtx {
+                std::string query;
+                bool withCaps;
+            };
+            auto* ctx = new PlayCtx{skill_call.args.play_next->query, true};
+
+            auto taskFn = [](void* arg) {
+                auto* c = static_cast<PlayCtx*>(arg);
+                std::string q = std::move(c->query);
+                bool caps = c->withCaps;
+                delete c;
+                MusicPlaybackService::getInstance().playNext(q.c_str());
+                if (caps) {
+                    vTaskDeleteWithCaps(NULL);
+                } else {
                     vTaskDelete(NULL);
-                }, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER, new std::string(q), ThreadConfig::Priority::NORMAL, NULL);
+                }
+            };
+
+            BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
+                taskFn, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER,
+                ctx, ThreadConfig::Priority::NORMAL, NULL,
+                ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+            );
+            if (ret != pdPASS) {
+                LOGW_SYSTEM("xTaskCreatePinnedToCoreWithCaps for bg_play_next returned %d. Retrying internal memory...", (int)ret);
+                ctx->withCaps = false;
+                ret = xTaskCreatePinnedToCore(
+                    taskFn, "bg_play_next", ThreadConfig::StackSize::STACK_PLAYER,
+                    ctx, ThreadConfig::Priority::NORMAL, NULL,
+                    ThreadConfig::CORE_NETWORK
+                );
+            }
+            if (ret != pdPASS) {
+                LOGE_SYSTEM("CRITICAL: Failed to spawn bg_play_next task (ret=%d)!", (int)ret);
+                delete ctx;
+                response_doc["status"] = "error";
+                response_doc["message"] = "Resource exhaustion: failed to create player task";
+                return false;
             }
             response_doc["status"] = "success";
             return true;

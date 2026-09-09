@@ -143,12 +143,16 @@ esp_err_t InvidiousClient::searchList(const std::string& query, std::vector<Invi
     outTracks.clear();
     if (query.empty() || limit == 0) return ESP_ERR_INVALID_ARG;
 
+    ESP_LOGI(TAG, "searchList: searching '%s' (limit=%zu)...", query.c_str(), limit);
+
     const std::string path = "/api/v1/search?q=" + urlEncode(query) +
                              "&type=video&fields=videoId,title,author,lengthSeconds";
 
     std::string response;
     esp_err_t err = httpGet(path, response);
     if (err != ESP_OK || response.empty()) {
+        ESP_LOGW(TAG, "searchList: httpGet failed for '%s' (err=%s, resp_len=%zu)",
+                 query.c_str(), esp_err_to_name(err), response.length());
         return (err != ESP_OK) ? err : ESP_FAIL;
     }
 

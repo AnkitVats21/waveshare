@@ -161,6 +161,7 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
         ESP_LOGE(TAG, "Empty music query");
         return false;
     }
+    ESP_LOGI(TAG, "resolveAndPlayImmediate: resolving track for '%s'...", query);
 
     // Stop current playback immediately to clear network, decoding, and Core 1 AEC load
     NexusPlayer::getInstance().stop();
@@ -180,6 +181,7 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
 }
 
 bool MusicPlaybackService::play(const char* query) {
+    ESP_LOGI(TAG, "play() invoked with query: '%s'", query ? query : "(null)");
     clearQueue();
     return resolveAndPlayImmediate(query);
 }
@@ -228,7 +230,7 @@ bool MusicPlaybackService::queue(const char* query) {
             std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
             _queue.push_back(track);
             ESP_LOGI(TAG, "Queued track: '%s' (queue depth: %zu)", track.title.c_str(), _queue.size());
-            if (_queue.size() == 1) {
+            if (_queue.size() == 1 && _prefetchedUrl.empty()) {
                 shouldPrefetch = true;
             }
         }
@@ -266,14 +268,14 @@ void MusicPlaybackService::prefetchNextTrack() {
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         if (_queue.empty() || _prefetchInProgress) return;
-        nextId = _queue.front().videoId;
-        if (nextId.empty()) return;
 
+        nextId = _queue.front().videoId;
+        if (nextId.empty() || nextId == _prefetchedVideoId) return;
+
+        // Skip network prefetch if already cached locally on SD card
         if (NexusPlayer::getInstance().getStorageManager().fileExists(nextId.c_str())) {
-            return; // Already cached on SD card
-        }
-        if (_prefetchedVideoId == nextId && !_prefetchedUrl.empty()) {
-            return; // Already prefetched
+            ESP_LOGD(TAG, "Next track %s is already cached locally, skipping prefetch", nextId.c_str());
+            return;
         }
 
         _prefetchInProgress = true;
@@ -284,14 +286,16 @@ void MusicPlaybackService::prefetchNextTrack() {
         MusicPlaybackService* self;
         std::string targetId;
         uint32_t generation;
+        bool withCaps;
     };
-    auto* ctx = new PrefetchContext{this, nextId, generation};
+    auto* ctx = new PrefetchContext{this, nextId, generation, true};
 
     auto taskFn = [](void* arg) {
         auto* c = static_cast<PrefetchContext*>(arg);
         MusicPlaybackService* self = c->self;
         std::string targetId = c->targetId;
         uint32_t gen = c->generation;
+        bool caps = c->withCaps;
         delete c;
 
         // Yield CPU so playback startup, I2S DMA, and AFE processing settle cleanly
@@ -313,7 +317,11 @@ void MusicPlaybackService::prefetchNextTrack() {
             ESP_LOGD(TAG, "Prefetch for %s discarded (queue or generation changed)", targetId.c_str());
         }
         self->_prefetchInProgress = false;
-        vTaskDelete(NULL);
+        if (caps) {
+            vTaskDeleteWithCaps(NULL);
+        } else {
+            vTaskDelete(NULL);
+        }
     };
 
     BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
@@ -328,6 +336,7 @@ void MusicPlaybackService::prefetchNextTrack() {
     );
 
     if (ret != pdPASS) {
+        ctx->withCaps = false;
         ret = xTaskCreatePinnedToCore(
             taskFn,
             "bg_prefetch",
@@ -366,14 +375,16 @@ void MusicPlaybackService::checkAndReplenishQueue() {
         MusicPlaybackService* self;
         std::string baseId;
         uint32_t generation;
+        bool withCaps;
     };
-    auto* ctx = new ReplenishContext{this, baseTrackId, generation};
+    auto* ctx = new ReplenishContext{this, baseTrackId, generation, true};
 
     auto taskFn = [](void* arg) {
         auto* c = static_cast<ReplenishContext*>(arg);
         MusicPlaybackService* self = c->self;
         std::string baseId = c->baseId;
         uint32_t gen = c->generation;
+        bool caps = c->withCaps;
         delete c;
 
         // Yield CPU to let concurrent audio startup settle
@@ -413,7 +424,11 @@ void MusicPlaybackService::checkAndReplenishQueue() {
         if (needPrefetch) {
             self->prefetchNextTrack();
         }
-        vTaskDelete(NULL);
+        if (caps) {
+            vTaskDeleteWithCaps(NULL);
+        } else {
+            vTaskDelete(NULL);
+        }
     };
 
     BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
@@ -428,6 +443,7 @@ void MusicPlaybackService::checkAndReplenishQueue() {
     );
 
     if (ret != pdPASS) {
+        ctx->withCaps = false;
         ret = xTaskCreatePinnedToCore(
             taskFn,
             "bg_replenish",

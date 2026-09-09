@@ -247,7 +247,7 @@ void GeminiProtocol::transmitSetupHandshake() {
             std::string payload;
             serializeJson(doc, payload);
             LOGI_NET("Uplinking handshake with injected memory context (payload size: %zu bytes)...", payload.length());
-            m_client.sendText(payload.c_str(), payload.length(), pdMS_TO_TICKS(1000));
+            m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
             return;
         } else {
             LOGE_NET("Failed to deserialize SETUP_HANDSHAKE_JSON: %s. Falling back to static handshake.", err.c_str());
@@ -256,9 +256,9 @@ void GeminiProtocol::transmitSetupHandshake() {
 
     // Default fallback to static handshake
     LOGI_NET("Uplinking static JSON schema handshake compilation payload...");
-    m_client.sendText(GeminiSkills::SETUP_HANDSHAKE_JSON, 
-                      strlen(GeminiSkills::SETUP_HANDSHAKE_JSON), 
-                      pdMS_TO_TICKS(1000));
+    m_client.sendLargeText(GeminiSkills::SETUP_HANDSHAKE_JSON, 
+                           strlen(GeminiSkills::SETUP_HANDSHAKE_JSON), 
+                           pdMS_TO_TICKS(2000));
 }
 
 void GeminiProtocol::transmitToolResponse(const char* call_id, const char* json_result) {
@@ -387,9 +387,8 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
         case WEBSOCKET_EVENT_DISCONNECTED:
             LOGW_NET("WebSocket disconnected. Stats: rx_frames=%u, rx_dropped=%u, rx_audio_bytes=%u",
                      (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
-            // Full teardown — forces ensureClientInitialized() to re-create from scratch
-            self->m_client.stop();
-            self->m_client.destroy();
+            // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
+            // AssistantService will safely invoke closeConnection() outside this task context.
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::DISCONNECTED;
                 s.audio.assistant_speaking = false;
@@ -398,8 +397,7 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             
         case WEBSOCKET_EVENT_ERROR:
             LOGE_NET("WebSocket socket error.");
-            self->m_client.stop();
-            self->m_client.destroy();
+            // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::ERROR_STATE;
                 s.audio.assistant_speaking = false;

@@ -99,6 +99,41 @@ public:
     }
 
     /**
+     * @brief Sends large text data by fragmenting it into smaller chunks (<= 2048 bytes)
+     *        using WebSocket continuation frames to avoid large TLS/AES DMA allocations.
+     * @param data The text data to send.
+     * @param len The length of the data.
+     * @param timeout Timeout for each chunk send operation.
+     * @return Total number of bytes sent, or -1 on error.
+     */
+    int sendLargeText(const char* data, int len, TickType_t timeout = pdMS_TO_TICKS(2000)) {
+        if (!m_handle || !data || len <= 0) return -1;
+        constexpr int CHUNK_SIZE = 2048;
+        if (len <= CHUNK_SIZE) {
+            return esp_websocket_client_send_text(m_handle, data, len, timeout);
+        }
+
+        int sent = 0;
+        int first_len = (len > CHUNK_SIZE) ? CHUNK_SIZE : len;
+        int ret = esp_websocket_client_send_text_partial(m_handle, data, first_len, timeout);
+        if (ret < 0) return -1;
+        sent += ret;
+
+        while (sent < len) {
+            int chunk = len - sent;
+            if (chunk > CHUNK_SIZE) chunk = CHUNK_SIZE;
+            ret = esp_websocket_client_send_cont_msg(m_handle, data + sent, chunk, timeout);
+            if (ret < 0) return -1;
+            sent += ret;
+        }
+
+        ret = esp_websocket_client_send_fin(m_handle, timeout);
+        if (ret < 0) return -1;
+
+        return sent;
+    }
+
+    /**
      * @brief Checks if the WebSocket client is currently connected.
      */
     bool isConnected() const {

@@ -323,7 +323,7 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
         else if (!new_session_active && _session_active) {
             ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
             _session_active = false;
-            if (_should_play_after_session && !_pendingDownloadUrl.empty()) {
+            if (_should_play_after_session && (!_pendingDownloadUrl.empty() || _storageManager.fileExists(_pendingSongId.c_str()))) {
                 play_internal(_pendingSongId.c_str(), _pendingDownloadUrl.c_str());
                 _pendingSongId.clear();
                 _pendingDownloadUrl.clear();
