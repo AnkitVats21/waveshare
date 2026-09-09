@@ -114,10 +114,10 @@ bool WakeWordEngine::begin() {
         xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
     }
 
-    // 4. Launch tasks. Keep the I2S-owning feed task on the audio core and
-    // let detect run off-core so speaker playback can preempt DSP work.
+    // 4. Launch tasks. Both feed and detect tasks run on the audio DSP core (Core 1)
+    // so network and TLS activity on Core 0 never starve AFE fetch/detect processing.
     xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", ThreadConfig::StackSize::STACK_WW_DET,
-                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, ThreadConfig::CORE_NETWORK);
+                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, ThreadConfig::CORE_AUDIO);
     xTaskCreatePinnedToCore(feedTaskBridge,   "ww_feed",   ThreadConfig::StackSize::STACK_WW_FEED,
                             afe_data, ThreadConfig::Priority::WAKE_WORD_FEED, nullptr, ThreadConfig::CORE_AUDIO);
 

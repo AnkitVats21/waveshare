@@ -31,7 +31,6 @@ set(srcs
             "app/audio/AlertPlayer.cpp"
             "app/audio/MicCapture.cpp"
             "app/audio/SpeakerPlayback.cpp"
-            "app/media_player/WavPlayer.cpp"
             "app/media_player/NexusPlayer.cpp"
             "app/media_player/AudioEngine.cpp"
             "app/media_player/StorageManager.cpp"

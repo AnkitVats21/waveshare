@@ -3,7 +3,6 @@
 #include "services/BufferManager.h"
 #include "app/audio/SpeakerPlayback.h"
 #include "app/audio/AudioOrchestrator.h"
-#include "app/media_player/WavPlayer.h"
 // #include "app/audio/AudioAlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/sysdb/EmbeddedSysDb.h"
@@ -150,35 +149,15 @@ void AlarmService::triggerAlarm(const Alarm& alarm) {
         s.alarm.stop_requested = false;
     });
 
-    // Check WAV metadata upfront
-    WavInfo info = {};
-    bool is_wav_valid = WavPlayer::readWavInfo(alarm.tone_file, info);
-
-    if (is_wav_valid && info.sample_rate <= NATIVE_SAMPLE_RATE) {
-        ESP_LOGI(TAG, "Triggering WAV alarm playback: %s (Sample Rate: %lu Hz)", alarm.tone_file, (unsigned long)info.sample_rate);
-        if (!WavPlayer::getInstance().playAsync(alarm.tone_file)) {
-            ESP_LOGE(TAG, "Failed to start WAV playback for alarm. Falling back to algorithmic alert.");
-            m_playing_fallback_alarm = true;
-            if (m_task_handle) {
-                xTaskNotifyGive(m_task_handle);
-            }
-        }
-    } else {
-        if (!is_wav_valid) {
-            ESP_LOGW(TAG, "Alarm tone WAV file invalid or missing: %s. Using fallback algorithmic alert.", alarm.tone_file);
-        } else {
-            ESP_LOGW(TAG, "Alarm sample rate too high (%lu Hz, limit %d kHz). Using fallback algorithmic alert.", (unsigned long)info.sample_rate, (int)(NATIVE_SAMPLE_RATE / 1000));
-        }
-        m_playing_fallback_alarm = true;
-        if (m_task_handle) {
-            xTaskNotifyGive(m_task_handle);
-        }
+    ESP_LOGI(TAG, "Triggering alarm %d (id=%d)...", alarm.id, alarm.id);
+    m_playing_fallback_alarm = true;
+    if (m_task_handle) {
+        xTaskNotifyGive(m_task_handle);
     }
 }
 
 void AlarmService::stopActiveAlarm() {
     if (m_playing_alarm) {
-        WavPlayer::getInstance().stop();
         m_playing_alarm = false;
         m_playing_fallback_alarm = false;
         AudioOrchestrator::getInstance().notifyAlarmEnded();
@@ -196,18 +175,6 @@ void AlarmService::onStateChanged(ComponentMask changed, const SystemState& snap
         if (snap.alarm.stop_requested && m_playing_alarm) {
             ESP_LOGI(TAG, "onStateChanged: Stop requested. Halting alarm playback.");
             stopActiveAlarm();
-        }
-    }
-    if (changed & COMP::AUDIO) {
-        // If we were playing a WAV alarm and it finished
-        if (m_playing_alarm && !m_playing_fallback_alarm && !snap.audio.wav_playing) {
-            ESP_LOGI(TAG, "onStateChanged: WAV playback finished. Clearing alarm state.");
-            m_playing_alarm = false;
-            AudioOrchestrator::getInstance().notifyAlarmEnded();
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.alarm.playing = false;
-                s.alarm.active_alarm_id = 0;
-            });
         }
     }
 }
