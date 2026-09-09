@@ -9,6 +9,9 @@
 
 static const char* TAG = "AudioEngine";
 
+// Cap decoded-but-unplayed PCM at ~2 s (32 kHz * 2 bytes/sample = 64 KB/s).
+static constexpr size_t PCM_LOOKAHEAD_HIGH_BYTES = 128 * 1024;
+
 AudioEngine::AudioEngine(BufferManager::BufferId rawOpusInId, BufferManager::BufferId pcmOutId)
     : _bm(BufferManager::getInstance()), _rawOpusInId(rawOpusInId), _pcmOutId(pcmOutId) {}
 
@@ -47,6 +50,10 @@ bool AudioEngine::initialize(int sampleRate, int channels) {
     }
 
     // Pre-allocate PCM and Resample buffers in PSRAM
+    // These stay in PSRAM: they're large (32 KB each) and accessed linearly
+    // (opus_decode writes _pcm_buffer as one block; the resampler streams through
+    // both), which PSRAM handles well. Internal RAM is reserved for the decode
+    // task stack (random FFT/MDCT scratch) and DMA-capable TLS/AES buffers.
     if (!_pcm_buffer) {
         _pcm_buffer = (int16_t*)heap_caps_malloc(_pcm_buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
@@ -206,13 +213,24 @@ void AudioEngine::runDecodeLoop() {
             current_chunk = nullptr;
         } else if (bytes_consumed == 0) {
             // Decoder is working through buffered audio; yield briefly to avoid busy loop
-            vTaskDelay(pdMS_TO_TICKS(2));
+            vTaskDelay(1);
         }
 
-        // Yield CPU periodically to prevent task watchdog starvation on CPU 0
-        if (++frames_since_yield >= 10) {
-            vTaskDelay(2);
+        // Always give CPU 0 back to lower-priority tasks (incl. IDLE0, which feeds
+        // the task watchdog) at least once per iteration.
+        if (++frames_since_yield >= 4) {
+            vTaskDelay(1);
             frames_since_yield = 0;
+        }
+
+        // Pace decoding to at most ~2 s ahead of playback. The PCM output ring is
+        // 512 KB (~8 s @ 32 kHz mono), so without this the decoder sprints through
+        // the whole download at 100% CPU on Core 0 while the network task is also
+        // busy - starving IDLE0 and tripping the 5 s task watchdog. Throttling here
+        // bounds look-ahead, and the sleeps let IDLE0 and the network task run.
+        while (_isPlaying && !_isPaused &&
+               _bm.getUsedBytes(_pcmOutId) > PCM_LOOKAHEAD_HIGH_BYTES) {
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
 
@@ -238,12 +256,19 @@ void AudioEngine::start() {
     if (_eventGroup) {
         xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
     }
-    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
-        decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0,
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-    );
+    // CRITICAL: the Opus/CELT decoder is FFT/MDCT-heavy and allocates large scratch
+    // arrays on the task stack. A PSRAM stack makes every stack access go through the
+    // cache and slows decode ~5-10x - enough that a single frame's worth of work
+    // starves IDLE0 and trips the task watchdog. Keep this task's stack in internal
+    // RAM; only fall back to a PSRAM stack if internal allocation fails.
+    BaseType_t ret = xTaskCreatePinnedToCore(
+        decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0);
     if (ret != pdPASS) {
-        xTaskCreatePinnedToCore(decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0);
+        ESP_LOGW(TAG, "OpusEngine internal-RAM stack alloc failed; falling back to PSRAM stack");
+        ret = xTaskCreatePinnedToCoreWithCaps(
+            decoderTaskThunk, "OpusEngine", 8192, this, 5, &_decoderTaskHandle, 0,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+        );
     }
 }
 
@@ -261,13 +286,23 @@ void AudioEngine::resume() {
     }
 }
 
-void AudioEngine::stop() { 
-    _isPlaying = false; 
+void AudioEngine::stop() {
+    _isPlaying = false;
+    _isPaused = false;
     _decoderIdentified = false;
     if (_eventGroup) {
         // Clear pause status and unblock task if it was waiting so it can exit cleanly
         xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
     }
+}
+
+bool AudioEngine::waitUntilStopped(uint32_t timeoutMs) {
+    uint32_t waited = 0;
+    while (_decoderTaskHandle != nullptr && waited < timeoutMs) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        waited += 5;
+    }
+    return _decoderTaskHandle == nullptr;
 }
 
 void AudioEngine::decoderTaskThunk(void* pvParameters) {

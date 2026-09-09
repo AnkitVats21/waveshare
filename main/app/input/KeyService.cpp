@@ -60,7 +60,7 @@ void KeyService::run() {
                                 ESP_LOGI("KeySvc", "Key 4: Pausing NexusPlayer");
                                 NexusPlayer::getInstance().pause();
                             }
-                            vTaskDelete(NULL);
+                            vTaskDeleteWithCaps(NULL);
                         }, "key_pause", ThreadConfig::StackSize::STACK_PLAYER, nullptr,
                            ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK,
                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -85,7 +85,7 @@ void KeyService::run() {
                             ESP_LOGI(TAG, "Key 3 long press: requesting next track");
                             xTaskCreatePinnedToCoreWithCaps([](void*) {
                                 MusicPlaybackService::getInstance().next();
-                                vTaskDelete(NULL);
+                                vTaskDeleteWithCaps(NULL);
                             }, "key_next", ThreadConfig::StackSize::STACK_PLAYER, nullptr,
                                ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK,
                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -93,7 +93,7 @@ void KeyService::run() {
                             ESP_LOGI(TAG, "Key 5 long press: requesting previous track");
                             xTaskCreatePinnedToCoreWithCaps([](void*) {
                                 MusicPlaybackService::getInstance().previous();
-                                vTaskDelete(NULL);
+                                vTaskDeleteWithCaps(NULL);
                             }, "key_prev", ThreadConfig::StackSize::STACK_PLAYER, nullptr,
                                ThreadConfig::Priority::NORMAL, NULL, ThreadConfig::CORE_NETWORK,
                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

@@ -80,8 +80,21 @@ void MusicPlaybackService::populateRecommendations(const std::vector<InvidiousTr
     prefetchNextTrack();
 }
 
+void MusicPlaybackService::invalidateBackgroundWork() {
+    std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+    // Bump the generation so in-flight prefetch/replenish tasks discard their
+    // results. An already-completed prefetch (_prefetchedUrl/_prefetchedVideoId)
+    // is kept: playTrackInternal only uses it when the videoId matches, so a
+    // stale entry is harmless and it lets a plain "next" stay instant.
+    _queueGeneration++;
+}
+
 bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
-    if (track.videoId.empty()) return false;
+    return playTrackInternal(track) == ESP_OK;
+}
+
+esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
+    if (track.videoId.empty()) return ESP_ERR_INVALID_ARG;
 
     // Check if the track is already cached locally on the SD card
     if (NexusPlayer::getInstance().getStorageManager().fileExists(track.videoId.c_str())) {
@@ -92,7 +105,7 @@ bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
             _currentTrack = track;
         }
         NexusPlayer::getInstance().play(track.videoId.c_str(), "");
-        return true;
+        return ESP_OK;
     }
 
     std::string streamUrl;
@@ -108,13 +121,43 @@ bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
         }
     }
 
+    // If prefetch is in progress for this track, wait briefly for it to complete
+    if (streamUrl.empty() && _prefetchInProgress) {
+        ESP_LOGI(TAG, "Prefetch in progress for '%s'; waiting for background task...", track.videoId.c_str());
+        int waitMs = 0;
+        while (_prefetchInProgress && waitMs < 3500) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            waitMs += 50;
+        }
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        if (_prefetchedVideoId == track.videoId && !_prefetchedUrl.empty()) {
+            ESP_LOGI(TAG, "Using pre-fetched stream URL for '%s' after %d ms wait", track.videoId.c_str(), waitMs);
+            streamUrl = _prefetchedUrl;
+            _prefetchedUrl.clear();
+            _prefetchedVideoId.clear();
+        }
+    }
+
     if (streamUrl.empty()) {
+        // Stop current playback immediately to clear network streaming, decoding, and Core 0 load
+        NexusPlayer::getInstance().stop();
+        ESP_LOGI(TAG, "Resolving WebM/Opus stream for '%s' [%s]...", track.title.c_str(), track.videoId.c_str());
+
         // Resolve stream URL and piggyback recommendation fetch in a single HTTP roundtrip
         esp_err_t err = _invidious.resolveWithRecommendations(track.videoId, streamUrl, recommendations, 8);
+        // Only retry with the standalone resolve on a transient failure; a NOT_FOUND
+        // (4xx) means the video itself is gone, so hammering it again is pointless.
+        if ((err != ESP_OK && err != ESP_ERR_NOT_FOUND) || (err == ESP_OK && streamUrl.empty())) {
+            ESP_LOGW(TAG, "resolveWithRecommendations failed for '%s' (%s), attempting standalone WebM/Opus resolve...",
+                     track.title.c_str(), esp_err_to_name(err));
+            err = _invidious.resolveWebMOpusStreamUrl(track.videoId, streamUrl);
+        }
         if (err != ESP_OK || streamUrl.empty()) {
-            ESP_LOGE(TAG, "Failed to resolve stream for '%s' (%s): %s",
+            bool gone = (err == ESP_ERR_NOT_FOUND);
+            ESP_LOGW(TAG, "%s stream for '%s' [%s] (%s)",
+                     gone ? "Unavailable" : "Failed to resolve",
                      track.title.c_str(), track.videoId.c_str(), esp_err_to_name(err));
-            return false;
+            return gone ? ESP_ERR_NOT_FOUND : ESP_FAIL;
         }
     }
 
@@ -132,14 +175,14 @@ bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
         populateRecommendations(recommendations, track.title);
     }
 
-    return true;
+    return ESP_OK;
 }
 
 bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
     if (track.videoId.empty()) return false;
 
     std::string streamUrl;
-    esp_err_t err = _invidious.resolveOpusUrl(track.videoId, streamUrl);
+    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(track.videoId, streamUrl);
     if (err != ESP_OK || streamUrl.empty()) {
         ESP_LOGE(TAG, "Fallback failed to resolve Opus stream for '%s'", track.title.c_str());
         return false;
@@ -167,15 +210,24 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
     NexusPlayer::getInstance().stop();
 
     std::vector<InvidiousTrack> tracks;
-    esp_err_t err = _invidious.searchList(query, tracks, 1);
+    esp_err_t err = _invidious.searchList(query, tracks, 5);
     if (err != ESP_OK || tracks.empty()) {
         ESP_LOGE(TAG, "Search failed for '%s': %s", query, esp_err_to_name(err));
         return false;
     }
 
     clearQueue();
-    ESP_LOGI(TAG, "Search for '%s' resolved to: '%s' by '%s' [%s]",
-             query, tracks[0].title.c_str(), tracks[0].author.c_str(), tracks[0].videoId.c_str());
+    ESP_LOGI(TAG, "Search for '%s' resolved to: '%s' by '%s' [%s] (found %zu tracks)",
+             query, tracks[0].title.c_str(), tracks[0].author.c_str(), tracks[0].videoId.c_str(), tracks.size());
+
+    // Enqueue remaining search results as upcoming tracks in queue
+    if (isAutoplayEnabled() && tracks.size() > 1) {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        for (size_t i = 1; i < tracks.size(); ++i) {
+            _queue.push_back(tracks[i]);
+        }
+        ESP_LOGI(TAG, "Queued %zu related search results for upcoming autoplay", tracks.size() - 1);
+    }
 
     return playTrack(tracks[0]);
 }
@@ -302,21 +354,35 @@ void MusicPlaybackService::prefetchNextTrack() {
         vTaskDelay(pdMS_TO_TICKS(150));
 
         std::string url;
-        esp_err_t err = self->_invidious.resolveOpusUrl(targetId, url);
+        esp_err_t err = self->_invidious.resolveWebMOpusStreamUrl(targetId, url);
 
-        std::lock_guard<std::recursive_mutex> lock(self->_serviceMutex);
-        if (self->_queueGeneration == gen && !self->_queue.empty() && self->_queue.front().videoId == targetId) {
-            if (err == ESP_OK && !url.empty()) {
-                self->_prefetchedVideoId = targetId;
-                self->_prefetchedUrl = url;
-                ESP_LOGI(TAG, "Asynchronously pre-fetched stream URL for upcoming track: %s", targetId.c_str());
+        // IMPORTANT: the lock MUST be released before vTaskDelete() below.
+        // vTaskDelete(NULL) never returns, so a lock_guard still in scope would
+        // skip its destructor and leak _serviceMutex forever (dead task holds it),
+        // which permanently hangs the next queue operation.
+        {
+            std::lock_guard<std::recursive_mutex> lock(self->_serviceMutex);
+            if (self->_queueGeneration == gen) {
+                if (err == ESP_OK && !url.empty()) {
+                    self->_prefetchedVideoId = targetId;
+                    self->_prefetchedUrl = url;
+                    ESP_LOGI(TAG, "Asynchronously pre-fetched stream URL for upcoming track: %s", targetId.c_str());
+                } else if (err == ESP_ERR_NOT_FOUND) {
+                    // Video is gone - evict it from the queue now so the next advance
+                    // doesn't stall on a track we already know is dead.
+                    for (auto it = self->_queue.begin(); it != self->_queue.end(); ++it) {
+                        if (it->videoId == targetId) { self->_queue.erase(it); break; }
+                    }
+                    ESP_LOGW(TAG, "Prefetch: track %s is unavailable - dropped from queue", targetId.c_str());
+                } else {
+                    ESP_LOGW(TAG, "Background prefetch failed for %s: %s", targetId.c_str(), esp_err_to_name(err));
+                }
             } else {
-                ESP_LOGW(TAG, "Background prefetch failed for %s: %s", targetId.c_str(), esp_err_to_name(err));
+                ESP_LOGD(TAG, "Prefetch for %s discarded (generation changed)", targetId.c_str());
             }
-        } else {
-            ESP_LOGD(TAG, "Prefetch for %s discarded (queue or generation changed)", targetId.c_str());
+            self->_prefetchInProgress = false;
         }
-        self->_prefetchInProgress = false;
+
         if (caps) {
             vTaskDeleteWithCaps(NULL);
         } else {
@@ -331,7 +397,10 @@ void MusicPlaybackService::prefetchNextTrack() {
         ctx,
         ThreadConfig::Priority::LOW,
         NULL,
-        ThreadConfig::CORE_NETWORK,
+        // Not pinned to Core 0: the HTTPS TLS handshake (ECDSA verify) is a heavy
+        // CPU burst that would otherwise pile onto the WiFi + Opus-decode core and
+        // starve IDLE0. Let the scheduler place it on whichever core has slack.
+        ThreadConfig::CORE_ANY,
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
 
@@ -344,7 +413,7 @@ void MusicPlaybackService::prefetchNextTrack() {
             ctx,
             ThreadConfig::Priority::LOW,
             NULL,
-            ThreadConfig::CORE_NETWORK
+            ThreadConfig::CORE_ANY
         );
     }
 
@@ -358,13 +427,23 @@ void MusicPlaybackService::prefetchNextTrack() {
 
 void MusicPlaybackService::checkAndReplenishQueue() {
     std::string baseTrackId;
+    std::string baseAuthor;
+    std::string baseTitle;
     uint32_t generation = 0;
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         if (!isAutoplayEnabled() || _replenishInProgress) return;
         if (_queue.size() > QUEUE_LOW_WATERMARK) return;
 
-        baseTrackId = !_queue.empty() ? _queue.back().videoId : _currentTrack.videoId;
+        if (!_queue.empty()) {
+            baseTrackId = _queue.back().videoId;
+            baseAuthor = _queue.back().author;
+            baseTitle = _queue.back().title;
+        } else {
+            baseTrackId = _currentTrack.videoId;
+            baseAuthor = _currentTrack.author;
+            baseTitle = _currentTrack.title;
+        }
         if (baseTrackId.empty()) return;
 
         _replenishInProgress = true;
@@ -374,15 +453,19 @@ void MusicPlaybackService::checkAndReplenishQueue() {
     struct ReplenishContext {
         MusicPlaybackService* self;
         std::string baseId;
+        std::string baseAuthor;
+        std::string baseTitle;
         uint32_t generation;
         bool withCaps;
     };
-    auto* ctx = new ReplenishContext{this, baseTrackId, generation, true};
+    auto* ctx = new ReplenishContext{this, baseTrackId, baseAuthor, baseTitle, generation, true};
 
     auto taskFn = [](void* arg) {
         auto* c = static_cast<ReplenishContext*>(arg);
         MusicPlaybackService* self = c->self;
         std::string baseId = c->baseId;
+        std::string baseAuthor = c->baseAuthor;
+        std::string baseTitle = c->baseTitle;
         uint32_t gen = c->generation;
         bool caps = c->withCaps;
         delete c;
@@ -390,8 +473,25 @@ void MusicPlaybackService::checkAndReplenishQueue() {
         // Yield CPU to let concurrent audio startup settle
         vTaskDelay(pdMS_TO_TICKS(200));
 
+        // Bail out of the (potentially slow, multi-request) fallback chain the moment
+        // a user action changes the queue - each call below serializes on the shared
+        // Invidious HTTP mutex and would otherwise stall a pending track change.
+        auto stale = [&]() {
+            std::lock_guard<std::recursive_mutex> lock(self->_serviceMutex);
+            return self->_queueGeneration != gen;
+        };
+
         std::vector<InvidiousTrack> recs;
         esp_err_t err = self->_invidious.getRecommendedTracks(baseId, recs, 8);
+        if ((err != ESP_OK || recs.empty()) && !baseAuthor.empty() && !stale()) {
+            ESP_LOGI(TAG, "Recommended videos not returned for %s (%s). Falling back to search for artist '%s'...",
+                     baseId.c_str(), esp_err_to_name(err), baseAuthor.c_str());
+            err = self->_invidious.searchList(baseAuthor, recs, 8);
+        }
+        if ((err != ESP_OK || recs.empty()) && !baseTitle.empty() && !stale()) {
+            ESP_LOGI(TAG, "Falling back to search for title '%s'...", baseTitle.c_str());
+            err = self->_invidious.searchList(baseTitle, recs, 8);
+        }
 
         bool needPrefetch = false;
         {
@@ -438,7 +538,7 @@ void MusicPlaybackService::checkAndReplenishQueue() {
         ctx,
         ThreadConfig::Priority::LOW,
         NULL,
-        ThreadConfig::CORE_NETWORK,
+        ThreadConfig::CORE_ANY,  // keep heavy TLS crypto off the WiFi + decode core
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
 
@@ -451,7 +551,7 @@ void MusicPlaybackService::checkAndReplenishQueue() {
             ctx,
             ThreadConfig::Priority::LOW,
             NULL,
-            ThreadConfig::CORE_NETWORK
+            ThreadConfig::CORE_ANY
         );
     }
 
@@ -465,17 +565,47 @@ void MusicPlaybackService::checkAndReplenishQueue() {
 
 bool MusicPlaybackService::next() {
     ESP_LOGI(TAG, "Advancing to next track");
-    InvidiousTrack nextTrack;
+
+    // A user-initiated skip supersedes any background prefetch/replenish already
+    // in flight - mark their results stale so they don't clobber the new track.
+    invalidateBackgroundWork();
+
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-        if (!_queue.empty()) {
-            nextTrack = _queue.front();
-            _queue.pop_front();
+        if (!_currentTrack.videoId.empty() && (_history.empty() || _history.back().videoId != _currentTrack.videoId)) {
+            _history.push_back(_currentTrack);
+            if (_history.size() > 20) {
+                _history.erase(_history.begin());
+            }
         }
     }
 
-    if (!nextTrack.videoId.empty()) {
-        return playTrack(nextTrack);
+    return advanceToNextPlayable();
+}
+
+bool MusicPlaybackService::advanceToNextPlayable() {
+    for (int skips = 0; skips < MAX_SKIP_ON_ADVANCE; ++skips) {
+        InvidiousTrack nextTrack;
+        {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            if (!_queue.empty()) {
+                nextTrack = _queue.front();
+                _queue.pop_front();
+            }
+        }
+        if (nextTrack.videoId.empty()) break;  // queue drained; fall through to autoplay refill
+
+        esp_err_t rc = playTrackInternal(nextTrack);
+        if (rc == ESP_OK) return true;
+        if (rc == ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "Track '%s' [%s] unavailable - skipping to next queued track",
+                     nextTrack.title.c_str(), nextTrack.videoId.c_str());
+            continue;  // dead video: try the next one
+        }
+        // Transient network/instance failure: don't burn through the queue, stop here.
+        ESP_LOGE(TAG, "Transient error advancing to '%s'; halting playback", nextTrack.title.c_str());
+        NexusPlayer::getInstance().stop();
+        return false;
     }
 
     if (isAutoplayEnabled()) {
@@ -490,51 +620,71 @@ bool MusicPlaybackService::next() {
             std::vector<InvidiousTrack> recTracks;
             esp_err_t err = _invidious.getRecommendedTracks(currentId, recTracks, 8);
             if (err == ESP_OK && !recTracks.empty()) {
-                InvidiousTrack first;
                 {
                     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
                     for (const auto& t : recTracks) {
                         if (!isTrackInQueueOrHistory(t.videoId)) {
-                            if (first.videoId.empty()) {
-                                first = t;
-                            } else {
-                                _queue.push_back(t);
-                            }
+                            _queue.push_back(t);
                         }
                     }
                 }
-                if (!first.videoId.empty()) {
-                    ESP_LOGI(TAG, "Autoplay emergency populated tracks (playing: '%s')", first.title.c_str());
-                    return playTrack(first);
+                // Retry the skip loop now that the queue has fresh candidates.
+                for (int skips = 0; skips < MAX_SKIP_ON_ADVANCE; ++skips) {
+                    InvidiousTrack cand;
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+                        if (_queue.empty()) break;
+                        cand = _queue.front();
+                        _queue.pop_front();
+                    }
+                    esp_err_t rc = playTrackInternal(cand);
+                    if (rc == ESP_OK) {
+                        ESP_LOGI(TAG, "Autoplay emergency playing: '%s'", cand.title.c_str());
+                        return true;
+                    }
+                    if (rc != ESP_ERR_NOT_FOUND) break;
+                    ESP_LOGW(TAG, "Autoplay candidate '%s' unavailable - skipping", cand.videoId.c_str());
                 }
             }
         }
     }
 
-    ESP_LOGI(TAG, "No more tracks in queue or recommendations");
+    ESP_LOGI(TAG, "No more playable tracks in queue or recommendations");
     NexusPlayer::getInstance().stop();
     return false;
 }
 
 bool MusicPlaybackService::previous() {
     ESP_LOGI(TAG, "Going back to previous track");
-    InvidiousTrack prevTrack;
-    {
-        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-        if (_history.empty()) {
-            ESP_LOGW(TAG, "No track history available");
-            return false;
+    invalidateBackgroundWork();
+
+    for (int skips = 0; skips < MAX_SKIP_ON_ADVANCE; ++skips) {
+        InvidiousTrack prevTrack;
+        {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            if (_history.empty()) {
+                ESP_LOGW(TAG, "No track history available");
+                return false;
+            }
+            prevTrack = _history.back();
+            _history.pop_back();
+
+            if (skips == 0 && !_currentTrack.videoId.empty()) {
+                _queue.push_front(_currentTrack);
+            }
         }
 
-        prevTrack = _history.back();
-        _history.pop_back();
-
-        if (!_currentTrack.videoId.empty()) {
-            _queue.push_front(_currentTrack);
+        esp_err_t rc = playTrackInternal(prevTrack);
+        if (rc == ESP_OK) return true;
+        if (rc == ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "Previous track '%s' [%s] unavailable - going further back",
+                     prevTrack.title.c_str(), prevTrack.videoId.c_str());
+            continue;
         }
+        NexusPlayer::getInstance().stop();
+        return false;
     }
-
-    return playTrack(prevTrack);
+    return false;
 }
 
 void MusicPlaybackService::pause() {

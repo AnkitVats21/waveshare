@@ -22,7 +22,12 @@ public:
 
     esp_err_t search(const std::string& query, InvidiousTrack& outTrack);
     esp_err_t searchList(const std::string& query, std::vector<InvidiousTrack>& outTracks, size_t limit = 10);
-    esp_err_t resolveOpusUrl(const std::string& videoId, std::string& outUrl);
+    // Resolves the direct WebM container audio stream (containing Opus codec frames) from Invidious/YouTube
+    esp_err_t resolveWebMOpusStreamUrl(const std::string& videoId, std::string& outUrl);
+    // Backward-compatible alias for resolveWebMOpusStreamUrl
+    esp_err_t resolveOpusUrl(const std::string& videoId, std::string& outUrl) {
+        return resolveWebMOpusStreamUrl(videoId, outUrl);
+    }
     esp_err_t resolveWithRecommendations(const std::string& videoId, 
                                          std::string& outUrl, 
                                          std::vector<InvidiousTrack>& outRecommendations,

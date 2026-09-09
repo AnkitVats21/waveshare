@@ -61,6 +61,9 @@ public:
     void onPlaybackError(const char* songId, int errorCode) override;
 
     static constexpr size_t QUEUE_LOW_WATERMARK = 2;
+    // Upper bound on consecutive unavailable tracks to skip in a single advance
+    // before giving up, so a run of dead video IDs can't spin forever.
+    static constexpr int MAX_SKIP_ON_ADVANCE = 6;
 
 private:
     MusicPlaybackService();
@@ -83,6 +86,17 @@ private:
     std::string _prefetchedUrl;
 
     bool playTrack(const InvidiousTrack& track);
+    // Resolve + start a track. Returns:
+    //   ESP_OK            - playback started
+    //   ESP_ERR_NOT_FOUND - video is gone/private/region-blocked; caller should skip it
+    //   ESP_FAIL          - transient network/instance error; caller should stop and let retry/backoff handle it
+    esp_err_t playTrackInternal(const InvidiousTrack& track);
+    // Advance to the next playable track, skipping up to MAX_SKIP_ON_ADVANCE
+    // consecutive unavailable entries. Handles autoplay/recommendation refill.
+    bool advanceToNextPlayable();
+    // Bump the queue generation so in-flight background prefetch/replenish tasks
+    // discard their results instead of racing a user-initiated track change.
+    void invalidateBackgroundWork();
     bool playTrackFallback(const InvidiousTrack& track);
     bool resolveAndPlayImmediate(const char* query);
     void prefetchNextTrack();

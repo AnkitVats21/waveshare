@@ -18,10 +18,14 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
 
             auto taskFn = [](void* arg) {
                 auto* c = static_cast<PlayCtx*>(arg);
-                std::string q = std::move(c->query);
                 bool caps = c->withCaps;
-                delete c;
-                MusicPlaybackService::getInstance().play(q.c_str());
+                // Inner scope: q must be destroyed before vTaskDelete(), which
+                // never returns and would otherwise leak the string's heap buffer.
+                {
+                    std::string q = std::move(c->query);
+                    delete c;
+                    MusicPlaybackService::getInstance().play(q.c_str());
+                }
                 if (caps) {
                     vTaskDeleteWithCaps(NULL);
                 } else {
@@ -64,10 +68,12 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
 
             auto taskFn = [](void* arg) {
                 auto* c = static_cast<PlayCtx*>(arg);
-                std::string q = std::move(c->query);
                 bool caps = c->withCaps;
-                delete c;
-                MusicPlaybackService::getInstance().playNext(q.c_str());
+                {
+                    std::string q = std::move(c->query);
+                    delete c;
+                    MusicPlaybackService::getInstance().playNext(q.c_str());
+                }
                 if (caps) {
                     vTaskDeleteWithCaps(NULL);
                 } else {

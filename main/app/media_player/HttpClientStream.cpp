@@ -73,6 +73,13 @@ bool HttpClientStream::open(const std::string& url) {
 
     esp_http_client_set_header(_clientHandle, "User-Agent", "Mozilla/5.0 (ESP32-S3 Waveshare)");
 
+    // YouTube's googlevideo CDN throttles plain GETs on `videoplayback` URLs to
+    // ~32 KB/s (barely above the audio bitrate - causes underruns and 2-minute
+    // buffer fills). Sending an open-ended Range header makes it serve at full
+    // link speed (verified ~380x faster). Harmless for non-CDN hosts, which just
+    // return 200 and ignore it or answer 206 from offset 0.
+    esp_http_client_set_header(_clientHandle, "Range", "bytes=0-");
+
     // Open the connection and fetch headers only. The body is then consumed
     // incrementally via esp_http_client_read() in the network task.
     esp_err_t err = esp_http_client_open(_clientHandle, 0);

@@ -101,7 +101,7 @@ esp_err_t InvidiousClient::httpGet(const std::string& pathWithQuery, std::string
     config.url = url.c_str();
     config.event_handler = httpEventHandler;
     config.user_data = &outResponse;
-    config.timeout_ms = 25000;
+    config.timeout_ms = 12000;
     config.buffer_size = 4096;
     config.crt_bundle_attach = esp_crt_bundle_attach;
     config.skip_cert_common_name_check = true;
@@ -123,6 +123,15 @@ esp_err_t InvidiousClient::httpGet(const std::string& pathWithQuery, std::string
     }
 
     ESP_LOGW(TAG, "Invidious request to %s failed (err=%s, status=%d)", host.c_str(), esp_err_to_name(err), status);
+
+    // A 4xx means "this request/video", not "this instance": the resource is gone,
+    // private, or region-blocked. Do NOT rotate the instance for these - just report
+    // it upstream so the player can skip the track.
+    if (err == ESP_OK && status >= 400 && status < 500) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    // Transport error, timeout, or 5xx: the instance itself is unhealthy. Rotate.
     if (_forcedHost.empty()) {
         InvidiousInstanceResolver::getInstance().markInstanceFailed();
     }
@@ -284,7 +293,8 @@ esp_err_t InvidiousClient::resolveWithRecommendations(
     }
 
     outUrl = bestUrl;
-    ESP_LOGI(TAG, "Resolved stream URL (bitrate=%d, length=%zu)", bestBitrate, outUrl.length());
+    ESP_LOGI(TAG, "Resolved WebM/Opus stream URL for videoId %s (bitrate=%d, length=%zu)",
+             videoId.c_str(), bestBitrate, outUrl.length());
 
     // Extract recommendations if available
     JsonArray recs = doc["recommendedVideos"].as<JsonArray>();
@@ -311,7 +321,7 @@ esp_err_t InvidiousClient::resolveWithRecommendations(
     return ESP_OK;
 }
 
-esp_err_t InvidiousClient::resolveOpusUrl(const std::string& videoId, std::string& outUrl) {
+esp_err_t InvidiousClient::resolveWebMOpusStreamUrl(const std::string& videoId, std::string& outUrl) {
     std::vector<InvidiousTrack> dummy;
     return resolveWithRecommendations(videoId, outUrl, dummy, 0);
 }

@@ -124,15 +124,17 @@ void StreamManager::runStreamLoop() {
         }
     }
 
-    // Wrap-up and notify downstream task (AudioEngine or StorageManager)
-    if (error_occurred) {
-        header->type = ChunkType::ERROR;
-        header->size = 0;
-        _bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
-    } else {
-        header->type = ChunkType::EOF_STREAM;
-        header->size = 0;
-        _bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
+    // Wrap-up and notify downstream task (AudioEngine or StorageManager).
+    // Bounded send: never block teardown on a full downstream ring buffer. If the
+    // consumer is being torn down it will flush anyway, and a dropped EOF marker is
+    // harmless. A portMAX_DELAY here previously deadlocked shutdown: stopStreaming()
+    // busy-waits for this task to exit while the consumer is stopped/flushed only
+    // *after* stopStreaming() returns.
+    header->type = error_occurred ? ChunkType::ERROR : ChunkType::EOF_STREAM;
+    header->size = 0;
+    for (int i = 0; i < 50; ++i) {
+        if (_bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader), pdMS_TO_TICKS(20))) break;
+        if (!_isStreaming) break;  // teardown in progress - consumer will flush
     }
 
     ESP_LOGI(TAG, "Network Task wrap-up: error=%d", error_occurred ? 1 : 0);

@@ -18,6 +18,9 @@ public:
     
     void start();
     void stop();
+    // Block (bounded) until the decode task has fully exited and released any
+    // ring-buffer items it held. Returns true if it stopped within timeoutMs.
+    bool waitUntilStopped(uint32_t timeoutMs = 300);
     void pause();
     void resume();
     bool isPlaying() const { return _isPlaying; }

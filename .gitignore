@@ -23,6 +23,7 @@ build/
 *.a
 *.out
 *.exe # For any host-side utilities compiled on Windows
+.direnv/
 
 # ESP-IDF specific build outputs
 *.bin
@@ -85,3 +86,6 @@ gemini_skills_generated.h
 gemini_skills_generated.cpp
 
 refactor_phases/
+
+# Antigravity agent customizations
+.agents/

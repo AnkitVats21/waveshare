@@ -293,24 +293,34 @@ void NexusPlayer::stop() {
 }
 
 void NexusPlayer::stopActivePipelines() {
-    // 1. Stop streaming from network
-    _streamManager.stopStreaming();
+    auto& bm = BufferManager::getInstance();
 
-    // 2. Unblock AudioEngine decoder task from waiting on PLAYER_BUF
-    AudioChunkHeader eof_header = {ChunkType::EOF_STREAM, 0};
-    BufferManager::getInstance().send(_playbackId, &eof_header, sizeof(eof_header));
-    BufferManager::getInstance().send(_storageId, &eof_header, sizeof(eof_header));
-
-    // 3. Stop AudioEngine
+    // 1. Signal the decoder to stop, then clear the rings it feeds on/into so it
+    //    can't be wedged by output backpressure (its throttle) or a full input.
     _audioEngine.stop();
+    bm.flush(Buffers::MEDIA_RX_BUF);   // release decoder's PCM-output backpressure
+    bm.flush(_playbackId);             // discard pending compressed audio, make room
+    bm.flush(_storageId);
+
+    // 2. Wake a decoder that's parked on an empty input ring so it sees the stop
+    //    flag and exits (flush alone does not unblock a blocked reader).
+    AudioChunkHeader eof_header = {ChunkType::EOF_STREAM, 0};
+    bm.send(_playbackId, &eof_header, sizeof(eof_header));
+    bm.send(_storageId, &eof_header, sizeof(eof_header));
+    if (!_audioEngine.waitUntilStopped()) {
+        ESP_LOGW(TAG, "Decode task did not stop within timeout");
+    }
+
+    // 3. Network task can now finish its bounded EOF write into an empty ring and exit.
+    _streamManager.stopStreaming();
 
     // 4. Stop and clean up SD Reader/Writer tasks and active file streams
     _storageManager.closeActiveFile();
 
-    // 5. Flush all buffers
-    BufferManager::getInstance().flush(_playbackId);
-    BufferManager::getInstance().flush(_storageId);
-    BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
+    // 5. Final flush - clear the EOF markers and anything the network task left.
+    bm.flush(_playbackId);
+    bm.flush(_storageId);
+    bm.flush(Buffers::MEDIA_RX_BUF);
 }
 
 void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap) {
