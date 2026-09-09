@@ -2,6 +2,7 @@
 #include "services/storage/StorageService.h"
 #include "services/BufferManager.h"
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/AudioOrchestrator.h"
 #include "app/media_player/WavPlayer.h"
 // #include "app/audio/AudioAlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
@@ -141,6 +142,8 @@ void AlarmService::triggerAlarm(const Alarm& alarm) {
     m_playing_fallback_alarm = false;
     strncpy(m_active_tone_file, alarm.tone_file, sizeof(m_active_tone_file) - 1);
 
+    AudioOrchestrator::getInstance().notifyAlarmStarted();
+
     EmbeddedSysDb::getInstance().mutate([alarm](SystemState& s) {
         s.alarm.playing = true;
         s.alarm.active_alarm_id = alarm.id;
@@ -178,12 +181,13 @@ void AlarmService::stopActiveAlarm() {
         WavPlayer::getInstance().stop();
         m_playing_alarm = false;
         m_playing_fallback_alarm = false;
+        AudioOrchestrator::getInstance().notifyAlarmEnded();
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.alarm.playing = false;
             s.alarm.stop_requested = true;
             s.alarm.active_alarm_id = 0;
         });
-        BufferManager::getInstance().flush(Buffers::SPK_RX_BUF);
+        BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
     }
 }
 
@@ -199,6 +203,7 @@ void AlarmService::onStateChanged(ComponentMask changed, const SystemState& snap
         if (m_playing_alarm && !m_playing_fallback_alarm && !snap.audio.wav_playing) {
             ESP_LOGI(TAG, "onStateChanged: WAV playback finished. Clearing alarm state.");
             m_playing_alarm = false;
+            AudioOrchestrator::getInstance().notifyAlarmEnded();
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                 s.alarm.playing = false;
                 s.alarm.active_alarm_id = 0;

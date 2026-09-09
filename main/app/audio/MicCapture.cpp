@@ -8,7 +8,6 @@
 
 // Defines + registers the MIC_TX_BUF ring buffer with BufferManager
 DEFINE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
-DEFINE_BUFFER(RTP_MIC_BUF, "rtp_mic", 64 * 1024)
 
 #include "common/thread_config.h"
 
@@ -65,7 +64,6 @@ bool MicCaptureTask::processCapture(int16_t* raw_buffer, int16_t* pcm_buffer, si
 
     // Push mono PCM to the PSRAM streaming ring buffer via BufferManager
     BufferManager::getInstance().send(Buffers::MIC_TX_BUF, pcm_buffer, chunk_bytes);
-    BufferManager::getInstance().send(Buffers::RTP_MIC_BUF, pcm_buffer, chunk_bytes);
     return true;
   } else {
     vTaskDelay(pdMS_TO_TICKS(10));

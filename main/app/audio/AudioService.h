@@ -1,10 +1,8 @@
 #pragma once
 
 #include "common/ReactorTask.h"
-#include "common/thread_config.h"
 #include "common/hw_types.h"
 #include "app/wake_word/IWakeWordListener.h"
-#include "services/BufferManager.h"
 #include <memory>
 
 class AudioHal;
@@ -22,7 +20,6 @@ class SpeakerPlaybackTask;
  * Owns:
  *   WakeWordEngine lifecycle (start/stop/pause/resume)
  *   SpeakerPlaybackTask lifecycle (mixing & I2S playback)
- *   AudioAlertPlayer async dispatch
  *
  * Injected:
  *   AudioHal& — hardware driver (I2S + codecs)

@@ -18,11 +18,6 @@ DECLARE_BUFFER(VOICE_RX_BUF, "spk_voice", 256 * 1024)
 DECLARE_BUFFER(ALERT_RX_BUF, "spk_alert", 64 * 1024)
 DECLARE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 
-namespace Buffers {
-    // Backward compatibility alias for legacy references
-    static constexpr auto& SPK_RX_BUF = MEDIA_RX_BUF;
-}
-
 #include "common/TaskBase.h"
 #include "common/thread_config.h"
 
@@ -34,15 +29,9 @@ public:
             8 * 1024,
             ThreadConfig::Priority::SPEAKER_PLAYBACK,
             ThreadConfig::CORE_AUDIO
-        }) {
-      m_pause_sem = xSemaphoreCreateBinary();
-  }
+        }) {}
 
-  ~SpeakerPlaybackTask() override {
-      if (m_pause_sem) {
-          vSemaphoreDelete(m_pause_sem);
-      }
-  }
+  ~SpeakerPlaybackTask() override = default;
 
   /**
    * @brief Start the speaker playback task
@@ -54,19 +43,6 @@ public:
    * @brief Cleanly stop the task
    */
   void stop() override;
-
-  /**
-   * @brief Pause/resume physical speaker playback calls during clock switches.
-   */
-  void pauseHardware()  {
-      m_hw_valid = false;
-      if (m_pause_sem) {
-          xSemaphoreTake(m_pause_sem, pdMS_TO_TICKS(100)); // wait up to 100ms for ack
-      }
-  }
-  void resumeHardware() { m_hw_paused_ack = false; m_hw_valid = true; }
-
-  bool isHardwarePaused() const { return m_hw_paused_ack; }
 
   /**
    * @brief Set target software ducking gain on the Media track with smooth slew-rate ramping.
@@ -109,11 +85,8 @@ private:
   static constexpr size_t   MAX_SILENCE_SAMPLES       = 512;
 
   // ── State ─────────────────────────────────────────────────────────────────
-  volatile bool             m_hw_valid          = true;
-  volatile bool             m_hw_paused_ack     = false;
   bool                      m_buffering         = true;
   esp_codec_dev_handle_t    m_device            = nullptr;
-  SemaphoreHandle_t         m_pause_sem         = nullptr;
 
   // ── Mixer Gains ───────────────────────────────────────────────────────────
   volatile float            m_media_gain        = 1.0f;

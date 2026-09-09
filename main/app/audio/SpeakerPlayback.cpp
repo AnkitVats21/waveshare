@@ -110,20 +110,6 @@ void SpeakerPlaybackTask::run() {
   while (m_running) {
     vTaskDelayUntil(&last_wake, wake_period_ticks);
 
-    if (!m_hw_valid) {
-      if (!m_hw_paused_ack) {
-        m_hw_paused_ack = true;
-        if (m_pause_sem) {
-          xSemaphoreGive(m_pause_sem);
-        }
-      }
-      last_wake = xTaskGetTickCount();
-      wake_period_ticks = ticksForAtLeastOnePeriod(EMPTY_FILL_MS);
-      sustained_empty = 0;
-      continue;
-    }
-    m_hw_paused_ack = false;
-
     auto snap = EmbeddedSysDb::getInstance().snapshot();
 
     bool has_voice = false;
