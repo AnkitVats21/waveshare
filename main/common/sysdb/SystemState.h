@@ -78,7 +78,7 @@ namespace BIT_MQTT {
 // SystemState — the single shared in-memory database
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define NATIVE_SAMPLE_RATE 32000
+#define NATIVE_SAMPLE_RATE 44100
 
 #define SYSTEM_FIELDS \
     X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED) \

@@ -163,28 +163,32 @@ void WakeWordEngine::detectTaskBridge(void *arg) {
 
 
 // ============================================================================
-// downsample_2to1 — convert 32kHz multi-channel interleaved audio to 16kHz
+// downsample_multi_channel — convert 44.1kHz multi-channel interleaved audio to 16kHz
 //
-// Simple 2:1 downsampling via moving average of consecutive sample pairs.
+// Fast linear interpolation across interleaved multi-channel frames.
 // ============================================================================
-static void downsample_2to1(const int16_t* src, int16_t* dst,
-                            int src_samples_per_ch, int num_channels,
-                            int dst_samples_per_ch) {
-    for (int ch = 0; ch < num_channels; ch++) {
-        for (int i = 0; i < dst_samples_per_ch; i++) {
-            int idx0 = (2 * i) * num_channels + ch;
-            int idx1 = (2 * i + 1) * num_channels + ch;
-            dst[i * num_channels + ch] = (int16_t)(((int32_t)src[idx0] + (int32_t)src[idx1]) / 2);
+static void downsample_multi_channel(const int16_t* src, int16_t* dst,
+                                     int src_samples_per_ch, int num_channels,
+                                     int dst_samples_per_ch) {
+    if (src_samples_per_ch <= 0 || dst_samples_per_ch <= 0) return;
+    float ratio = static_cast<float>(src_samples_per_ch) / static_cast<float>(dst_samples_per_ch);
+    for (int i = 0; i < dst_samples_per_ch; i++) {
+        float src_pos = i * ratio;
+        int idx = static_cast<int>(src_pos);
+        float frac = src_pos - idx;
+        int next_idx = (idx + 1 < src_samples_per_ch) ? (idx + 1) : idx;
+        for (int ch = 0; ch < num_channels; ch++) {
+            float s0 = src[idx * num_channels + ch];
+            float s1 = src[next_idx * num_channels + ch];
+            dst[i * num_channels + ch] = static_cast<int16_t>(s0 + frac * (s1 - s0));
         }
     }
 }
 
 // ============================================================================
-// feedTask: read 4-ch mic data @ 32kHz → downsample 2:1 → feed AFE @ 16kHz
+// feedTask: read 4-ch mic data @ 44.1kHz → downsample → feed AFE @ 16kHz
 //
-// The I2S hardware runs at 32kHz permanently.  The AFE requires 16kHz input.
-// For each feed() call we read (chunksize * 2) samples at 32kHz and
-// downsample to exactly chunksize samples at 16kHz before feeding.
+// The I2S hardware runs at 44.1kHz.  The AFE requires 16kHz input.
 // ============================================================================
 
 void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
@@ -200,8 +204,10 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         return;
     }
 
-    // Capture buffer: read 2x of the AFE chunksize (32kHz -> 16kHz)
-    int hw_chunksize    = afe_chunksize * 2;
+    // Capture buffer: read proportional samples for 44.1kHz (44100 / 16000 * afe_chunksize)
+    constexpr uint32_t HW_RATE  = 44100;
+    constexpr uint32_t AFE_RATE = 16000;
+    int hw_chunksize    = (afe_chunksize * HW_RATE + AFE_RATE - 1) / AFE_RATE;
     int hw_buf_bytes    = hw_chunksize * (int)sizeof(int16_t) * feed_channel;
 
     // 16kHz downsampled buffer: exactly what the AFE expects
@@ -222,7 +228,7 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         return;
     }
 
-    ESP_LOGI(TAG, "feedTask: 32kHz→16kHz (2:1) downsample active (hw_chunk=%d, afe_chunk=%d, ch=%d)",
+    ESP_LOGI(TAG, "feedTask: 44.1kHz→16kHz downsample active (hw_chunk=%d, afe_chunk=%d, ch=%d)",
              hw_chunksize, afe_chunksize, feed_channel);
 
     esp_task_wdt_add(nullptr);
@@ -260,8 +266,8 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
             std::memset(hw_buff, 0, hw_buf_bytes);
         }
 
-        // Downsample 32kHz -> 16kHz (2:1) across all channels
-        downsample_2to1(hw_buff, afe_buff, hw_chunksize, feed_channel, afe_chunksize);
+        // Downsample 44.1kHz -> 16kHz across all channels
+        downsample_multi_channel(hw_buff, afe_buff, hw_chunksize, feed_channel, afe_chunksize);
 
         // Feed 16kHz data to AFE SR engine
         m_afe_handle->feed(afe_data, afe_buff);

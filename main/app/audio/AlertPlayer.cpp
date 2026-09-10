@@ -135,7 +135,7 @@ void AlertPlayer::processAlert(AlertType type) {
             case ALERT_ERROR:
                 playTone(440.0f, 9000, 60, 10);
                 {
-                    constexpr uint32_t GAP_SAMPLES = (32000 * 40) / 1000;
+                    constexpr uint32_t GAP_SAMPLES = (44100 * 40) / 1000;
                     int16_t silence[GAP_SAMPLES] = {};
                     BufferManager::getInstance().send(Buffers::ALERT_RX_BUF, silence, GAP_SAMPLES * sizeof(int16_t), pdMS_TO_TICKS(10));
                 }
@@ -184,7 +184,7 @@ bool AlertPlayer::playAlertFile(const char* path) {
         if (!decoder) {
             decoder = AudioDecoderFactory::createDecoder(read_buf + current_offset, payload_len - current_offset);
             if (decoder) {
-                decoder->init(32000, 1);
+                decoder->init(44100, 1);
             } else {
                 break;
             }
@@ -220,7 +220,7 @@ bool AlertPlayer::playAlertFile(const char* path) {
             }
 
             uint32_t src_rate = decoder->getSourceSampleRate();
-            uint32_t dst_rate = 32000;
+            uint32_t dst_rate = 44100;
             size_t resampled_count = (mono_samples * dst_rate) / src_rate;
             if (resampled_count > MAX_SAMPLES) resampled_count = MAX_SAMPLES;
 
@@ -256,11 +256,11 @@ bool AlertPlayer::playAlertFile(const char* path) {
 }
 
 void AlertPlayer::playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms) {
-    constexpr uint32_t SAMPLE_RATE = 32000;
+    constexpr uint32_t SAMPLE_RATE = 44100;
     const uint32_t total_samples = (SAMPLE_RATE * duration_ms) / 1000;
     const uint32_t fade_samples  = (SAMPLE_RATE * fade_ms) / 1000;
 
-    constexpr uint32_t BLOCK = 640; // 20 ms @ 32 kHz
+    constexpr uint32_t BLOCK = 882; // 20 ms @ 44.1 kHz
     int16_t buf[BLOCK];
 
     uint32_t sent = 0;

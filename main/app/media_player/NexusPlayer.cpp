@@ -66,7 +66,7 @@ bool NexusPlayer::begin() {
     }
 
     AudioOrchestrator::getInstance().addObserver(this);
-    return _audioEngine.initialize(32000, 1);
+    return _audioEngine.initialize(44100, 1);
 }
 
 void NexusPlayer::addObserver(IPlaybackObserver* observer) {

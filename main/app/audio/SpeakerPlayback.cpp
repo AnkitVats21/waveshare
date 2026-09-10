@@ -21,17 +21,19 @@ size_t samplesForDurationMs(uint32_t sample_rate, uint32_t duration_ms) {
   return static_cast<size_t>(samples);
 }
 
-void upsample_3to4(const int16_t* src, int16_t* dst, int src_len) {
-    int dst_len = (src_len * 4) / 3;
+void resample_linear(const int16_t* src, int src_len, int16_t* dst, int dst_len) {
+    if (src_len <= 0 || dst_len <= 0) return;
+    float ratio = static_cast<float>(src_len) / static_cast<float>(dst_len);
     for (int j = 0; j < dst_len; j++) {
-        int i_in = (j * 3) / 4;
-        int rem = (j * 3) % 4;
-        if (rem == 0 || (i_in + 1) >= src_len) {
-            dst[j] = src[i_in];
+        float src_pos = j * ratio;
+        int idx = static_cast<int>(src_pos);
+        float frac = src_pos - idx;
+        if (idx + 1 < src_len) {
+            float s0 = src[idx];
+            float s1 = src[idx + 1];
+            dst[j] = static_cast<int16_t>(s0 + frac * (s1 - s0));
         } else {
-            int32_t s0 = src[i_in];
-            int32_t s1 = src[i_in + 1];
-            dst[j] = (int16_t)(((4 - rem) * s0 + rem * s1) >> 2);
+            dst[j] = src[idx];
         }
     }
 }
@@ -55,9 +57,9 @@ void SpeakerPlaybackTask::stop() {
 // ─────────────────────────────────────────────────────────────────────────────
 // run() — Multi-Track Real-Time Audio Mixer & Output Loop
 //
-// Mixes Voice (Gemini 24kHz upsampled to 32kHz), Alert (32kHz chimes/tones),
-// and Media (32kHz music) with smooth ducking gain interpolation.
-// Output format to codec: 32 kHz 32-bit stereo.
+// Mixes Voice (Gemini 24kHz upsampled to 44.1kHz), Alert (44.1kHz chimes/tones),
+// and Media (44.1kHz music) with smooth ducking gain interpolation.
+// Output format to codec: 44.1 kHz 32-bit stereo.
 // ─────────────────────────────────────────────────────────────────────────────
 void SpeakerPlaybackTask::run() {
   esp_codec_dev_handle_t device = m_device;
@@ -67,7 +69,7 @@ void SpeakerPlaybackTask::run() {
     return;
   }
 
-  LOGI_HAL("Speaker Audio Multi-Track Mixer Active (32000 Hz) — Voice/Alert/Media.");
+  LOGI_HAL("Speaker Audio Multi-Track Mixer Active (44100 Hz) — Voice/Alert/Media.");
 
   int32_t *expanded_buffer = (int32_t *)heap_caps_malloc(
       EXPANDED_BUF_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -97,7 +99,8 @@ void SpeakerPlaybackTask::run() {
 
   uint32_t sustained_empty = 0;
 
-  constexpr uint32_t NATIVE_RATE = 32000;
+  constexpr uint32_t NATIVE_RATE = 44100;
+  constexpr uint32_t VOICE_SRC_RATE = 24000;
   const size_t target_samples = samplesForDurationMs(NATIVE_RATE, TARGET_FRAME_MS);
 
   while (m_running) {
@@ -105,13 +108,13 @@ void SpeakerPlaybackTask::run() {
     auto snap = EmbeddedSysDb::getInstance().snapshot();
 
     bool has_voice = false;
-    size_t num_voice_32k = 0;
+    size_t num_voice = 0;
     bool has_alert = false;
     size_t num_alert = 0;
     bool has_media = false;
     size_t num_media = 0;
 
-    // 1. Voice Track (Gemini Live 24kHz -> 32kHz)
+    // 1. Voice Track (Gemini Live 24kHz -> 44.1kHz)
     if (snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
       if (m_buffering) {
         size_t buffered = bm.getUsedBytes(Buffers::VOICE_RX_BUF);
@@ -121,16 +124,16 @@ void SpeakerPlaybackTask::run() {
       }
 
       if (!m_buffering) {
-        size_t target_voice_24k_samples = (target_samples * 3) / 4;
+        size_t target_voice_24k_samples = samplesForDurationMs(VOICE_SRC_RATE, TARGET_FRAME_MS);
         size_t target_voice_bytes = target_voice_24k_samples * sizeof(int16_t);
         size_t rx_bytes = 0;
         void *rx_ptr = bm.receive(Buffers::VOICE_RX_BUF, &rx_bytes, 0, target_voice_bytes);
 
         if (rx_ptr != nullptr && rx_bytes > 0) {
           size_t samples_24k = rx_bytes / sizeof(int16_t);
-          num_voice_32k = (samples_24k * 4) / 3;
-          if (num_voice_32k > MAX_AUDIO_CHUNK_SAMPLES) num_voice_32k = MAX_AUDIO_CHUNK_SAMPLES;
-          upsample_3to4((const int16_t*)rx_ptr, voice_pcm, samples_24k);
+          num_voice = (samples_24k * NATIVE_RATE) / VOICE_SRC_RATE;
+          if (num_voice > MAX_AUDIO_CHUNK_SAMPLES) num_voice = MAX_AUDIO_CHUNK_SAMPLES;
+          resample_linear((const int16_t*)rx_ptr, samples_24k, voice_pcm, num_voice);
           bm.returnItem(Buffers::VOICE_RX_BUF, rx_ptr);
           has_voice = true;
         } else if (!snap.audio.turn_complete_pending) {
@@ -179,13 +182,13 @@ void SpeakerPlaybackTask::run() {
       size_t frames_to_write = target_samples;
       if (has_voice && !has_media && !has_alert) {
         // Pure voice: write exact number of decoded samples (never zero-pad!)
-        frames_to_write = num_voice_32k;
+        frames_to_write = num_voice;
       } else if (!has_voice && has_media && !has_alert) {
         frames_to_write = num_media;
       } else if (!has_voice && !has_media && has_alert) {
         frames_to_write = num_alert;
       } else {
-        frames_to_write = std::max(num_voice_32k, std::max(num_alert, num_media));
+        frames_to_write = std::max(num_voice, std::max(num_alert, num_media));
       }
       if (frames_to_write > MAX_AUDIO_CHUNK_SAMPLES) frames_to_write = MAX_AUDIO_CHUNK_SAMPLES;
       if (frames_to_write == 0) frames_to_write = target_samples;
@@ -202,7 +205,7 @@ void SpeakerPlaybackTask::run() {
         }
 
         int32_t mix = 0;
-        if (has_voice && i < num_voice_32k) {
+        if (has_voice && i < num_voice) {
           mix += (int32_t)voice_pcm[i];
         }
         if (has_alert && i < num_alert) {

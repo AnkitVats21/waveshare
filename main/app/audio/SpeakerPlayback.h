@@ -57,7 +57,7 @@ public:
           m_media_gain = targetGain;
           m_media_ramp_step = 0.0f;
       } else {
-          uint32_t ramp_samples = (32000 * rampMs) / 1000;
+          uint32_t ramp_samples = (44100 * rampMs) / 1000;
           if (ramp_samples == 0) ramp_samples = 1;
           m_media_ramp_step = (m_target_media_gain - m_media_gain) / (float)ramp_samples;
       }

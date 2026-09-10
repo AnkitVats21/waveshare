@@ -158,10 +158,10 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         });
     }
 
-    // Transition D: Reactive WAV status logging (playback resampled in software to 32kHz)
+    // Transition D: Reactive WAV status logging (playback resampled in software to 44.1kHz)
     if ((changed & BIT_AUDIO::WAV_PLAYING) || (changed == 0)) {
         if (snap.audio.wav_playing) {
-            LOGI_AUDIO("WAV playback active (resampled to native 32 kHz).");
+            LOGI_AUDIO("WAV playback active (resampled to native 44.1 kHz).");
         }
     }
 }
