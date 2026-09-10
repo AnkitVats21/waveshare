@@ -146,7 +146,7 @@ bool GeminiProtocol::ensureClientInitialized() {
 
     esp_websocket_client_config_t ws_cfg = {};
     ws_cfg.uri = m_ws_uri.c_str();
-    ws_cfg.buffer_size = 65536;
+    ws_cfg.buffer_size = 16384;
     ws_cfg.reconnect_timeout_ms = 10000;
     ws_cfg.network_timeout_ms = 10000;
     ws_cfg.task_stack = 6144;

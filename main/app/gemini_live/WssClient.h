@@ -108,7 +108,7 @@ public:
      */
     int sendLargeText(const char* data, int len, TickType_t timeout = pdMS_TO_TICKS(2000)) {
         if (!m_handle || !data || len <= 0) return -1;
-        constexpr int CHUNK_SIZE = 2048;
+        constexpr int CHUNK_SIZE = 1400;
         if (len <= CHUNK_SIZE) {
             return esp_websocket_client_send_text(m_handle, data, len, timeout);
         }
