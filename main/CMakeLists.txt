@@ -24,6 +24,10 @@ set(srcs
             # HAL — Network
             "hal/network/WifiService.cpp"
 
+            # HAL — Bluetooth Companion
+            "hal/companion/BtPlayerUart.cpp"
+            "hal/companion/BtPlayerI2s.cpp"
+
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
@@ -106,6 +110,7 @@ idf_component_register(
             "hal/storage"
             "hal/audio"
             "hal/network"
+            "hal/companion"
             "hal/interfaces"
             # App layers
             "app"

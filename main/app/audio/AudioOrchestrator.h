@@ -84,6 +84,9 @@ private:
     volatile bool m_alarm_active = false;
     volatile bool m_media_paused_by_voice = false;
     volatile bool m_media_ducked = false;
+    volatile bool m_last_companion_playing = false;
+
+    void updateCompanionPlaybackState();
 
     SpeakerPlaybackTask* m_speaker_task = nullptr;
 

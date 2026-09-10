@@ -24,8 +24,16 @@ namespace COMP {
     static constexpr ComponentMask ASSISTANT = (1u << 19); ///< Session + visual state
     static constexpr ComponentMask LED       = (1u << 20); ///< LED animation commands
     static constexpr ComponentMask MQTT      = (1u << 21); ///< Broker connectivity
-    static constexpr ComponentMask ALARM     = (1u << 22); ///< Active alarm status/control
-    static constexpr ComponentMask ALL       = 0xFFFF0000u;
+    static constexpr ComponentMask ALARM        = (1u << 22); ///< Active alarm status/control
+    static constexpr ComponentMask BT_COMPANION = (1u << 23); ///< ESP32-WROOM BT Companion player
+    static constexpr ComponentMask ALL          = 0xFFFF0000u;
+}
+
+// Per-field bits — used by onStateChanged() for fine-grained reactions
+namespace BIT_BT_COMPANION {
+    static constexpr ComponentMask READY     = (1u << 0);
+    static constexpr ComponentMask CONNECTED = (1u << 1);
+    static constexpr ComponentMask STATUS    = (1u << 2);
 }
 
 // Per-field bits — used by onStateChanged() for fine-grained reactions
@@ -133,6 +141,18 @@ namespace BIT_MQTT {
     X(bool, stop_requested, false, BIT_ALARM::STOP_REQUESTED) \
     X(int, active_alarm_id, 0, 0)
 
+#define BT_COMPANION_FIELDS \
+    X(bool, ready, false, BIT_BT_COMPANION::READY) \
+    X(uint16_t, fw_version, 0, 0) \
+    X(bool, connected, false, BIT_BT_COMPANION::CONNECTED) \
+    X(bool, link_settled, false, 0) \
+    X_STR(speaker_name, 32, "", 0) \
+    X(uint8_t, volume, 80, 0) \
+    X(uint8_t, pcm_buf_pct, 0, BIT_BT_COMPANION::STATUS) \
+    X(uint32_t, free_heap, 0, 0) \
+    X(uint16_t, underruns, 0, 0) \
+    X(uint16_t, overruns, 0, 0)
+
 
 /**
  * @brief Complete, flat snapshot of all mutable application state.
@@ -184,6 +204,11 @@ struct SystemState {
     struct {
         ALARM_FIELDS
     } alarm;
+
+    // ── COMP::BT_COMPANION ───────────────────────────────────────────────────
+    struct {
+        BT_COMPANION_FIELDS
+    } bt_companion;
 
 
     #undef X

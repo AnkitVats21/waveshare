@@ -247,5 +247,14 @@ ComponentMask EmbeddedSysDb::diffState(const SystemState& old_s, const SystemSta
     #undef X
     #undef X_STR
 
+    // BT_COMPANION_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.bt_companion.name != new_s.bt_companion.name) changed |= (COMP::BT_COMPANION | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.bt_companion.name, new_s.bt_companion.name) != 0) changed |= (COMP::BT_COMPANION | bit);
+    BT_COMPANION_FIELDS
+    #undef X
+    #undef X_STR
+
     return changed;
 }
