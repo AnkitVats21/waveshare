@@ -22,6 +22,16 @@ DECLARE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 #include "common/TaskBase.h"
 #include "common/thread_config.h"
 
+/**
+ * @brief Output interface for mixed audio PCM samples.
+ * Used for DMA output on hardware, or mock buffer output for host Python tests.
+ */
+class IAudioSink {
+public:
+    virtual ~IAudioSink() = default;
+    virtual esp_err_t write(const void* data, size_t size, size_t* bytes_written, uint32_t timeout_ms) = 0;
+};
+
 class SpeakerPlaybackTask : public TaskBase {
 public:
   SpeakerPlaybackTask()
@@ -37,8 +47,9 @@ public:
   /**
    * @brief Start the speaker playback task
    * @param device Pre-initialized codec device handle
+   * @param customSink Optional custom audio sink (e.g. for testing / mocking)
    */
-  void start(esp_codec_dev_handle_t device);
+  void start(esp_codec_dev_handle_t device, IAudioSink* customSink = nullptr);
 
   /**
    * @brief Cleanly stop the task
@@ -88,6 +99,7 @@ private:
   // ── State ─────────────────────────────────────────────────────────────────
   bool                      m_buffering         = true;
   esp_codec_dev_handle_t    m_device            = nullptr;
+  IAudioSink*               m_custom_sink       = nullptr;
 
   // ── Mixer Gains ───────────────────────────────────────────────────────────
   volatile float            m_media_gain        = 1.0f;

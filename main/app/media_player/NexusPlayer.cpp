@@ -371,15 +371,7 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
         bool new_session_active = (snap.assistant.session_state != AssistantState::Idle);
         
         if (new_session_active && !_session_active) {
-            ESP_LOGI(TAG, "Assistant session became active. Interrupting NexusPlayer if playing.");
             _session_active = true;
-            if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
-                _should_resume_after_session = true;
-                _should_play_after_session = false;
-                pause_internal();
-            } else {
-                _should_resume_after_session = false;
-            }
         } 
         else if (!new_session_active && _session_active) {
             ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
@@ -389,10 +381,7 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
                 _pendingSongId.clear();
                 _pendingDownloadUrl.clear();
                 _should_play_after_session = false;
-            } else if (_should_resume_after_session) {
-                resume_internal();
             }
-            _should_resume_after_session = false;
         }
     }
 }

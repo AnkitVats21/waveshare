@@ -25,8 +25,9 @@ size_t samplesForDurationMs(uint32_t sample_rate, uint32_t duration_ms) {
 
 } // namespace
 
-void SpeakerPlaybackTask::start(esp_codec_dev_handle_t device) {
+void SpeakerPlaybackTask::start(esp_codec_dev_handle_t device, IAudioSink* customSink) {
   this->m_device = device;
+  this->m_custom_sink = customSink;
   TaskBase::start();
 }
 
@@ -51,11 +52,22 @@ void SpeakerPlaybackTask::stop() {
 // ─────────────────────────────────────────────────────────────────────────────
 void SpeakerPlaybackTask::run() {
   esp_codec_dev_handle_t device = m_device;
-  if (device == nullptr) {
-    LOGE_HAL("SpeakerPlaybackTask started without a valid codec device!");
+  IAudioSink* custom_sink = m_custom_sink;
+  if (device == nullptr && custom_sink == nullptr) {
+    LOGE_HAL("SpeakerPlaybackTask started without a valid codec device or custom sink!");
     m_running = false;
     return;
   }
+
+  auto writeAudio = [&](const void* buf, size_t bytes) -> int {
+    if (custom_sink != nullptr) {
+      size_t written = 0;
+      return (custom_sink->write(buf, bytes, &written, 10) == ESP_OK) ? ESP_CODEC_DEV_OK : -1;
+    } else if (device != nullptr) {
+      return esp_codec_dev_write(device, const_cast<void*>(buf), bytes);
+    }
+    return ESP_CODEC_DEV_OK;
+  };
 
   LOGI_HAL("Speaker Audio Multi-Track Mixer Active (mixer=%u Hz, onboard=%u Hz) — Voice/Alert/Media.",
            (unsigned)COMPANION_SAMPLE_RATE, (unsigned)LOCAL_SAMPLE_RATE);
@@ -261,7 +273,7 @@ void SpeakerPlaybackTask::run() {
 
       // 2. Route onboard speaker based on policy and companion status
 #if defined(CONFIG_BT_COMPANION_ROUTING_DUAL_OUTPUT)
-      int ret = esp_codec_dev_write(device, expanded_buffer, local_frames * 2 * sizeof(int32_t));
+      int ret = writeAudio(expanded_buffer, local_frames * 2 * sizeof(int32_t));
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(5));
       }
@@ -269,7 +281,7 @@ void SpeakerPlaybackTask::run() {
       // Companion Only mode: Only feed onboard DAC when companion is NOT active (fallback mode).
       // Decoupling the two hardware I2S writes prevents dual-DMA clock skew and eliminates write deficits!
       if (!companion_active) {
-        int ret = esp_codec_dev_write(device, expanded_buffer, local_frames * 2 * sizeof(int32_t));
+        int ret = writeAudio(expanded_buffer, local_frames * 2 * sizeof(int32_t));
         if (ret != ESP_CODEC_DEV_OK) {
           vTaskDelay(pdMS_TO_TICKS(5));
         }
@@ -291,7 +303,7 @@ void SpeakerPlaybackTask::run() {
         last_active_log_ms = now_ms;
       }
 #else
-      int ret = esp_codec_dev_write(device, expanded_buffer, local_frames * 2 * sizeof(int32_t));
+      int ret = writeAudio(expanded_buffer, local_frames * 2 * sizeof(int32_t));
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(10));
       }
@@ -329,19 +341,19 @@ void SpeakerPlaybackTask::run() {
 #if !defined(CONFIG_BT_COMPANION_ROUTING_DUAL_OUTPUT)
       // In Companion-only mode, don't write to onboard codec during idle if companion is active
       if (!companion_active) {
-        int ret = esp_codec_dev_write(device, silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
+        int ret = writeAudio(silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
         if (ret != ESP_CODEC_DEV_OK) {
           vTaskDelay(pdMS_TO_TICKS(10));
         }
       }
 #else
-      int ret = esp_codec_dev_write(device, silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
+      int ret = writeAudio(silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(10));
       }
 #endif
 #else
-      int ret = esp_codec_dev_write(device, silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
+      int ret = writeAudio(silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(10));
       }
