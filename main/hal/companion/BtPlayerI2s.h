@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/AudioRates.h"
 #include "driver/i2s_std.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -15,7 +16,7 @@ public:
         int      bclk_pin     = 4;
         int        ws_pin      = 5;
         int        dout_pin    = 6;
-        uint32_t   sample_rate = 44100;
+        uint32_t   sample_rate = COMPANION_SAMPLE_RATE;
         size_t     dma_desc_num = 8;
         size_t     dma_frame_num = 256;
     };

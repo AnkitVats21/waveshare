@@ -199,7 +199,7 @@ void BtPlayerUart::rxTaskLoop() {
             total_rx_bytes += read_len;
             int64_t now_ms = esp_timer_get_time() / 1000;
             if (now_ms - last_rx_log > 10000) {
-                ESP_LOGI(TAG, "UART1 RX alive: %lu bytes total, last chunk %d bytes (0x%02X)",
+                ESP_LOGD(TAG, "UART1 RX alive: %lu bytes total, last chunk %d bytes (0x%02X)",
                          (unsigned long)total_rx_bytes, read_len, buffer[0]);
                 last_rx_log = now_ms;
             }
@@ -314,13 +314,20 @@ void BtPlayerUart::handleReceivedFrame(MsgType type, const uint8_t* payload, siz
                 decoded.underruns   = get_be16(reinterpret_cast<const uint8_t*>(&p->underruns));
                 decoded.overruns    = get_be16(reinterpret_cast<const uint8_t*>(&p->overruns));
 
-                static int64_t last_status_log = 0;
-                int64_t now_ms = esp_timer_get_time() / 1000;
-                if (now_ms - last_status_log > 5000 || decoded.underruns > 0 || decoded.overruns > 0) {
-                    ESP_LOGI(TAG, "Companion STATUS: state=%u, playing=%u, buf=%u%%, under=%u, over=%u, heap=%lu",
-                             decoded.state, decoded.playing, decoded.pcm_buf_pct, decoded.underruns, decoded.overruns, decoded.free_heap);
-                    last_status_log = now_ms;
+                // Routine STATUS is debug-only (2 s cadence = console spam). Surface
+                // it at INFO only when the drop counters actually *advance* — a bare
+                // non-zero total would otherwise re-log every frame forever.
+                static uint16_t last_under = 0;
+                static uint16_t last_over  = 0;
+                ESP_LOGD(TAG, "Companion STATUS: state=%u, playing=%u, buf=%u%%, under=%u, over=%u, heap=%lu",
+                         decoded.state, decoded.playing, decoded.pcm_buf_pct, decoded.underruns, decoded.overruns, decoded.free_heap);
+                if (decoded.underruns > last_under || decoded.overruns > last_over) {
+                    ESP_LOGW(TAG, "Companion drops advanced: under %u->%u, over %u->%u (state=%u buf=%u%% heap=%lu)",
+                             last_under, decoded.underruns, last_over, decoded.overruns,
+                             decoded.state, decoded.pcm_buf_pct, decoded.free_heap);
                 }
+                last_under = decoded.underruns;
+                last_over  = decoded.overruns;
 
                 // Contract: 0=IDLE, 1=CONNECTING, 2=CONNECTED, 3=PLAYING, 4=ERROR
                 bool is_connected = (decoded.state == 2 || decoded.state == 3);

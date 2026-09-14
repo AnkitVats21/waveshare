@@ -4,6 +4,7 @@
 #include "app/media_player/AudioDecoderFactory.h"
 #include "services/BufferManager.h"
 #include "services/storage/StorageService.h"
+#include "common/audio/Resampler.h"
 #include "common/thread_config.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -221,22 +222,11 @@ bool AlertPlayer::playAlertFile(const char* path) {
 
             uint32_t src_rate = decoder->getSourceSampleRate();
             uint32_t dst_rate = 44100;
-            size_t resampled_count = (mono_samples * dst_rate) / src_rate;
+            size_t resampled_count = computeResampledFrames(mono_samples, src_rate, dst_rate);
             if (resampled_count > MAX_SAMPLES) resampled_count = MAX_SAMPLES;
 
-            float ratio = static_cast<float>(src_rate) / dst_rate;
-            for (size_t j = 0; j < resampled_count; ++j) {
-                float src_pos = j * ratio;
-                size_t idx = static_cast<size_t>(src_pos);
-                float frac = src_pos - idx;
-                if (idx + 1 < mono_samples) {
-                    float s0 = pcm_mono[idx];
-                    float s1 = pcm_mono[idx + 1];
-                    resample_buf[j] = static_cast<int16_t>(s0 + frac * (s1 - s0));
-                } else {
-                    resample_buf[j] = pcm_mono[idx];
-                }
-            }
+            LinearResampler resampler;
+            resampler.resample(pcm_mono, mono_samples, resample_buf, resampled_count, 1);
 
             bm.send(Buffers::ALERT_RX_BUF, resample_buf, resampled_count * sizeof(int16_t), pdMS_TO_TICKS(100));
         }

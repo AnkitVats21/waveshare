@@ -74,6 +74,7 @@ set(srcs
             "common/LogRouter.cpp"
             "common/AsyncNetLogger.cpp"
             "common/ReactorTask.cpp"
+            "common/audio/Resampler.cpp"
 
             # SysDB-Lite core
             "common/sysdb/EmbeddedSysDb.cpp"
@@ -123,6 +124,7 @@ idf_component_register(
             "services"
             "common"
             "common/sysdb"
+            "common/audio"
             "hal/input"
 
             # HAL interfaces

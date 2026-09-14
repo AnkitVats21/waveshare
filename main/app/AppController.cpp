@@ -60,7 +60,7 @@ void AppController::initBtCompanion() {
     i2s_cfg.bclk_pin    = CONFIG_BT_COMPANION_I2S_BCLK_PIN;
     i2s_cfg.ws_pin      = CONFIG_BT_COMPANION_I2S_WS_PIN;
     i2s_cfg.dout_pin    = CONFIG_BT_COMPANION_I2S_DOUT_PIN;
-    i2s_cfg.sample_rate = 44100;
+    i2s_cfg.sample_rate = COMPANION_SAMPLE_RATE;
     esp_err_t err = btplayer::BtPlayerI2s::getInstance().init(i2s_cfg);
     if (err != ESP_OK) {
         LOGE_SYSTEM("Failed to initialize BtPlayerI2s: %s", esp_err_to_name(err));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/AudioRates.h"
 #include "esp_err.h"
 #include "esp_io_expander.h"
 #include "hal/Board_defs.h"
@@ -89,7 +90,7 @@ private:
     SdCardManager   m_storage;
 
     // Pre-init settings (forwarded to AudioHal::Config on begin())
-    uint32_t m_sample_rate    = 44100;
+    uint32_t m_sample_rate    = LOCAL_SAMPLE_RATE;
     int      m_record_volume  = 70;
     int      m_play_volume    = 80;
     float    m_current_mic_gain = -999.0f;

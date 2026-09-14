@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "AudioDecoderFactory.h"
 #include "BufferManager.h"
+#include "common/audio/Resampler.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/idf_additions.h"
@@ -115,30 +116,19 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
             }
         }
 
-        // Resample mono to target rate (typically 32 kHz)
+        // Resample mono to target rate (typically 44.1 kHz — see SpeakerPlayback mixer domain)
         uint32_t src_rate = _decoder->getSourceSampleRate();
         uint32_t dst_rate = _sampleRate;
 
-        size_t resampled_count = static_cast<size_t>(mono_samples * dst_rate / src_rate);
+        size_t resampled_count = computeResampledFrames(mono_samples, src_rate, dst_rate);
         if (resampled_count > _resample_buffer_samples) {
             ESP_LOGE(TAG, "Resample buffer too small (%zu samples), required %zu.",
                      _resample_buffer_samples, resampled_count);
             return;
         }
 
-        float ratio = static_cast<float>(src_rate) / dst_rate;
-        for (size_t j = 0; j < resampled_count; ++j) {
-            float src_pos = j * ratio;
-            size_t idx = static_cast<size_t>(src_pos);
-            float frac = src_pos - idx;
-            if (idx + 1 < mono_samples) {
-                float s0 = pcm_mono[idx];
-                float s1 = pcm_mono[idx + 1];
-                _resample_buffer[j] = static_cast<int16_t>(s0 + frac * (s1 - s0));
-            } else {
-                _resample_buffer[j] = pcm_mono[idx];
-            }
-        }
+        LinearResampler resampler;
+        resampler.resample(pcm_mono, mono_samples, _resample_buffer, resampled_count, 1);
 
         // Push final PCM to SPK_RX_BUF with backpressure throttling
         size_t send_bytes = resampled_count * sizeof(int16_t);

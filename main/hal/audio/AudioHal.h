@@ -4,6 +4,7 @@
 #include "audio_codec_data_if.h"
 #include "audio_codec_gpio_if.h"
 #include "audio_codec_if.h"
+#include "common/AudioRates.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
@@ -41,7 +42,7 @@ public:
    * @brief Configuration passed from Board before initialization.
    */
   struct Config {
-    uint32_t sample_rate = 44100;
+    uint32_t sample_rate = LOCAL_SAMPLE_RATE;
     int record_volume = 70;
     int play_volume = 80;
     i2c_master_bus_handle_t i2c_bus = nullptr;
@@ -178,7 +179,7 @@ private:
   i2s_chan_handle_t m_rx_handle = nullptr;
   esp_codec_dev_handle_t m_play_dev = nullptr;
   esp_codec_dev_handle_t m_record_dev = nullptr;
-  uint32_t m_sample_rate = 44100;
+  uint32_t m_sample_rate = LOCAL_SAMPLE_RATE;
   int m_record_volume = 70;
   int m_play_volume = 80;
   int m_play_previous_volume = 80;

@@ -76,8 +76,8 @@ bool AudioService::begin() {
     m_hal.setRecordGain(snap.audio.mic_gain_db);
     m_last_applied_mic_enabled = snap.audio.mic_enabled;
 
-    LOGI_AUDIO("AudioService operational at %lu Hz (native 32kHz, no clock switches).",
-               (unsigned long)snap.audio.sample_rate);
+    LOGI_AUDIO("AudioService operational — local codec %lu Hz, companion %lu Hz.",
+               (unsigned long)snap.audio.sample_rate, (unsigned long)COMPANION_SAMPLE_RATE);
     return true;
 }
 

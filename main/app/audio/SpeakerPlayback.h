@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/app_types.h"
+#include "common/AudioRates.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
 #include "freertos/FreeRTOS.h"
@@ -57,7 +58,7 @@ public:
           m_media_gain = targetGain;
           m_media_ramp_step = 0.0f;
       } else {
-          uint32_t ramp_samples = (44100 * rampMs) / 1000;
+          uint32_t ramp_samples = (COMPANION_SAMPLE_RATE * rampMs) / 1000;
           if (ramp_samples == 0) ramp_samples = 1;
           m_media_ramp_step = (m_target_media_gain - m_media_gain) / (float)ramp_samples;
       }
