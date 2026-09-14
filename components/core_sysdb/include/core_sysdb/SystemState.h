@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/app_types.h"
-#include "common/led_types.h"
+#include "core_sysdb/app_types.h"
+#include "core_sysdb/led_types.h"
 #include <cstdint>
 #include <string>
 
@@ -104,7 +104,7 @@ namespace BIT_MQTT {
 // SystemState — the single shared in-memory database
 // ─────────────────────────────────────────────────────────────────────────────
 
-#include "common/AudioRates.h"
+#include "core_sysdb/AudioRates.h"
 
 #define SYSTEM_FIELDS \
     X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED) \

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/sysdb/EmbeddedSysDb.h"
-#include "common/sysdb/SystemState.h"
+#include "core_sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/SystemState.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 

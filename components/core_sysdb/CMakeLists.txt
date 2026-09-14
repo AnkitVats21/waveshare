@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "src/EmbeddedSysDb.cpp"
+        "src/ReactorTask.cpp"
+        "src/BufferManager.cpp"
+        "src/LogRouter.cpp"
+        "src/AsyncNetLogger.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        freertos
+        esp_system
+        esp_timer
+        esp_netif
+        lwip
+        log
+        heap
+        esp_ringbuf
+)

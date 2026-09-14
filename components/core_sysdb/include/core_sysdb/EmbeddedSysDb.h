@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/sysdb/SystemState.h"
+#include "core_sysdb/SystemState.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"

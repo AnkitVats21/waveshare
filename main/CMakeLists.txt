@@ -62,7 +62,6 @@ set(srcs
 
 
             # Services
-            "services/BufferManager.cpp"
             "services/config_manager/config_manager.cpp"
             "services/config_manager/config_generated.cpp"
             "services/storage/StorageService.cpp"
@@ -71,13 +70,7 @@ set(srcs
             "services/alarm/AlarmService.cpp"
 
             # Common utilities
-            "common/LogRouter.cpp"
-            "common/AsyncNetLogger.cpp"
-            "common/ReactorTask.cpp"
             "common/audio/Resampler.cpp"
-
-            # SysDB-Lite core
-            "common/sysdb/EmbeddedSysDb.cpp"
 )
 
 if(CONFIG_VOICE_BACKEND_GEMINI_LIVE)
@@ -123,7 +116,6 @@ idf_component_register(
             # Services / common
             "services"
             "common"
-            "common/sysdb"
             "common/audio"
             "hal/input"
 

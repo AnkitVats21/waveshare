@@ -1,4 +1,4 @@
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "esp_log.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
