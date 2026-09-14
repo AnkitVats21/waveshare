@@ -61,13 +61,11 @@ idf_component_register(
             "app"
             "app/audio"
             "app/mqtt"
-            "app/wake_word"
             "app/led"
             # Services / common
             "services"
             "services/network"
             "common"
-            "common/audio"
 )
 
 
