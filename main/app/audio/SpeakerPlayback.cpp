@@ -107,7 +107,13 @@ void SpeakerPlaybackTask::run() {
 
   while (m_running) {
 
-    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    auto& sysdb = EmbeddedSysDb::getInstance();
+    const uint32_t audio_flags = sysdb.hotAudioFlags();
+    const bool asst_speaking   = (audio_flags & HotAudioBit::ASST_SPEAKING) != 0;
+    const bool turn_pending    = (audio_flags & HotAudioBit::TURN_COMPLETE_PEND) != 0;
+    const bool companion_conn  = (audio_flags & HotAudioBit::COMPANION_CONN) != 0;
+    const bool companion_set   = (audio_flags & HotAudioBit::COMPANION_SETTLED) != 0;
+    const bool companion_active = companion_conn || !companion_set;
 
     bool has_voice = false;
     size_t num_voice = 0;
@@ -117,10 +123,10 @@ void SpeakerPlaybackTask::run() {
     size_t num_media = 0;
 
     // 1. Voice Track (Gemini Live 24kHz -> 44.1kHz)
-    if (snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
+    if (asst_speaking || turn_pending) {
       if (m_buffering) {
         size_t buffered = bm.getUsedBytes(Buffers::VOICE_RX_BUF);
-        if (buffered >= MIN_JITTER_CUSHION_BYTES || snap.audio.turn_complete_pending) {
+        if (buffered >= MIN_JITTER_CUSHION_BYTES || turn_pending) {
           m_buffering = false;
         }
       }
@@ -138,7 +144,7 @@ void SpeakerPlaybackTask::run() {
           resampler.resample((const int16_t*)rx_ptr, samples_24k, voice_pcm, num_voice, 1);
           bm.returnItem(Buffers::VOICE_RX_BUF, rx_ptr);
           has_voice = true;
-        } else if (!snap.audio.turn_complete_pending) {
+        } else if (!turn_pending) {
           // Starved mid-speech: rebuffer to avoid playing chopped syllables
           m_buffering = true;
         }
@@ -242,8 +248,6 @@ void SpeakerPlaybackTask::run() {
 
 #if CONFIG_BT_COMPANION_ENABLE
       auto& bt_i2s = btplayer::BtPlayerI2s::getInstance();
-      // Companion is active if telemetry reports connected, or if telemetry has not yet established (boot/unlinked)
-      bool companion_active = snap.bt_companion.connected || !snap.bt_companion.link_settled;
 
       // 1. Always feed real audio to companion I2S master if initialized.
       // Companion firmware handles disconnected state internally by discarding frames (PcmSource::mute).
@@ -303,7 +307,6 @@ void SpeakerPlaybackTask::run() {
 
 #if CONFIG_BT_COMPANION_ENABLE
       auto& bt_i2s = btplayer::BtPlayerI2s::getInstance();
-      bool companion_active = snap.bt_companion.connected || !snap.bt_companion.link_settled;
 
       // Feed the companion a full-size zero chunk every iteration — same cadence
       // and granularity as the active path — so its I2S RX and SPSC ring stay
@@ -345,15 +348,15 @@ void SpeakerPlaybackTask::run() {
 #endif
       sustained_empty++;
 
-      if (snap.audio.assistant_speaking && sustained_empty >= 2 && !snap.audio.turn_complete_pending) {
+      if (asst_speaking && sustained_empty >= 2 && !turn_pending) {
         m_buffering = true;
       }
 
       // Finalize turn_complete once voice buffer has thoroughly drained
       if (sustained_empty >= TURN_COMPLETE_DRAIN_TICKS) {
-        if (EmbeddedSysDb::getInstance().turnCompletePending()) {
+        if (turn_pending) {
           LOGI_HAL("SpeakerPlayback: sustained empty after turn_complete — finalising.");
-          EmbeddedSysDb::getInstance().mutate([](SystemState &s) {
+          sysdb.mutate([](SystemState &s) {
             s.audio.turn_complete_pending = false;
             s.audio.assistant_speaking    = false;
           });
