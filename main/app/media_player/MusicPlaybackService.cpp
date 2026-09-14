@@ -22,35 +22,35 @@ bool MusicPlaybackService::begin() {
     if (_initialized) return true;
     
     NexusPlayer::getInstance().addObserver(this);
-    _autoplayEnabled = EmbeddedSysDb::getInstance().snapshot().audio.autoplay_enabled;
+    _autoplayEnabled = EmbeddedSysDb::getInstance().snapshot().media.autoplay_enabled;
     _initialized = true;
     ESP_LOGI(TAG, "MusicPlaybackService initialized (autoplay=%s, caching=%s)",
              _autoplayEnabled ? "true" : "false",
-             EmbeddedSysDb::getInstance().snapshot().audio.cache_downloads ? "true" : "false");
+             EmbeddedSysDb::getInstance().snapshot().media.cache_downloads ? "true" : "false");
     return true;
 }
 
 void MusicPlaybackService::setAutoplay(bool enabled) {
     _autoplayEnabled = enabled;
     EmbeddedSysDb::getInstance().mutate([enabled](SystemState& s) {
-        s.audio.autoplay_enabled = enabled;
+        s.media.autoplay_enabled = enabled;
     });
     ESP_LOGI(TAG, "Autoplay set to %s (persisted to SysDb)", enabled ? "true" : "false");
 }
 
 bool MusicPlaybackService::isAutoplayEnabled() const {
-    return EmbeddedSysDb::getInstance().snapshot().audio.autoplay_enabled;
+    return EmbeddedSysDb::getInstance().snapshot().media.autoplay_enabled;
 }
 
 void MusicPlaybackService::setCaching(bool enabled) {
     EmbeddedSysDb::getInstance().mutate([enabled](SystemState& s) {
-        s.audio.cache_downloads = enabled;
+        s.media.cache_downloads = enabled;
     });
     ESP_LOGI(TAG, "Live caching set to %s (persisted to SysDb)", enabled ? "true" : "false");
 }
 
 bool MusicPlaybackService::isCachingEnabled() const {
-    return EmbeddedSysDb::getInstance().snapshot().audio.cache_downloads;
+    return EmbeddedSysDb::getInstance().snapshot().media.cache_downloads;
 }
 
 bool MusicPlaybackService::isTrackInQueueOrHistory(const std::string& videoId) const {

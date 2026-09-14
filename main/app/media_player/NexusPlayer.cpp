@@ -198,7 +198,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
         }
     } else {
         auto snap = EmbeddedSysDb::getInstance().snapshot();
-        bool doCache = snap.audio.cache_downloads;
+        bool doCache = snap.media.cache_downloads;
 
         if (doCache) {
             ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);

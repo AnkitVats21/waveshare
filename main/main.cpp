@@ -53,8 +53,8 @@ static void loadPersistentState() {
                 s.audio.speaker_volume = parseCtx.volume;
                 s.led.color = { (uint8_t)parseCtx.r, (uint8_t)parseCtx.g, (uint8_t)parseCtx.b };
                 s.led.mode = LedMode::SOLID;
-                s.audio.autoplay_enabled = parseCtx.autoplay;
-                s.audio.cache_downloads = parseCtx.cache_downloads;
+                s.media.autoplay_enabled = parseCtx.autoplay;
+                s.media.cache_downloads = parseCtx.cache_downloads;
             });
             LOGI_SYSTEM("Persistent state loaded from SD card: vol=%d, color=%d,%d,%d, autoplay=%d, cache_downloads=%d",
                         parseCtx.volume, parseCtx.r, parseCtx.g, parseCtx.b, parseCtx.autoplay, parseCtx.cache_downloads);

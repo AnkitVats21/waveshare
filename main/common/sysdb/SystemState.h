@@ -26,8 +26,28 @@ namespace COMP {
     static constexpr ComponentMask MQTT      = (1u << 21); ///< Broker connectivity
     static constexpr ComponentMask ALARM        = (1u << 22); ///< Active alarm status/control
     static constexpr ComponentMask BT_COMPANION = (1u << 23); ///< ESP32-WROOM BT Companion player
+    static constexpr ComponentMask MEDIA        = (1u << 24); ///< NexusPlayer & music playback
     static constexpr ComponentMask ALL          = 0xFFFF0000u;
 }
+
+// Per-field bits — used by onStateChanged() for fine-grained reactions
+namespace BIT_MEDIA {
+    static constexpr ComponentMask STATE      = (1u << 0);
+    static constexpr ComponentMask TRACK      = (1u << 1);
+    static constexpr ComponentMask REPEAT     = (1u << 2);
+    static constexpr ComponentMask DUCKED     = (1u << 3);
+    static constexpr ComponentMask AUTOPLAY   = (1u << 4);
+    static constexpr ComponentMask CACHE      = (1u << 5);
+}
+
+enum class MediaPlaybackState : uint8_t {
+    IDLE,
+    RESOLVING,
+    BUFFERING,
+    PLAYING,
+    PAUSED,
+    ERROR_STATE
+};
 
 // Per-field bits — used by onStateChanged() for fine-grained reactions
 namespace BIT_BT_COMPANION {
@@ -59,8 +79,6 @@ namespace BIT_AUDIO {
     static constexpr ComponentMask HW_RATE        = (1u << 7);
     static constexpr ComponentMask LAST_ACTIVITY  = (1u << 8);
     static constexpr ComponentMask WAV_PLAYING    = (1u << 9);
-    static constexpr ComponentMask AUTOPLAY       = (1u << 10);
-    static constexpr ComponentMask CACHE_DOWNLOADS = (1u << 11);
 }
 namespace BIT_PIPELINE {
     static constexpr ComponentMask MODE           = (1u << 0);
@@ -110,9 +128,7 @@ namespace BIT_MQTT {
     X(AudioStreamFormat, stream_format, AudioStreamFormat::PCM_S16LE, 0) \
     X(bool, wav_playing, false, BIT_AUDIO::WAV_PLAYING) \
     X(uint32_t, wav_sample_rate, 16000, 0) \
-    X(bool, wav_prefetched, false, 0) \
-    X(bool, autoplay_enabled, true, BIT_AUDIO::AUTOPLAY) \
-    X(bool, cache_downloads, false, BIT_AUDIO::CACHE_DOWNLOADS)
+    X(bool, wav_prefetched, false, 0)
 
 #define PIPELINE_FIELDS \
     X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE) \
@@ -153,6 +169,15 @@ namespace BIT_MQTT {
     X(uint16_t, underruns, 0, 0) \
     X(uint16_t, overruns, 0, 0)
 
+#define MEDIA_FIELDS \
+    X(MediaPlaybackState, state, MediaPlaybackState::IDLE, BIT_MEDIA::STATE) \
+    X_STR(active_song_id, 64, "", BIT_MEDIA::TRACK) \
+    X_STR(title, 64, "", BIT_MEDIA::TRACK) \
+    X_STR(artist, 64, "", BIT_MEDIA::TRACK) \
+    X(uint8_t, repeat_mode, 0, BIT_MEDIA::REPEAT) \
+    X(bool, is_ducked, false, BIT_MEDIA::DUCKED) \
+    X(bool, autoplay_enabled, true, BIT_MEDIA::AUTOPLAY) \
+    X(bool, cache_downloads, false, BIT_MEDIA::CACHE)
 
 /**
  * @brief Complete, flat snapshot of all mutable application state.
@@ -210,6 +235,10 @@ struct SystemState {
         BT_COMPANION_FIELDS
     } bt_companion;
 
+    // ── COMP::MEDIA ──────────────────────────────────────────────────────────
+    struct {
+        MEDIA_FIELDS
+    } media;
 
     #undef X
     #undef X_STR

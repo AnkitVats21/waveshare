@@ -16,6 +16,16 @@ EmbeddedSysDb::EmbeddedSysDb() {
     m_write_mutex = xSemaphoreCreateMutex();
     configASSERT(m_read_sem);
     configASSERT(m_write_mutex);
+    updateHotAudioFlags_locked();
+}
+
+void EmbeddedSysDb::updateHotAudioFlags_locked() {
+    uint32_t hot = 0;
+    if (m_state.audio.assistant_speaking)     hot |= HotAudioBit::ASST_SPEAKING;
+    if (m_state.audio.turn_complete_pending)  hot |= HotAudioBit::TURN_COMPLETE_PEND;
+    if (m_state.bt_companion.connected)       hot |= HotAudioBit::COMPANION_CONN;
+    if (m_state.bt_companion.link_settled)    hot |= HotAudioBit::COMPANION_SETTLED;
+    m_hot_audio_flags.store(hot, std::memory_order_release);
 }
 
 EmbeddedSysDb::~EmbeddedSysDb() {
@@ -147,6 +157,42 @@ bool EmbeddedSysDb::alarmStopRequested() const {
     return v;
 }
 
+MediaPlaybackState EmbeddedSysDb::mediaState() const {
+    acquireRead();
+    MediaPlaybackState v = m_state.media.state;
+    releaseRead();
+    return v;
+}
+
+bool EmbeddedSysDb::isMediaDucked() const {
+    acquireRead();
+    bool v = m_state.media.is_ducked;
+    releaseRead();
+    return v;
+}
+
+bool EmbeddedSysDb::autoplayEnabled() const {
+    acquireRead();
+    bool v = m_state.media.autoplay_enabled;
+    releaseRead();
+    return v;
+}
+
+bool EmbeddedSysDb::cacheDownloads() const {
+    acquireRead();
+    bool v = m_state.media.cache_downloads;
+    releaseRead();
+    return v;
+}
+
+bool EmbeddedSysDb::btCompanionConnected() const {
+    return hotCompanionConnected();
+}
+
+bool EmbeddedSysDb::btCompanionLinkSettled() const {
+    return hotCompanionSettled();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Reactor registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,6 +299,15 @@ ComponentMask EmbeddedSysDb::diffState(const SystemState& old_s, const SystemSta
     #define X_STR(name, size, def, bit) \
         if (bit != 0 && strcmp(old_s.bt_companion.name, new_s.bt_companion.name) != 0) changed |= (COMP::BT_COMPANION | bit);
     BT_COMPANION_FIELDS
+    #undef X
+    #undef X_STR
+
+    // MEDIA_FIELDS
+    #define X(type, name, def, bit) \
+        if (bit != 0 && old_s.media.name != new_s.media.name) changed |= (COMP::MEDIA | bit);
+    #define X_STR(name, size, def, bit) \
+        if (bit != 0 && strcmp(old_s.media.name, new_s.media.name) != 0) changed |= (COMP::MEDIA | bit);
+    MEDIA_FIELDS
     #undef X
     #undef X_STR
 

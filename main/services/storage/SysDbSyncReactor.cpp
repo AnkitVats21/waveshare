@@ -19,7 +19,7 @@ SysDbSyncReactor::SysDbSyncReactor()
           ThreadConfig::StackSize::STACK_NORMAL,
           ThreadConfig::Priority::LOW,
           ThreadConfig::CORE_NETWORK,
-          COMP::AUDIO | COMP::LED
+          COMP::AUDIO | COMP::LED | COMP::MEDIA
       })
 {}
 
@@ -49,11 +49,13 @@ void SysDbSyncReactor::run() {
             
             // Check if mutated bits contain the fields we care about persisting
             bool has_audio_change = (m_last_changed & COMP::AUDIO) && 
-                                    (m_last_changed & (BIT_AUDIO::SPEAKER_VOLUME | BIT_AUDIO::AUTOPLAY | BIT_AUDIO::CACHE_DOWNLOADS));
+                                    (m_last_changed & BIT_AUDIO::SPEAKER_VOLUME);
+            bool has_media_change = (m_last_changed & COMP::MEDIA) && 
+                                    (m_last_changed & (BIT_MEDIA::AUTOPLAY | BIT_MEDIA::CACHE));
             bool has_led_change = (m_last_changed & COMP::LED) && 
                                   (m_last_changed & BIT_LED::COLOR);
 
-            if (has_audio_change || has_led_change) {
+            if (has_audio_change || has_media_change || has_led_change) {
                 // We have a pending change. Reset or start the 3-second timer.
                 pending_write = true;
                 delay_ticks = pdMS_TO_TICKS(3000);
@@ -83,8 +85,8 @@ void SysDbSyncReactor::writeStateToSD() {
              snap.led.color.r,
              snap.led.color.g,
              snap.led.color.b,
-             snap.audio.autoplay_enabled ? 1 : 0,
-             snap.audio.cache_downloads ? 1 : 0);
+             snap.media.autoplay_enabled ? 1 : 0,
+             snap.media.cache_downloads ? 1 : 0);
 
     if (StorageService::getInstance().writeFile("/sdcard/state_sync.txt", buf)) {
         ESP_LOGI(TAG, "Persistent state successfully synchronized to /sdcard/state_sync.txt");

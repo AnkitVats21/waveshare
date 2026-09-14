@@ -5,6 +5,14 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <cstddef>
+#include <atomic>
+
+namespace HotAudioBit {
+    static constexpr uint32_t ASST_SPEAKING      = (1u << 0);
+    static constexpr uint32_t TURN_COMPLETE_PEND = (1u << 1);
+    static constexpr uint32_t COMPANION_CONN     = (1u << 2);
+    static constexpr uint32_t COMPANION_SETTLED  = (1u << 3);
+}
 
 /**
  * @brief Thread-safe singleton state database for the entire application.
@@ -59,6 +67,7 @@ public:
         acquireWrite();
         SystemState old_state = m_state;
         fn(m_state);
+        updateHotAudioFlags_locked();
         ComponentMask changed = diffState(old_state, m_state);
         if (changed > 0) {
             notifyReactors_locked(changed);
@@ -76,19 +85,42 @@ public:
      */
     SystemState snapshot() const;
 
+    // ── True lockless audio hot-path readers (0 semaphores, single atomic load) ──
+    uint32_t hotAudioFlags() const {
+        return m_hot_audio_flags.load(std::memory_order_acquire);
+    }
+    bool hotAssistantSpeaking() const {
+        return (hotAudioFlags() & HotAudioBit::ASST_SPEAKING) != 0;
+    }
+    bool hotTurnCompletePending() const {
+        return (hotAudioFlags() & HotAudioBit::TURN_COMPLETE_PEND) != 0;
+    }
+    bool hotCompanionConnected() const {
+        return (hotAudioFlags() & HotAudioBit::COMPANION_CONN) != 0;
+    }
+    bool hotCompanionSettled() const {
+        return (hotAudioFlags() & HotAudioBit::COMPANION_SETTLED) != 0;
+    }
+
     // Hot-path single-field getters (shorter lock window than full snapshot)
-    bool           wifiConnected()    const;
-    NetworkState   networkState()     const;
-    int            speakerVolume()    const;
-    float          micGain()          const;
-    bool           assistantSpeaking() const;
-    bool           micEnabled()       const;
-    AssistantState sessionState()     const;
-    PipelineMode   pipelineMode()     const;
-    WsState        wsState()          const;
-    bool           turnCompletePending() const;
-    bool           alarmPlaying()       const;
-    bool           alarmStopRequested() const;
+    bool               wifiConnected()       const;
+    NetworkState       networkState()        const;
+    int                speakerVolume()       const;
+    float              micGain()             const;
+    bool               assistantSpeaking()   const;
+    bool               micEnabled()          const;
+    AssistantState     sessionState()        const;
+    PipelineMode       pipelineMode()        const;
+    WsState            wsState()             const;
+    bool               turnCompletePending() const;
+    bool               alarmPlaying()        const;
+    bool               alarmStopRequested()  const;
+    MediaPlaybackState mediaState()          const;
+    bool               isMediaDucked()       const;
+    bool               autoplayEnabled()     const;
+    bool               cacheDownloads()      const;
+    bool               btCompanionConnected() const;
+    bool               btCompanionLinkSettled() const;
 
     // ── Reactor registration ──────────────────────────────────────────────────
 
@@ -137,6 +169,10 @@ private:
      *        registered reactors whose interest mask overlaps @p changed.
      */
     void notifyReactors_locked(ComponentMask changed);
+
+    // ── Hot-path atomic state cache ──────────────────────────────────────────
+    std::atomic<uint32_t> m_hot_audio_flags{0};
+    void updateHotAudioFlags_locked();
 
     static ComponentMask diffState(const SystemState& old_s, const SystemState& new_s);
 
