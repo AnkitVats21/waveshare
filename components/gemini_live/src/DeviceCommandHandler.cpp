@@ -1,15 +1,20 @@
 #include "DeviceCommandHandler.h"
 #include "gemini_skills_generated.h"
-#include "services/storage/StorageService.h"
-#include "services/alarm/AlarmService.h"
-#include "app/mqtt/MqttService.h"
 #include "common/sysdb/EmbeddedSysDb.h"
-// #include "common/AppLogger.h"
 #include "esp_log.h"
-// #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char* TAG = "DeviceCmd";
+
+IDeviceCommandDelegate* DeviceCommandHandler::s_delegate = nullptr;
+
+void DeviceCommandHandler::setDelegate(IDeviceCommandDelegate* delegate) {
+    s_delegate = delegate;
+}
+
+IDeviceCommandDelegate* DeviceCommandHandler::getDelegate() {
+    return s_delegate;
+}
 
 bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call, JsonDocument& response_doc) {
     using namespace GeminiSkills;
@@ -22,7 +27,12 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Null write file arguments";
                 return true;
             }
-            bool ok = Services::StorageService::getInstance().writeFile(args->path.c_str(), args->content.c_str());
+            if (!s_delegate) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Storage service unavailable";
+                return true;
+            }
+            bool ok = s_delegate->writeFile(args->path.c_str(), args->content.c_str());
             response_doc["status"] = ok ? "success" : "error";
             response_doc["message"] = ok ? "File written successfully" : "Failed to write file";
             return true;
@@ -35,8 +45,13 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Null read file arguments";
                 return true;
             }
-            std::string content = Services::StorageService::getInstance().readFile(args->path.c_str());
-            if (!content.empty() || Services::StorageService::getInstance().fileExists(args->path.c_str())) {
+            if (!s_delegate) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Storage service unavailable";
+                return true;
+            }
+            std::string content = s_delegate->readFile(args->path.c_str());
+            if (!content.empty() || s_delegate->fileExists(args->path.c_str())) {
                 response_doc["status"] = "success";
                 response_doc["content"] = content;
             } else {
@@ -105,7 +120,12 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Null MQTT forwarding arguments";
                 return true;
             }
-            bool ok = MqttService::getInstance().publish(args->topic.c_str(), args->message.c_str());
+            if (!s_delegate) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "MQTT service unavailable";
+                return true;
+            }
+            bool ok = s_delegate->publishMqtt(args->topic.c_str(), args->message.c_str());
             response_doc["status"] = ok ? "success" : "error";
             response_doc["message"] = ok ? "MQTT forward message published" : "Failed to publish forward message";
             return true;
@@ -127,44 +147,22 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 return true;
             }
 
-            // Find if an alarm already exists at this time or find next free ID
-            auto alarms = Services::AlarmService::getInstance().getAlarms();
-            int target_id = -1;
-            int max_id = 0;
-            for (const auto& a : alarms) {
-                if (a.id > max_id) {
-                    max_id = a.id;
-                }
-                if (a.hour == hour && a.minute == minute) {
-                    target_id = a.id;
-                }
+            if (!s_delegate) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Alarm service unavailable";
+                return true;
             }
 
-            if (target_id == -1) {
-                target_id = max_id + 1;
+            int alarm_id = -1;
+            bool ok = s_delegate->setAlarm(hour, minute, args->tone_file.c_str(), args->enabled, alarm_id);
+            if (ok) {
+                response_doc["status"] = "success";
+                response_doc["message"] = "Alarm set successfully";
+                response_doc["alarm_id"] = alarm_id;
+            } else {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Failed to set alarm";
             }
-
-            Services::Alarm alarm;
-            alarm.id = target_id;
-            alarm.hour = hour;
-            alarm.minute = minute;
-            alarm.enabled = args->enabled;
-
-            std::string tone = args->tone_file;
-            if (tone.empty()) {
-                tone = "/sdcard/alarms/soft_wake_up.wav";
-            }
-            strncpy(alarm.tone_file, tone.c_str(), sizeof(alarm.tone_file) - 1);
-            alarm.tone_file[sizeof(alarm.tone_file) - 1] = '\0';
-
-            ESP_LOGI(TAG, "Tool request: Setting alarm %d for %02d:%02d (%s, %s)...", 
-                     alarm.id, alarm.hour, alarm.minute, alarm.tone_file, alarm.enabled ? "enabled" : "disabled");
-            
-            Services::AlarmService::getInstance().addOrUpdateAlarm(alarm);
-
-            response_doc["status"] = "success";
-            response_doc["message"] = "Alarm set successfully";
-            response_doc["alarm_id"] = alarm.id;
             return true;
         }
 
@@ -175,10 +173,16 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Null save to memory arguments";
                 return true;
             }
+            if (!s_delegate) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Storage service unavailable";
+                return true;
+            }
+
             std::string path = "/sdcard/gemini_memory.txt";
             bool too_large = false;
-            if (Services::StorageService::getInstance().fileExists(path.c_str())) {
-                std::string current = Services::StorageService::getInstance().readFile(path.c_str());
+            if (s_delegate->fileExists(path.c_str())) {
+                std::string current = s_delegate->readFile(path.c_str());
                 if (current.length() >= 16384) {
                     too_large = true;
                 }
@@ -191,7 +195,7 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             }
 
             std::string line = args->text + "\n";
-            bool ok = Services::StorageService::getInstance().appendFile(path.c_str(), line.c_str());
+            bool ok = s_delegate->appendFile(path.c_str(), line.c_str());
             response_doc["status"] = ok ? "success" : "error";
             response_doc["message"] = ok ? "Information successfully saved to long-term memory." : "Failed to write to memory file.";
             return true;
@@ -199,7 +203,12 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
 
         case SkillType::STOP_ACTIVE_ALARM: {
             ESP_LOGI(TAG, "Tool request: Stopping active alarm tone...");
-            Services::AlarmService::getInstance().stopActiveAlarm();
+            if (!s_delegate) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Alarm service unavailable";
+                return true;
+            }
+            s_delegate->stopActiveAlarm();
             response_doc["status"] = "success";
             response_doc["message"] = "Alarm cancellation triggered";
             return true;
@@ -211,14 +220,6 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             response_doc["message"] = "Tool not supported on this firmware version.";
             return true;
         }
-
-        // case SkillType::LIST_ALARMS: {
-        //     auto alarms = Services::AlarmService::getInstance().getAlarms();
-        //     response_doc["status"] = "success";
-        //     response_doc["message"] = "Alarms listed successfully";
-        //     response_doc["alarms"] = alarms;
-        //     return true;
-        // }
 
         default:
             // Forward to the Media command handler

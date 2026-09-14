@@ -10,9 +10,15 @@
 #include <mutex>
 #include <string>
 
+class IStorageService;
+
 class GeminiProtocol : public ReactorTask {
 public:
     static GeminiProtocol& getInstance();
+
+    void setStorageService(IStorageService* storage) {
+        m_storage = storage;
+    }
 
     typedef void (*ToolCallHandlerFn)(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx);
 
@@ -54,6 +60,7 @@ private:
 
     ToolCallHandlerFn m_tool_handler = nullptr;
     void* m_tool_ctx = nullptr;
+    IStorageService* m_storage = nullptr;
 
     // Persistent Zero-Allocation Arenas for Audio & Skill Tool execution
     uint8_t* m_static_pcm_scratch_arena = nullptr;

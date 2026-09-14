@@ -1,12 +1,15 @@
 #include "AppController.h"
 #include "app/audio/AudioService.h"
-#include "app/gemini_live/GeminiProtocol.h"
-#include "app/gemini_live/gemini_skills_generated.h"
+#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/gemini_skills_generated.h"
 #include "app/led/LedService.h"
-#include "app/assistant/AssistantService.h"
-#include "app/assistant/MediaCommandHandler.h"
-#include "app/assistant/DeviceCommandHandler.h"
+#include "gemini_live/AssistantService.h"
+#include "gemini_live/MediaCommandHandler.h"
+#include "gemini_live/DeviceCommandHandler.h"
 #include "services/time/TimeSyncHelper.h"
+#include "services/storage/StorageService.h"
+#include "services/alarm/AlarmService.h"
+#include "app/mqtt/MqttService.h"
 
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
@@ -37,6 +40,9 @@ AppController &AppController::getInstance() {
 }
 
 bool AppController::begin() {
+    // Register platform delegate for local device commands
+    DeviceCommandHandler::setDelegate(this);
+
     // Register tool-call handler callback with GeminiProtocol
     GeminiProtocol::getInstance().setToolCallHandler(handleGeminiToolCall, this);
 
@@ -191,3 +197,73 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
         });
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IDeviceCommandDelegate Implementation
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool AppController::writeFile(const char* path, const char* content) {
+    return Services::StorageService::getInstance().writeFile(path, content);
+}
+
+std::string AppController::readFile(const char* path) {
+    return Services::StorageService::getInstance().readFile(path);
+}
+
+bool AppController::fileExists(const char* path) {
+    return Services::StorageService::getInstance().fileExists(path);
+}
+
+bool AppController::appendFile(const char* path, const char* content) {
+    return Services::StorageService::getInstance().appendFile(path, content);
+}
+
+bool AppController::publishMqtt(const char* topic, const char* message) {
+#if CONFIG_WAVESHARE_MQTT_ENABLE
+    return MqttService::getInstance().publish(topic, message);
+#else
+    return false;
+#endif
+}
+
+bool AppController::setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) {
+    auto alarms = Services::AlarmService::getInstance().getAlarms();
+    int target_id = -1;
+    int max_id = 0;
+    for (const auto& a : alarms) {
+        if (a.id > max_id) {
+            max_id = a.id;
+        }
+        if (a.hour == hour && a.minute == minute) {
+            target_id = a.id;
+        }
+    }
+
+    if (target_id == -1) {
+        target_id = max_id + 1;
+    }
+
+    Services::Alarm alarm;
+    alarm.id = target_id;
+    alarm.hour = hour;
+    alarm.minute = minute;
+    alarm.enabled = enabled;
+
+    std::string tone = (tone_file && tone_file[0] != '\0') ? tone_file : "/sdcard/alarms/soft_wake_up.wav";
+    strncpy(alarm.tone_file, tone.c_str(), sizeof(alarm.tone_file) - 1);
+    alarm.tone_file[sizeof(alarm.tone_file) - 1] = '\0';
+
+    ESP_LOGI(TAG, "Tool request: Setting alarm %d for %02d:%02d (%s, %s)...", 
+             alarm.id, alarm.hour, alarm.minute, alarm.tone_file, alarm.enabled ? "enabled" : "disabled");
+    
+    Services::AlarmService::getInstance().addOrUpdateAlarm(alarm);
+    out_alarm_id = target_id;
+    return true;
+}
+
+bool AppController::stopActiveAlarm() {
+    ESP_LOGI(TAG, "Tool request: Stopping active alarm tone...");
+    Services::AlarmService::getInstance().stopActiveAlarm();
+    return true;
+}
+

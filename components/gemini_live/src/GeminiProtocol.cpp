@@ -4,7 +4,7 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
-#include "services/storage/StorageService.h"
+#include "common/storage/IStorageService.h"
 #include <ArduinoJson.h>
 #include "sdkconfig.h"
 #include "esp_timer.h"
@@ -116,9 +116,9 @@ bool GeminiProtocol::ensureClientInitialized() {
     }
 
     std::string api_key = "";
-    if (Services::StorageService::getInstance().isMounted() &&
-        Services::StorageService::getInstance().fileExists("/sdcard/gemini_config.json")) {
-        std::string content = Services::StorageService::getInstance().readFile("/sdcard/gemini_config.json");
+    if (m_storage && m_storage->isMounted() &&
+        m_storage->fileExists("/sdcard/gemini_config.json")) {
+        std::string content = m_storage->readFile("/sdcard/gemini_config.json");
         if (!content.empty()) {
             JsonDocument doc;
             DeserializationError err = deserializeJson(doc, content);
@@ -225,9 +225,9 @@ void GeminiProtocol::transmitSetupHandshake() {
     
     // Check if memory file exists and read it
     std::string memory_content = "";
-    if (Services::StorageService::getInstance().isMounted() &&
-        Services::StorageService::getInstance().fileExists("/sdcard/gemini_memory.txt")) {
-        memory_content = Services::StorageService::getInstance().readFile("/sdcard/gemini_memory.txt");
+    if (m_storage && m_storage->isMounted() &&
+        m_storage->fileExists("/sdcard/gemini_memory.txt")) {
+        memory_content = m_storage->readFile("/sdcard/gemini_memory.txt");
     }
 
     if (!memory_content.empty()) {

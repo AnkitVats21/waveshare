@@ -3,11 +3,11 @@
 #include "app/audio/AudioOrchestrator.h"
 #include "app/audio/AlertPlayer.h"
 #include "app/led/LedService.h"
-#include "app/assistant/AssistantService.h"
+#include "gemini_live/AssistantService.h"
 #include "app/mqtt/MqttService.h"
 #include "app/input/KeyService.h"
-#include "app/gemini_live/GeminiProtocol.h"
-#include "app/gemini_live/GeminiAudioPump.h"
+#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/GeminiAudioPump.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/MusicPlaybackService.h"
 #include "common/AppLogger.h"
@@ -143,6 +143,7 @@ extern "C" void app_main(void) {
 #if CONFIG_WAVESHARE_MQTT_ENABLE
     mqtt_svc.begin();
 #endif
+    GeminiProtocol::getInstance().setStorageService(&Services::StorageService::getInstance());
     NexusPlayer::getInstance().setStorageService(&Services::StorageService::getInstance());
     NexusPlayer::getInstance().begin();
     MusicPlaybackService::getInstance().begin();
