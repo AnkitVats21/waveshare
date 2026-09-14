@@ -422,9 +422,18 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
     });
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
 
-    // If recommendations were piggybacked, add them to the queue
+    // If recommendations were piggybacked and queue is empty or low, add them to the queue
     if (isAutoplayEnabled() && !recommendations.empty()) {
-        populateRecommendations(recommendations, track.title);
+        bool shouldPopulate = false;
+        {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            if (_queue.empty() || _queue.size() <= QUEUE_LOW_WATERMARK) {
+                shouldPopulate = true;
+            }
+        }
+        if (shouldPopulate) {
+            populateRecommendations(recommendations, track.title);
+        }
     }
 
     return ESP_OK;
@@ -469,9 +478,9 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
 
     NexusPlayer::getInstance().stop();
 
-    std::vector<InvidiousTrack> tracks;
-    esp_err_t err = _invidious.searchList(query, tracks, 5);
-    if (err != ESP_OK || tracks.empty()) {
+    InvidiousTrack track;
+    esp_err_t err = _invidious.search(query, track);
+    if (err != ESP_OK || track.videoId.empty()) {
         ESP_LOGE(TAG, "Search failed for '%s': %s", query, esp_err_to_name(err));
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.media.state = MediaPlaybackState::IDLE;
@@ -480,18 +489,10 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
     }
 
     clearQueue();
-    ESP_LOGI(TAG, "Search for '%s' resolved to: '%s' by '%s' [%s] (found %zu tracks)",
-             query, tracks[0].title.c_str(), tracks[0].author.c_str(), tracks[0].videoId.c_str(), tracks.size());
+    ESP_LOGI(TAG, "Search for '%s' resolved to: '%s' by '%s' [%s]",
+             query, track.title.c_str(), track.author.c_str(), track.videoId.c_str());
 
-    if (isAutoplayEnabled() && tracks.size() > 1) {
-        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-        for (size_t i = 1; i < tracks.size(); ++i) {
-            _queue.push_back(tracks[i]);
-        }
-        ESP_LOGI(TAG, "Queued %zu related search results for upcoming autoplay", tracks.size() - 1);
-    }
-
-    return playTrack(tracks[0]);
+    return playTrack(track);
 }
 
 bool MusicPlaybackService::playNextInternal(const char* query) {
