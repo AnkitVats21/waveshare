@@ -31,17 +31,6 @@ set(srcs
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
-            "app/media_player/NexusPlayer.cpp"
-            "app/media_player/AudioEngine.cpp"
-            "app/media_player/StorageManager.cpp"
-            "app/media_player/StreamManager.cpp"
-            "app/media_player/HttpClientStream.cpp"
-            "app/media_player/InvidiousClient.cpp"
-            "app/media_player/InvidiousInstanceResolver.cpp"
-            "app/media_player/WebMOpusDecoder.cpp"
-            "app/media_player/OggOpusDecoderStrategy.cpp"
-            "app/media_player/AudioDecoderFactory.cpp"
-            "app/media_player/MusicPlaybackService.cpp"
             "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
 

@@ -14,7 +14,6 @@ static const char* TAG = "StorageManager";
 
 StorageManager::StorageManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
     : _bm(BufferManager::getInstance()),
-      _storageService(Services::StorageService::getInstance()),
       _playbackId(playbackId),
       _storageId(storageId) {}
 
@@ -23,7 +22,7 @@ StorageManager::~StorageManager() {
 }
 
 bool StorageManager::getValidCachedPath(const char* songId, char* outPath, size_t maxLen) {
-    if (!songId || songId[0] == '\0' || !outPath || maxLen == 0) return false;
+    if (!songId || songId[0] == '\0' || !outPath || maxLen == 0 || !_storageService) return false;
     const char* extensions[] = {".ogg", ".opus"};
     struct stat st;
 
@@ -34,7 +33,7 @@ bool StorageManager::getValidCachedPath(const char* songId, char* outPath, size_
                 return true;
             }
             ESP_LOGW(TAG, "Cached file %s is corrupt or incomplete (size=%ld < 32KB). Deleting.", outPath, (long)st.st_size);
-            _storageService.deleteFile(outPath);
+            _storageService->deleteFile(outPath);
         }
     }
     outPath[0] = '\0';
@@ -42,22 +41,23 @@ bool StorageManager::getValidCachedPath(const char* songId, char* outPath, size_
 }
 
 bool StorageManager::fileExists(const char* songId) {
+    if (!_storageService) return false;
     char path[128];
     return getValidCachedPath(songId, path, sizeof(path));
 }
 
 bool StorageManager::deleteFile(const char* songId) {
-    if (!songId || songId[0] == '\0') return false;
+    if (!songId || songId[0] == '\0' || !_storageService) return false;
     char path[128];
     bool deleted = false;
 
     snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
-    if (_storageService.fileExists(path)) {
-        deleted = _storageService.deleteFile(path) || deleted;
+    if (_storageService->fileExists(path)) {
+        deleted = _storageService->deleteFile(path) || deleted;
     }
     snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
-    if (_storageService.fileExists(path)) {
-        deleted = _storageService.deleteFile(path) || deleted;
+    if (_storageService->fileExists(path)) {
+        deleted = _storageService->deleteFile(path) || deleted;
     }
     if (deleted) {
         ESP_LOGI(TAG, "Deleted local cached audio file(s) for songId: %s", songId);
@@ -66,7 +66,7 @@ bool StorageManager::deleteFile(const char* songId) {
 }
 
 bool StorageManager::openFileForCaching(const char* songId) {
-    if (!songId) return false;
+    if (!songId || !_storageService || !_storageService->isMounted()) return false;
     closeActiveFile();
 
     // Create the /sdcard/music directory if it doesn't exist
@@ -81,7 +81,7 @@ bool StorageManager::openFileForCaching(const char* songId) {
     snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.ogg.tmp", songId);
 
     ESP_LOGI(TAG, "Opening cache stream at: %s", tempPath);
-    _writeStream = _storageService.openStream(tempPath, "wb");
+    _writeStream = _storageService->openStream(tempPath, "wb");
     if (!_writeStream) {
         ESP_LOGE(TAG, "Failed to open cache stream for writing: %s", tempPath);
         return false;
@@ -136,7 +136,7 @@ bool StorageManager::openFileForCaching(const char* songId) {
 }
 
 bool StorageManager::openFileForReading(const char* songId) {
-    if (!songId) return false;
+    if (!songId || !_storageService || !_storageService->isMounted()) return false;
     closeActiveFile();
 
     char path[128];
@@ -148,7 +148,7 @@ bool StorageManager::openFileForReading(const char* songId) {
     struct stat st;
     stat(path, &st);
     ESP_LOGI(TAG, "Opening local playback stream at: %s (size=%ld bytes)", path, (long)st.st_size);
-    _readStream = _storageService.openStream(path, "rb");
+    _readStream = _storageService->openStream(path, "rb");
     if (!_readStream) {
         ESP_LOGE(TAG, "Failed to open playback stream: %s", path);
         return false;
@@ -200,11 +200,11 @@ void StorageManager::closeActiveFile() {
 
     // Safely close handles
     if (_writeStream) {
-        _storageService.closeStream(_writeStream);
+        if (_storageService) _storageService->closeStream(_writeStream);
         _writeStream = nullptr;
     }
     if (_readStream) {
-        _storageService.closeStream(_readStream);
+        if (_storageService) _storageService->closeStream(_readStream);
         _readStream = nullptr;
     }
 
@@ -217,8 +217,8 @@ void StorageManager::closeActiveFile() {
 
         if (_downloadComplete) {
             ESP_LOGI(TAG, "Download complete. Committing cache to target: %s", targetPath);
-            if (_storageService.fileExists(targetPath)) {
-                _storageService.deleteFile(targetPath);
+            if (_storageService && _storageService->fileExists(targetPath)) {
+                _storageService->deleteFile(targetPath);
             }
             int ret = rename(tempPath, targetPath);
             if (ret != 0) {
@@ -228,8 +228,8 @@ void StorageManager::closeActiveFile() {
             }
         } else {
             ESP_LOGI(TAG, "Download incomplete or aborted. Cleaning up temp cache: %s", tempPath);
-            if (_storageService.fileExists(tempPath)) {
-                _storageService.deleteFile(tempPath);
+            if (_storageService && _storageService->fileExists(tempPath)) {
+                _storageService->deleteFile(tempPath);
             }
         }
     }
@@ -272,7 +272,7 @@ void StorageManager::runWriterTaskLoop() {
 
         if (chunk->type == ChunkType::DATA && chunk->size > 0) {
             uint8_t* payload = reinterpret_cast<uint8_t*>(chunk) + sizeof(AudioChunkHeader);
-            size_t written = _storageService.writeStream(_writeStream, payload, chunk->size);
+            size_t written = _storageService ? _storageService->writeStream(_writeStream, payload, chunk->size) : 0;
             if (written != chunk->size) {
                 ESP_LOGE(TAG, "Writer Task: Disk write error! Expected %u, wrote %u", (unsigned)chunk->size, (unsigned)written);
             } else {
@@ -374,7 +374,7 @@ void StorageManager::runReaderTaskLoop() {
             }
         } else {
             // Standard Local Cache Hit Playback
-            size_t read_bytes = _storageService.readStream(_readStream, payload, AUDIO_CHUNK_SIZE);
+            size_t read_bytes = _storageService ? _storageService->readStream(_readStream, payload, AUDIO_CHUNK_SIZE) : 0;
             if (read_bytes > 0) {
                 header->type = ChunkType::DATA;
                 header->size = read_bytes;

@@ -143,6 +143,7 @@ extern "C" void app_main(void) {
 #if CONFIG_WAVESHARE_MQTT_ENABLE
     mqtt_svc.begin();
 #endif
+    NexusPlayer::getInstance().setStorageService(&Services::StorageService::getInstance());
     NexusPlayer::getInstance().begin();
     MusicPlaybackService::getInstance().begin();
     gemini_pump.start();

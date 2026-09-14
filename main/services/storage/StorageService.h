@@ -6,9 +6,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include "media_player/IStorageService.h"
+
 namespace Services {
 
-class StorageService {
+class StorageService : public IStorageService {
 public:
     static StorageService& getInstance();
 

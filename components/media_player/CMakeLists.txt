@@ -1,0 +1,26 @@
+idf_component_register(
+    SRCS
+        "src/NexusPlayer.cpp"
+        "src/AudioEngine.cpp"
+        "src/StorageManager.cpp"
+        "src/StreamManager.cpp"
+        "src/HttpClientStream.cpp"
+        "src/InvidiousClient.cpp"
+        "src/InvidiousInstanceResolver.cpp"
+        "src/WebMOpusDecoder.cpp"
+        "src/OggOpusDecoderStrategy.cpp"
+        "src/AudioDecoderFactory.cpp"
+        "src/MusicPlaybackService.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        core_sysdb
+        audio_core
+        esp_http_client
+        mbedtls
+        freertos
+        esp_system
+        esp_timer
+        log
+        heap
+)

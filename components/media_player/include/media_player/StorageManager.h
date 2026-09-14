@@ -1,12 +1,14 @@
 #pragma once
 #include <cstdio>
-#include "services/BufferManager.h"
-#include "services/storage/StorageService.h"
+#include "core_sysdb/BufferManager.h"
+#include "media_player/IStorageService.h"
 
 class StorageManager {
 public:
     StorageManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId);
     ~StorageManager();
+
+    void setStorageService(IStorageService* storageService) { _storageService = storageService; }
 
     bool fileExists(const char* songId);
     bool deleteFile(const char* songId);
@@ -24,7 +26,7 @@ private:
     bool getValidCachedPath(const char* songId, char* outPath, size_t maxLen);
 
     BufferManager& _bm;
-    Services::StorageService& _storageService;
+    IStorageService* _storageService = nullptr;
     
     BufferManager::BufferId _playbackId;
     BufferManager::BufferId _storageId;
