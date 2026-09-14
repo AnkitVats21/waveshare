@@ -4,9 +4,33 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "common/ParserUtils.h"
 #include <cstdio>
+#include <string>
 
 namespace Services {
+
+namespace {
+struct StateParseCtx {
+    int volume = 80;
+    int r = 0, g = 0, b = 0;
+    bool autoplay = true;
+    bool cache_downloads = false;
+};
+
+static void onStatePair(const std::string& key, const std::string& val, void* ctx) {
+    auto* p = static_cast<StateParseCtx*>(ctx);
+    if (key == "speaker_volume") {
+        p->volume = std::stoi(val);
+    } else if (key == "led_color") {
+        sscanf(val.c_str(), "%d,%d,%d", &p->r, &p->g, &p->b);
+    } else if (key == "autoplay") {
+        p->autoplay = (val == "1" || val == "true");
+    } else if (key == "cache_downloads" || key == "caching") {
+        p->cache_downloads = (val == "1" || val == "true");
+    }
+}
+} // namespace
 
 SysDbSyncReactor& SysDbSyncReactor::getInstance() {
     static SysDbSyncReactor instance;
@@ -25,6 +49,33 @@ SysDbSyncReactor::SysDbSyncReactor()
 
 bool SysDbSyncReactor::begin() {
     ESP_LOGI(TAG, "SysDbSyncReactor operational.");
+    return true;
+}
+
+bool SysDbSyncReactor::loadPersistentState() {
+    if (!StorageService::getInstance().isMounted() ||
+        !StorageService::getInstance().fileExists("/sdcard/state_sync.txt")) {
+        return false;
+    }
+
+    std::string content = StorageService::getInstance().readFile("/sdcard/state_sync.txt");
+    if (content.empty()) {
+        return false;
+    }
+
+    StateParseCtx parseCtx;
+    Utils::ParserUtils::parseKeyValueStream(content, onStatePair, &parseCtx);
+
+    EmbeddedSysDb::getInstance().mutate([parseCtx](SystemState& s) {
+        s.audio.speaker_volume = parseCtx.volume;
+        s.led.color = { (uint8_t)parseCtx.r, (uint8_t)parseCtx.g, (uint8_t)parseCtx.b };
+        s.led.mode = LedMode::SOLID;
+        s.media.autoplay_enabled = parseCtx.autoplay;
+        s.media.cache_downloads = parseCtx.cache_downloads;
+    });
+
+    ESP_LOGI(TAG, "Persistent state restored from SD card: vol=%d, color=%d,%d,%d, autoplay=%d, cache_downloads=%d",
+             parseCtx.volume, parseCtx.r, parseCtx.g, parseCtx.b, parseCtx.autoplay, parseCtx.cache_downloads);
     return true;
 }
 

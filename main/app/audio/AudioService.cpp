@@ -8,9 +8,8 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "hal/audio/AudioHal.h"
-#include "hal/companion/BtPlayerI2s.h"
-#include "hal/companion/BtPlayerUart.h"
-#include "services/storage/AlertFileDecoder.h"
+#include "audio_core/ICompanionAudioSink.h"
+#include "audio_core/ICompanionControl.h"
 #include "services/BufferManager.h"
 
 static auto &sysdb = EmbeddedSysDb::getInstance();
@@ -19,7 +18,9 @@ static auto &sysdb = EmbeddedSysDb::getInstance();
 // Construction
 // ─────────────────────────────────────────────────────────────────────────────
 
-AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles)
+AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles,
+                           ICompanionAudioSink* companion_sink,
+                           ICompanionControl* companion_ctrl)
     : ReactorTask({
           "audio_svc",
           ThreadConfig::StackSize::STACK_NORMAL,
@@ -29,6 +30,8 @@ AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles)
       })
     , m_hal(hal)
     , m_handles(handles)
+    , m_companion_sink(companion_sink)
+    , m_companion_ctrl(companion_ctrl)
 {}
 
 AudioService::~AudioService() {
@@ -56,13 +59,14 @@ bool AudioService::begin() {
     }
 
     m_speaker_task = std::make_unique<SpeakerPlaybackTask>();
-#if CONFIG_BT_COMPANION_ENABLE
-    m_speaker_task->setCompanionSink(&btplayer::BtPlayerI2s::getInstance());
-    AudioOrchestrator::getInstance().setCompanionControl(&btplayer::BtPlayerUart::getInstance());
-#endif
+    if (m_companion_sink) {
+        m_speaker_task->setCompanionSink(m_companion_sink);
+    }
+    if (m_companion_ctrl) {
+        AudioOrchestrator::getInstance().setCompanionControl(m_companion_ctrl);
+    }
     m_speaker_task->start(m_handles.play_dev);
     AudioOrchestrator::getInstance().setSpeakerPlayback(m_speaker_task.get());
-    AlertPlayer::getInstance().setFileDecoder(&AlertFileDecoder::getInstance());
 
     // Wire WakeWordEngine — inject AudioHal& as IAudioFeedSource, self as listener
     auto& ww = WakeWordEngine::getInstance();

@@ -21,9 +21,6 @@ set(srcs
             # HAL — Storage
             "hal/storage/SdCardManager.cpp"
 
-            # HAL — Network
-            "hal/network/WifiService.cpp"
-
             # HAL — Bluetooth Companion
             "hal/companion/BtPlayerUart.cpp"
             "hal/companion/BtPlayerI2s.cpp"
@@ -38,6 +35,7 @@ set(srcs
             "app/led/LedService.cpp"
 
             # Services
+            "services/network/WifiService.cpp"
             "services/config_manager/config_manager.cpp"
             "services/config_manager/config_generated.cpp"
             "services/storage/StorageService.cpp"
@@ -58,7 +56,7 @@ idf_component_register(
             "hal/audio"
             "hal/network"
             "hal/companion"
-            "hal/interfaces"
+            "hal/input"
             # App layers
             "app"
             "app/audio"
@@ -67,11 +65,9 @@ idf_component_register(
             "app/led"
             # Services / common
             "services"
+            "services/network"
             "common"
             "common/audio"
-            "hal/input"
-
-            # HAL interfaces
-            "hal/interfaces"
 )
+
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio_core/AlertPlayer.h"
+#include "audio_core/SpeakerPlayback.h"
 #include "audio_core/Resampler.h"
 #include "core_sysdb/BufferManager.h"
 #include "app/media_player/AudioDecoderFactory.h"
