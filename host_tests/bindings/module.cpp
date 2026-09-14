@@ -5,4 +5,5 @@ NB_MODULE(waveshare_host, m) {
 
     init_sysdb(m);
     init_buffers(m);
+    init_resampler(m);
 }
