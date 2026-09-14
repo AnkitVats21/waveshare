@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS
+        "src/SpeakerPlayback.cpp"
+        "src/AudioOrchestrator.cpp"
+        "src/AlertPlayer.cpp"
+        "src/MicCapture.cpp"
+        "src/Resampler.cpp"
+        "src/WakeWordEngine.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        core_sysdb
+        esp_codec_dev
+        esp-sr
+        esp_driver_i2s
+        freertos
+        esp_system
+        esp_timer
+        log
+        heap
+)

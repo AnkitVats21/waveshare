@@ -2,11 +2,15 @@
 #include "app/audio/AudioOrchestrator.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
+#include "app/audio/AlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "hal/audio/AudioHal.h"
+#include "hal/companion/BtPlayerI2s.h"
+#include "hal/companion/BtPlayerUart.h"
+#include "services/storage/AlertFileDecoder.h"
 #include "services/BufferManager.h"
 
 static auto &sysdb = EmbeddedSysDb::getInstance();
@@ -52,8 +56,13 @@ bool AudioService::begin() {
     }
 
     m_speaker_task = std::make_unique<SpeakerPlaybackTask>();
+#if CONFIG_BT_COMPANION_ENABLE
+    m_speaker_task->setCompanionSink(&btplayer::BtPlayerI2s::getInstance());
+    AudioOrchestrator::getInstance().setCompanionControl(&btplayer::BtPlayerUart::getInstance());
+#endif
     m_speaker_task->start(m_handles.play_dev);
     AudioOrchestrator::getInstance().setSpeakerPlayback(m_speaker_task.get());
+    AlertPlayer::getInstance().setFileDecoder(&AlertFileDecoder::getInstance());
 
     // Wire WakeWordEngine — inject AudioHal& as IAudioFeedSource, self as listener
     auto& ww = WakeWordEngine::getInstance();

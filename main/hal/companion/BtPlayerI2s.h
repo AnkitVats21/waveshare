@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "audio_core/ICompanionAudioSink.h"
+
 namespace btplayer {
 
-class BtPlayerI2s {
+class BtPlayerI2s : public ICompanionAudioSink {
 public:
     struct Config {
         int      port         = 0; // I2S_NUM_0

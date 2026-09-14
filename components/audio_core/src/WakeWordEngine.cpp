@@ -1,4 +1,4 @@
-#include "app/wake_word/WakeWordEngine.h"
+#include "audio_core/WakeWordEngine.h"
 
 #include <cstring>
 
@@ -9,14 +9,13 @@
 #include "esp_wn_models.h"
 #include "model_path.h"
 
-#include "app/audio/MicCapture.h"  // for Buffers::MIC_TX_BUF
-#include "app/audio/SpeakerPlayback.h"
-#include "app/audio/AudioOrchestrator.h"
-#include "common/AppLogger.h"
-#include "common/AudioRates.h"
-#include "common/audio/Resampler.h"
-#include "services/BufferManager.h"
-#include "hal/Board.h"
+#include "audio_core/MicCapture.h"  // for Buffers::MIC_TX_BUF
+#include "audio_core/SpeakerPlayback.h"
+#include "audio_core/AudioOrchestrator.h"
+#include "core_sysdb/AppLogger.h"
+#include "core_sysdb/AudioRates.h"
+#include "audio_core/Resampler.h"
+#include "core_sysdb/BufferManager.h"
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
@@ -404,7 +403,9 @@ void WakeWordEngine::pauseProcessing() {
     }
 
     // 2. Disable I2S RX DMA to prevent buffer overflows and save CPU during pause
-    Board::getInstance().getAudio().pauseRecord();
+    if (m_feed_source) {
+        m_feed_source->pauseFeed();
+    }
 
     // 3. Flush the AFE internal ring buffer so stale audio doesn't cause pitch/sync artifacts when we resume.
     if (m_afe_handle && m_afe_data) {
@@ -416,7 +417,9 @@ void WakeWordEngine::pauseProcessing() {
 void WakeWordEngine::resumeProcessing() {
     ESP_LOGI(TAG, "resumeProcessing(): releasing feedTask and detectTask...");
     // 1. Re-enable I2S RX DMA to get a completely fresh stream of microphone audio
-    Board::getInstance().getAudio().resumeRecord();
+    if (m_feed_source) {
+        m_feed_source->resumeFeed();
+    }
 
     // 2. Set RUNNING bit — both tasks unblock simultaneously in the FreeRTOS scheduler
     if (m_audio_event_group) {

@@ -31,10 +31,6 @@ set(srcs
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
-            "app/audio/AudioOrchestrator.cpp"
-            "app/audio/AlertPlayer.cpp"
-            "app/audio/MicCapture.cpp"
-            "app/audio/SpeakerPlayback.cpp"
             "app/media_player/NexusPlayer.cpp"
             "app/media_player/AudioEngine.cpp"
             "app/media_player/StorageManager.cpp"
@@ -48,9 +44,6 @@ set(srcs
             "app/media_player/MusicPlaybackService.cpp"
             "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
-
-            # Wake Word Detection
-            "app/wake_word/WakeWordEngine.cpp"
 
             # Event and LED Services
             "app/led/LedService.cpp"
@@ -68,9 +61,6 @@ set(srcs
             "services/storage/SysDbSyncReactor.cpp"
             "services/time/TimeSyncHelper.cpp"
             "services/alarm/AlarmService.cpp"
-
-            # Common utilities
-            "common/audio/Resampler.cpp"
 )
 
 if(CONFIG_VOICE_BACKEND_GEMINI_LIVE)

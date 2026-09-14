@@ -8,9 +8,11 @@
 #include <functional>
 #include <string>
 
+#include "audio_core/ICompanionControl.h"
+
 namespace btplayer {
 
-class BtPlayerUart {
+class BtPlayerUart : public ICompanionControl {
 public:
     struct Config {
         int uart_num       = 1;

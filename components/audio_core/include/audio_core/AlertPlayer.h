@@ -13,6 +13,12 @@ enum AlertType {
     ALERT_OFFLINE
 };
 
+class IAlertFileDecoder {
+public:
+    virtual ~IAlertFileDecoder() = default;
+    virtual bool playAlertFile(const char* path) = 0;
+};
+
 /**
  * @brief Dedicated subsystem for audio alert chimes and system notifications.
  *
@@ -27,6 +33,8 @@ public:
     bool begin();
     bool start();
     void stop();
+
+    void setFileDecoder(IAlertFileDecoder* decoder) { m_file_decoder = decoder; }
 
     /**
      * @brief Asynchronously enqueues an alert to be played.
@@ -44,9 +52,9 @@ private:
     void workerTask();
 
     void processAlert(AlertType type);
-    bool playAlertFile(const char* path);
     void playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms);
 
+    IAlertFileDecoder* m_file_decoder = nullptr;
     QueueHandle_t m_queue = nullptr;
     TaskHandle_t  m_task_handle = nullptr;
     volatile bool m_running = false;

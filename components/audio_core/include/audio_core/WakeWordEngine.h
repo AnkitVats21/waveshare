@@ -6,9 +6,9 @@
 #include "freertos/event_groups.h"
 #include "esp_afe_sr_iface.h"
 
-#include "hal/audio/IAudioFeedSource.h"
-#include "app/wake_word/IWakeWordListener.h"
-#include "services/BufferManager.h"
+#include "audio_core/IAudioFeedSource.h"
+#include "audio_core/IWakeWordListener.h"
+#include "core_sysdb/BufferManager.h"
 
 /**
  * @brief Wake-word engine — pure AFE driver, no Board/EventBus/SysDb coupling.

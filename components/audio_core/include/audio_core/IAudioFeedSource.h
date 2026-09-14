@@ -36,5 +36,15 @@ public:
      */
     virtual const char* feedInputFormat() const = 0;
 
+    /**
+     * @brief Pause the audio feed (e.g. disable RX DMA during wake word pause).
+     */
+    virtual esp_err_t pauseFeed() { return ESP_OK; }
+
+    /**
+     * @brief Resume the audio feed (e.g. re-enable RX DMA).
+     */
+    virtual esp_err_t resumeFeed() { return ESP_OK; }
+
     virtual ~IAudioFeedSource() = default;
 };

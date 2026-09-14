@@ -15,7 +15,7 @@ DECLARE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
 #include "common/TaskBase.h"
 #include "common/thread_config.h"
 
-class AudioHal;
+#include "audio_core/IAudioFeedSource.h"
 
 /**
  * @brief Task for capturing audio from the microphone and sending it to a ring
@@ -23,14 +23,14 @@ class AudioHal;
  */
 class MicCaptureTask : public TaskBase {
 public:
-  explicit MicCaptureTask(AudioHal& hal)
+  explicit MicCaptureTask(IAudioFeedSource& feed_source)
       : TaskBase({
             "mic_capture_task",
             8 * 1024,
             ThreadConfig::Priority::MIC_CAPTURE,
             ThreadConfig::CORE_AUDIO
         })
-      , m_hal(hal), m_handle(nullptr) {}
+      , m_feed_source(feed_source), m_handle(nullptr) {}
 
   /**
    * @brief Start the microphone capture task
@@ -57,7 +57,7 @@ protected:
 private:
   bool processCapture(int16_t* raw_buffer, int16_t* pcm_buffer, size_t raw_bytes, size_t chunk_bytes, int feed_ch, size_t samples_per_chunk);
 
-  AudioHal&         m_hal;
+  IAudioFeedSource& m_feed_source;
   i2s_chan_handle_t m_handle;
   volatile bool m_is_enabled = true;
   float *m_lms_coeffs;

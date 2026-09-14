@@ -1,15 +1,16 @@
-#include "MicCapture.h"
-#include "hal/audio/AudioHal.h"
-#include "common/AppLogger.h"
+#include "audio_core/MicCapture.h"
+#include "audio_core/IAudioFeedSource.h"
+#include "core_sysdb/AppLogger.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
 #include <cmath>
 #include <cstring>
 
 // Defines + registers the MIC_TX_BUF ring buffer with BufferManager
 DEFINE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
 
-#include "common/thread_config.h"
+#include "core_sysdb/thread_config.h"
 
 void MicCaptureTask::start(i2s_chan_handle_t handle) {
   this->m_handle = handle;
@@ -17,13 +18,12 @@ void MicCaptureTask::start(i2s_chan_handle_t handle) {
 }
 
 void MicCaptureTask::run() {
-  AudioHal &audio = m_hal;
   const size_t SAMPLES_PER_CHUNK = 320; // 20ms @ 16kHz
   const size_t CHUNK_BYTE_SIZE   = SAMPLES_PER_CHUNK * sizeof(int16_t);
 
-  // The HAL now delivers 4 interleaved channels (RMNM) per frame.
-  // Allocate a 4-ch raw buffer and a separate mono output buffer.
-  const int    FEED_CH            = audio.getFeedChannel(); // 4
+  // The feed source delivers interleaved channels (e.g. 4-ch RMNM) per frame.
+  // Allocate a multi-ch raw buffer and a separate mono output buffer.
+  const int    FEED_CH            = m_feed_source.feedChannelCount();
   const size_t RAW_BYTES          = SAMPLES_PER_CHUNK * FEED_CH * sizeof(int16_t);
 
   int16_t *raw_buffer = (int16_t *)heap_caps_malloc(RAW_BYTES, MALLOC_CAP_SPIRAM);
@@ -37,7 +37,7 @@ void MicCaptureTask::run() {
     return;
   }
 
-  LOGI_HAL("MicCapture: reading 4-ch RMNM, forwarding ch0 (primary mic) to ring buffer.");
+  LOGI_HAL("MicCapture: reading multi-ch feed, forwarding primary mic to ring buffer.");
 
   while (this->m_running) {
     if (!m_is_enabled) {
@@ -52,8 +52,8 @@ void MicCaptureTask::run() {
 }
 
 bool MicCaptureTask::processCapture(int16_t* raw_buffer, int16_t* pcm_buffer, size_t raw_bytes, size_t chunk_bytes, int feed_ch, size_t samples_per_chunk) {
-  // Read raw 4-channel data (is_get_raw_channel = true)
-  if (m_hal.getFeedData(/*raw=*/true, raw_buffer, (int)raw_bytes) == ESP_OK) {
+  // Read raw multi-channel data
+  if (m_feed_source.readFeedData(raw_buffer, (int)raw_bytes) == ESP_OK) {
 
     // Extract channel 0 (primary mic, RMNM slot 0 = Reference; slot 1 = Mic1)
     // RMNM: slot0=Ref, slot1=Mic1, slot2=Noise, slot3=Mic2

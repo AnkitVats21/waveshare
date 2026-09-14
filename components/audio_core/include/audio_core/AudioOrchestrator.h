@@ -5,6 +5,8 @@
 #include <vector>
 #include <cstdint>
 
+#include "audio_core/ICompanionControl.h"
+
 enum class AudioTrack : uint8_t {
     VOICE,  // Gemini live assistant speech
     ALERT,  // Chimes, notifications, system sounds
@@ -41,6 +43,7 @@ public:
     bool begin();
 
     void setSpeakerPlayback(SpeakerPlaybackTask* spk) { m_speaker_task = spk; }
+    void setCompanionControl(ICompanionControl* ctrl) { m_companion_ctrl = ctrl; }
 
     // Observer management
     void addObserver(IAudioFocusObserver* observer);
@@ -89,6 +92,7 @@ private:
     void updateCompanionPlaybackState();
 
     SpeakerPlaybackTask* m_speaker_task = nullptr;
+    ICompanionControl*   m_companion_ctrl = nullptr;
 
     static constexpr const char* TAG = "AudioOrch";
 };

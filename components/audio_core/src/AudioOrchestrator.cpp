@@ -1,8 +1,7 @@
-#include "AudioOrchestrator.h"
-#include "app/audio/SpeakerPlayback.h"
+#include "audio_core/AudioOrchestrator.h"
+#include "audio_core/SpeakerPlayback.h"
 #include "esp_log.h"
-#include "hal/companion/BtPlayerUart.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include <algorithm>
 
 AudioOrchestrator& AudioOrchestrator::getInstance() {
@@ -31,12 +30,11 @@ void AudioOrchestrator::updateCompanionPlaybackState() {
     bool any_active = m_voice_active || m_alert_active || m_media_active || m_alarm_active;
     if (any_active != m_last_companion_playing) {
         m_last_companion_playing = any_active;
-        auto& uart = btplayer::BtPlayerUart::getInstance();
-        if (uart.isInitialized()) {
+        if (m_companion_ctrl && m_companion_ctrl->isInitialized()) {
             if (any_active) {
-                uart.sendPlay();
+                m_companion_ctrl->sendPlay();
             } else {
-                uart.sendPause();
+                m_companion_ctrl->sendPause();
             }
         }
     }

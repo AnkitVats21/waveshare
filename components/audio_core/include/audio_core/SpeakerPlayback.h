@@ -22,6 +22,8 @@ DECLARE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 #include "common/TaskBase.h"
 #include "common/thread_config.h"
 
+#include "audio_core/ICompanionAudioSink.h"
+
 /**
  * @brief Output interface for mixed audio PCM samples.
  * Used for DMA output on hardware, or mock buffer output for host Python tests.
@@ -50,6 +52,11 @@ public:
    * @param customSink Optional custom audio sink (e.g. for testing / mocking)
    */
   void start(esp_codec_dev_handle_t device, IAudioSink* customSink = nullptr);
+
+  /**
+   * @brief Set optional companion audio sink (e.g. BtPlayerI2s)
+   */
+  void setCompanionSink(ICompanionAudioSink* sink) { m_companion_sink = sink; }
 
   /**
    * @brief Cleanly stop the task
@@ -100,6 +107,7 @@ private:
   bool                      m_buffering         = true;
   esp_codec_dev_handle_t    m_device            = nullptr;
   IAudioSink*               m_custom_sink       = nullptr;
+  ICompanionAudioSink*      m_companion_sink    = nullptr;
 
   // ── Mixer Gains ───────────────────────────────────────────────────────────
   volatile float            m_media_gain        = 1.0f;

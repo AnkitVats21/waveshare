@@ -1,4 +1,4 @@
-#include "Resampler.h"
+#include "audio_core/Resampler.h"
 
 void LinearResampler::resample(const int16_t* src, size_t srcFrames,
                                 int16_t* dst, size_t dstFrames, int channels) const {

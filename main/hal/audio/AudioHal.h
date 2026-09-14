@@ -129,6 +129,9 @@ public:
   /** @brief Returns "RMNM" — the AFE input format string for this board. */
   const char* feedInputFormat() const override { return "RMNM"; }
 
+  esp_err_t pauseFeed() override { return pauseRecord(); }
+  esp_err_t resumeFeed() override { return resumeRecord(); }
+
   // --- Playback (write to ES8311 DAC) ---------------------------------------
 
   /**

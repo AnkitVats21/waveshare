@@ -1,9 +1,8 @@
-#include "SpeakerPlayback.h"
-#include "AudioOrchestrator.h"
-#include "common/AppLogger.h"
-#include "common/audio/Resampler.h"
+#include "audio_core/SpeakerPlayback.h"
+#include "audio_core/AudioOrchestrator.h"
+#include "core_sysdb/AppLogger.h"
+#include "audio_core/Resampler.h"
 #include "esp_timer.h"
-#include "hal/companion/BtPlayerI2s.h"
 #include <cstring>
 #include <cstdlib>
 
@@ -259,14 +258,12 @@ void SpeakerPlaybackTask::run() {
       }
 
 #if CONFIG_BT_COMPANION_ENABLE
-      auto& bt_i2s = btplayer::BtPlayerI2s::getInstance();
-
       // 1. Always feed real audio to companion I2S master if initialized.
       // Companion firmware handles disconnected state internally by discarding frames (PcmSource::mute).
-      if (bt_i2s.isInitialized()) {
-        size_t written = bt_i2s.writeSamples(bt_stereo_buffer, frames_to_write, 1000);
+      if (m_companion_sink && m_companion_sink->isInitialized()) {
+        size_t written = m_companion_sink->writeSamples(bt_stereo_buffer, frames_to_write, 1000);
         if (written < frames_to_write) {
-          ESP_LOGW("SpeakerPlayback", "BtPlayerI2s write deficit: wrote %u of %u frames",
+          ESP_LOGW("SpeakerPlayback", "Companion sink write deficit: wrote %u of %u frames",
                    (unsigned)written, (unsigned)frames_to_write);
         }
       }
@@ -318,16 +315,14 @@ void SpeakerPlaybackTask::run() {
       if (local_silence_samples > MAX_SILENCE_SAMPLES) local_silence_samples = MAX_SILENCE_SAMPLES;
 
 #if CONFIG_BT_COMPANION_ENABLE
-      auto& bt_i2s = btplayer::BtPlayerI2s::getInstance();
-
       // Feed the companion a full-size zero chunk every iteration — same cadence
       // and granularity as the active path — so its I2S RX and SPSC ring stay
       // primed and it holds PLAYING at the buffer setpoint. Short intermittent
       // bursts let the companion starve between them → repeated
       // "Sustained starvation - re-arming prebuffer" on its side.
-      if (bt_i2s.isInitialized()) {
+      if (m_companion_sink && m_companion_sink->isInitialized()) {
         std::memset(bt_stereo_buffer, 0, target_samples * 2 * sizeof(int16_t));
-        bt_i2s.writeSamples(bt_stereo_buffer, target_samples, 1000);
+        m_companion_sink->writeSamples(bt_stereo_buffer, target_samples, 1000);
       }
       static int64_t last_idle_log_ms = 0;
       int64_t idle_now_ms = esp_timer_get_time() / 1000;
