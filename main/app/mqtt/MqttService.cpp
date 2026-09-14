@@ -308,65 +308,33 @@ void MqttService::processIncomingData(esp_mqtt_event_handle_t event) {
             if (cmd) {
                 if (strcmp(cmd, "play") == 0) {
                     if (query && query[0] != '\0') {
-                        ESP_LOGI(TAG, "[MQTT_TEST] Spawning background player task for query: '%s'", query);
-                        struct MqttPlayCtx {
-                            std::string query;
-                            bool withCaps;
-                        };
-                        auto* ctx = new MqttPlayCtx{query, true};
-                        auto taskFn = [](void* arg) {
-                            auto* c = static_cast<MqttPlayCtx*>(arg);
-                            bool caps = c->withCaps;
-                            {
-                                std::string q = std::move(c->query);
-                                delete c;
-                                ESP_LOGI("MqttSvc", "[MQTT_TEST] Executing MusicPlaybackService::play('%s')", q.c_str());
-                                MusicPlaybackService::getInstance().play(q.c_str());
-                            }
-                            if (caps) {
-                                vTaskDeleteWithCaps(NULL);
-                            } else {
-                                vTaskDelete(NULL);
-                            }
-                        };
-                        BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
-                            taskFn, "mqtt_play", ThreadConfig::StackSize::STACK_PLAYER,
-                            ctx, ThreadConfig::Priority::NORMAL, NULL,
-                            ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-                        );
-                        if (ret != pdPASS) {
-                            ctx->withCaps = false;
-                            xTaskCreatePinnedToCore(
-                                taskFn, "mqtt_play", ThreadConfig::StackSize::STACK_PLAYER,
-                                ctx, ThreadConfig::Priority::NORMAL, NULL,
-                                ThreadConfig::CORE_NETWORK
-                            );
-                        }
+                        ESP_LOGI(TAG, "MQTT Media: play '%s'", query);
+                        MusicPlaybackService::getInstance().postCommand(MediaCmdType::PLAY, query);
                         publish(TOPIC_TOOL_RESP, "{\"status\":\"started\",\"cmd\":\"play\"}");
                     } else {
                         ESP_LOGI(TAG, "MQTT Media: resume");
-                        MusicPlaybackService::getInstance().resume();
+                        MusicPlaybackService::getInstance().postCommand(MediaCmdType::RESUME);
                         publish(TOPIC_TOOL_RESP, "{\"status\":\"resumed\"}");
                     }
                 } else if (strcmp(cmd, "pause") == 0) {
                     ESP_LOGI(TAG, "MQTT Media: pause");
-                    MusicPlaybackService::getInstance().pause();
+                    MusicPlaybackService::getInstance().postCommand(MediaCmdType::PAUSE);
                     publish(TOPIC_TOOL_RESP, "{\"status\":\"paused\"}");
                 } else if (strcmp(cmd, "resume") == 0) {
                     ESP_LOGI(TAG, "MQTT Media: resume");
-                    MusicPlaybackService::getInstance().resume();
+                    MusicPlaybackService::getInstance().postCommand(MediaCmdType::RESUME);
                     publish(TOPIC_TOOL_RESP, "{\"status\":\"resumed\"}");
                 } else if (strcmp(cmd, "stop") == 0) {
                     ESP_LOGI(TAG, "MQTT Media: stop");
-                    MusicPlaybackService::getInstance().stop();
+                    MusicPlaybackService::getInstance().postCommand(MediaCmdType::STOP);
                     publish(TOPIC_TOOL_RESP, "{\"status\":\"stopped\"}");
                 } else if (strcmp(cmd, "next") == 0) {
                     ESP_LOGI(TAG, "MQTT Media: next");
-                    MusicPlaybackService::getInstance().next();
+                    MusicPlaybackService::getInstance().postCommand(MediaCmdType::NEXT);
                     publish(TOPIC_TOOL_RESP, "{\"status\":\"next\"}");
                 } else if (strcmp(cmd, "previous") == 0 || strcmp(cmd, "prev") == 0) {
                     ESP_LOGI(TAG, "MQTT Media: previous");
-                    MusicPlaybackService::getInstance().previous();
+                    MusicPlaybackService::getInstance().postCommand(MediaCmdType::PREVIOUS);
                     publish(TOPIC_TOOL_RESP, "{\"status\":\"previous\"}");
                 } else if (strcmp(cmd, "volume") == 0 || strcmp(cmd, "set_device_volume") == 0) {
                     int level = doc["level"] | -1;
@@ -397,38 +365,7 @@ void MqttService::processIncomingData(esp_mqtt_event_handle_t event) {
                 }
             } else if (query && query[0] != '\0') {
                 ESP_LOGI(TAG, "[MQTT_TEST] Direct query play '%s'", query);
-                struct MqttPlayCtx {
-                    std::string query;
-                    bool withCaps;
-                };
-                auto* ctx = new MqttPlayCtx{query, true};
-                auto taskFn = [](void* arg) {
-                    auto* c = static_cast<MqttPlayCtx*>(arg);
-                    bool caps = c->withCaps;
-                    {
-                        std::string q = std::move(c->query);
-                        delete c;
-                        MusicPlaybackService::getInstance().play(q.c_str());
-                    }
-                    if (caps) {
-                        vTaskDeleteWithCaps(NULL);
-                    } else {
-                        vTaskDelete(NULL);
-                    }
-                };
-                BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
-                    taskFn, "mqtt_play", ThreadConfig::StackSize::STACK_PLAYER,
-                    ctx, ThreadConfig::Priority::NORMAL, NULL,
-                    ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-                );
-                if (ret != pdPASS) {
-                    ctx->withCaps = false;
-                    xTaskCreatePinnedToCore(
-                        taskFn, "mqtt_play", ThreadConfig::StackSize::STACK_PLAYER,
-                        ctx, ThreadConfig::Priority::NORMAL, NULL,
-                        ThreadConfig::CORE_NETWORK
-                    );
-                }
+                MusicPlaybackService::getInstance().postCommand(MediaCmdType::PLAY, query);
                 publish(TOPIC_TOOL_RESP, "{\"status\":\"started\"}");
             } else {
                 const char* song_id = doc["song_id"];

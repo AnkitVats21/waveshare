@@ -2,6 +2,7 @@
 #include "app/audio/SpeakerPlayback.h"
 #include "esp_log.h"
 #include "hal/companion/BtPlayerUart.h"
+#include "common/sysdb/EmbeddedSysDb.h"
 #include <algorithm>
 
 AudioOrchestrator& AudioOrchestrator::getInstance() {
@@ -165,6 +166,9 @@ void AudioOrchestrator::notifyMediaStopped() {
     m_media_active = false;
     m_media_paused_by_voice = false;
     m_media_ducked = false;
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.media.is_ducked = false;
+    });
     updateCompanionPlaybackState();
 }
 
@@ -172,10 +176,16 @@ void AudioOrchestrator::duckMedia(float targetGain, uint32_t rampMs) {
     if (m_speaker_task) {
         m_speaker_task->setMediaGain(targetGain, rampMs);
     }
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.media.is_ducked = true;
+    });
 }
 
 void AudioOrchestrator::unduckMedia(uint32_t rampMs) {
     if (m_speaker_task) {
         m_speaker_task->setMediaGain(1.0f, rampMs);
     }
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.media.is_ducked = false;
+    });
 }

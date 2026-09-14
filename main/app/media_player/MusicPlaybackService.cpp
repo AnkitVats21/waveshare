@@ -3,11 +3,13 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "freertos/idf_additions.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include <algorithm>
 #include <random>
+#include <cstring>
 
 static const char* TAG = "MusicPlayback";
 
@@ -21,13 +23,238 @@ MusicPlaybackService::MusicPlaybackService() {}
 bool MusicPlaybackService::begin() {
     if (_initialized) return true;
     
+    m_cmd_queue = xQueueCreate(10, sizeof(MediaCommand));
+    if (!m_cmd_queue) {
+        ESP_LOGE(TAG, "Failed to create media command queue");
+        return false;
+    }
+
+    m_aux_queue = xQueueCreate(4, sizeof(MediaAuxCommand));
+    if (!m_aux_queue) {
+        ESP_LOGE(TAG, "Failed to create media aux queue");
+        vQueueDelete(m_cmd_queue);
+        m_cmd_queue = nullptr;
+        return false;
+    }
+
+    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
+        workerTask,
+        "media_worker",
+        ThreadConfig::StackSize::STACK_PLAYER,
+        this,
+        ThreadConfig::Priority::NORMAL,
+        &m_worker_task,
+        ThreadConfig::CORE_NETWORK,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+    );
+    if (ret != pdPASS) {
+        ret = xTaskCreatePinnedToCore(
+            workerTask,
+            "media_worker",
+            ThreadConfig::StackSize::STACK_PLAYER,
+            this,
+            ThreadConfig::Priority::NORMAL,
+            &m_worker_task,
+            ThreadConfig::CORE_NETWORK
+        );
+    }
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to spawn media_worker task");
+        return false;
+    }
+
+    ret = xTaskCreatePinnedToCoreWithCaps(
+        auxWorkerTask,
+        "media_aux",
+        ThreadConfig::StackSize::STACK_PLAYER,
+        this,
+        ThreadConfig::Priority::LOW,
+        &m_aux_task,
+        ThreadConfig::CORE_ANY,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+    );
+    if (ret != pdPASS) {
+        ret = xTaskCreatePinnedToCore(
+            auxWorkerTask,
+            "media_aux",
+            ThreadConfig::StackSize::STACK_PLAYER,
+            this,
+            ThreadConfig::Priority::LOW,
+            &m_aux_task,
+            ThreadConfig::CORE_ANY
+        );
+    }
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to spawn media_aux task");
+        return false;
+    }
+
     NexusPlayer::getInstance().addObserver(this);
     _autoplayEnabled = EmbeddedSysDb::getInstance().snapshot().media.autoplay_enabled;
     _initialized = true;
-    ESP_LOGI(TAG, "MusicPlaybackService initialized (autoplay=%s, caching=%s)",
+    ESP_LOGI(TAG, "MusicPlaybackService initialized with persistent worker queues (autoplay=%s, caching=%s)",
              _autoplayEnabled ? "true" : "false",
              EmbeddedSysDb::getInstance().snapshot().media.cache_downloads ? "true" : "false");
     return true;
+}
+
+void MusicPlaybackService::workerTask(void* arg) {
+    auto* self = static_cast<MusicPlaybackService*>(arg);
+    self->workerLoop();
+}
+
+void MusicPlaybackService::auxWorkerTask(void* arg) {
+    auto* self = static_cast<MusicPlaybackService*>(arg);
+    self->auxWorkerLoop();
+}
+
+bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
+    if (!_initialized) return false;
+
+    // Fast-path low-latency controls execute directly without queue delay
+    if (type == MediaCmdType::PAUSE) {
+        NexusPlayer::getInstance().pause();
+        return true;
+    }
+    if (type == MediaCmdType::RESUME) {
+        NexusPlayer::getInstance().resume();
+        return true;
+    }
+    if (type == MediaCmdType::TOGGLE_PLAY_PAUSE) {
+        auto st = NexusPlayer::getInstance().getState();
+        if (st == STATE_PAUSED) {
+            NexusPlayer::getInstance().resume();
+        } else if (st == STATE_STREAMING_AND_CACHING || st == STATE_LOCAL_PLAYBACK) {
+            NexusPlayer::getInstance().pause();
+        }
+        return true;
+    }
+    if (type == MediaCmdType::STOP) {
+        NexusPlayer::getInstance().stop();
+        invalidateBackgroundWork();
+        clearQueue();
+        {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            _currentTrack = InvidiousTrack();
+        }
+        if (m_cmd_queue) {
+            MediaCommand dummy;
+            while (xQueueReceive(m_cmd_queue, &dummy, 0) == pdTRUE) {}
+        }
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::IDLE;
+            s.media.active_song_id[0] = '\0';
+            s.media.title[0] = '\0';
+            s.media.artist[0] = '\0';
+        });
+        return true;
+    }
+
+    if (type == MediaCmdType::PLAY) {
+        // High-level stop and invalidate existing work so the new track starts fresh
+        NexusPlayer::getInstance().stop();
+        invalidateBackgroundWork();
+        if (m_cmd_queue) {
+            MediaCommand dummy;
+            while (xQueueReceive(m_cmd_queue, &dummy, 0) == pdTRUE) {}
+        }
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::RESOLVING;
+        });
+    }
+
+    MediaCommand cmd{};
+    cmd.type = type;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        cmd.generation = _queueGeneration;
+    }
+    if (query) {
+        strncpy(cmd.query, query, sizeof(cmd.query) - 1);
+        cmd.query[sizeof(cmd.query) - 1] = '\0';
+    }
+
+    if (xQueueSend(m_cmd_queue, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to post media command %d (queue full)", static_cast<int>(type));
+        return false;
+    }
+    return true;
+}
+
+void MusicPlaybackService::workerLoop() {
+    ESP_LOGI(TAG, "Persistent media_worker started");
+    MediaCommand cmd;
+    while (true) {
+        if (xQueueReceive(m_cmd_queue, &cmd, portMAX_DELAY) == pdTRUE) {
+            {
+                std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+                if (cmd.type != MediaCmdType::PLAY && cmd.generation != _queueGeneration) {
+                    ESP_LOGD(TAG, "Discarding stale media command %d (gen %lu != %lu)",
+                             static_cast<int>(cmd.type),
+                             (unsigned long)cmd.generation,
+                             (unsigned long)_queueGeneration);
+                    continue;
+                }
+            }
+
+            switch (cmd.type) {
+                case MediaCmdType::PLAY:
+                    clearQueue();
+                    resolveAndPlayImmediate(cmd.query);
+                    break;
+                case MediaCmdType::PLAY_NEXT:
+                    playNextInternal(cmd.query);
+                    break;
+                case MediaCmdType::QUEUE:
+                    queueInternal(cmd.query);
+                    break;
+                case MediaCmdType::NEXT:
+                    nextInternal();
+                    break;
+                case MediaCmdType::PREVIOUS:
+                    previousInternal();
+                    break;
+                case MediaCmdType::REPLAY: {
+                    InvidiousTrack curr;
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+                        curr = _currentTrack;
+                    }
+                    if (!curr.videoId.empty()) {
+                        playTrack(curr);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+}
+
+void MusicPlaybackService::auxWorkerLoop() {
+    ESP_LOGI(TAG, "Persistent media_aux started");
+    MediaAuxCommand cmd;
+    while (true) {
+        if (xQueueReceive(m_aux_queue, &cmd, portMAX_DELAY) == pdTRUE) {
+            {
+                std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+                if (cmd.generation != _queueGeneration) {
+                    ESP_LOGD(TAG, "Aux command discarded (gen %lu != %lu)",
+                             (unsigned long)cmd.generation, (unsigned long)_queueGeneration);
+                    if (cmd.type == MediaAuxCmdType::PREFETCH) _prefetchInProgress = false;
+                    if (cmd.type == MediaAuxCmdType::REPLENISH) _replenishInProgress = false;
+                    continue;
+                }
+            }
+
+            if (cmd.type == MediaAuxCmdType::PREFETCH) {
+                handlePrefetch(cmd.targetId, cmd.generation);
+            } else if (cmd.type == MediaAuxCmdType::REPLENISH) {
+                handleReplenish(cmd.targetId, cmd.baseAuthor, cmd.baseTitle, cmd.generation);
+            }
+        }
+    }
 }
 
 void MusicPlaybackService::setAutoplay(bool enabled) {
@@ -51,6 +278,13 @@ void MusicPlaybackService::setCaching(bool enabled) {
 
 bool MusicPlaybackService::isCachingEnabled() const {
     return EmbeddedSysDb::getInstance().snapshot().media.cache_downloads;
+}
+
+void MusicPlaybackService::setRepeatMode(RepeatMode mode) {
+    _repeatMode = mode;
+    EmbeddedSysDb::getInstance().mutate([mode](SystemState& s) {
+        s.media.repeat_mode = static_cast<uint8_t>(mode);
+    });
 }
 
 bool MusicPlaybackService::isTrackInQueueOrHistory(const std::string& videoId) const {
@@ -82,11 +316,13 @@ void MusicPlaybackService::populateRecommendations(const std::vector<InvidiousTr
 
 void MusicPlaybackService::invalidateBackgroundWork() {
     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-    // Bump the generation so in-flight prefetch/replenish tasks discard their
-    // results. An already-completed prefetch (_prefetchedUrl/_prefetchedVideoId)
-    // is kept: playTrackInternal only uses it when the videoId matches, so a
-    // stale entry is harmless and it lets a plain "next" stay instant.
     _queueGeneration++;
+    _prefetchInProgress = false;
+    _replenishInProgress = false;
+    if (m_aux_queue) {
+        MediaAuxCommand dummy;
+        while (xQueueReceive(m_aux_queue, &dummy, 0) == pdTRUE) {}
+    }
 }
 
 bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
@@ -104,6 +340,15 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
             std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
             _currentTrack = track;
         }
+        EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+            s.media.state = MediaPlaybackState::PLAYING;
+            strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+            strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
+            s.media.title[sizeof(s.media.title) - 1] = '\0';
+            strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+            s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        });
         NexusPlayer::getInstance().play(track.videoId.c_str(), "");
         return ESP_OK;
     }
@@ -145,8 +390,6 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
 
         // Resolve stream URL and piggyback recommendation fetch in a single HTTP roundtrip
         esp_err_t err = _invidious.resolveWithRecommendations(track.videoId, streamUrl, recommendations, 8);
-        // Only retry with the standalone resolve on a transient failure; a NOT_FOUND
-        // (4xx) means the video itself is gone, so hammering it again is pointless.
         if ((err != ESP_OK && err != ESP_ERR_NOT_FOUND) || (err == ESP_OK && streamUrl.empty())) {
             ESP_LOGW(TAG, "resolveWithRecommendations failed for '%s' (%s), attempting standalone WebM/Opus resolve...",
                      track.title.c_str(), esp_err_to_name(err));
@@ -168,6 +411,15 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         _currentTrack = track;
     }
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.state = MediaPlaybackState::PLAYING;
+        strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+        s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
+        s.media.title[sizeof(s.media.title) - 1] = '\0';
+        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+        s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+    });
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
 
     // If recommendations were piggybacked, add them to the queue
@@ -195,6 +447,15 @@ bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         _currentTrack = track;
     }
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.state = MediaPlaybackState::PLAYING;
+        strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+        s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
+        s.media.title[sizeof(s.media.title) - 1] = '\0';
+        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+        s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+    });
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
     return true;
 }
@@ -206,13 +467,15 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
     }
     ESP_LOGI(TAG, "resolveAndPlayImmediate: resolving track for '%s'...", query);
 
-    // Stop current playback immediately to clear network, decoding, and Core 1 AEC load
     NexusPlayer::getInstance().stop();
 
     std::vector<InvidiousTrack> tracks;
     esp_err_t err = _invidious.searchList(query, tracks, 5);
     if (err != ESP_OK || tracks.empty()) {
         ESP_LOGE(TAG, "Search failed for '%s': %s", query, esp_err_to_name(err));
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::IDLE;
+        });
         return false;
     }
 
@@ -220,7 +483,6 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
     ESP_LOGI(TAG, "Search for '%s' resolved to: '%s' by '%s' [%s] (found %zu tracks)",
              query, tracks[0].title.c_str(), tracks[0].author.c_str(), tracks[0].videoId.c_str(), tracks.size());
 
-    // Enqueue remaining search results as upcoming tracks in queue
     if (isAutoplayEnabled() && tracks.size() > 1) {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         for (size_t i = 1; i < tracks.size(); ++i) {
@@ -232,13 +494,7 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
     return playTrack(tracks[0]);
 }
 
-bool MusicPlaybackService::play(const char* query) {
-    ESP_LOGI(TAG, "play() invoked with query: '%s'", query ? query : "(null)");
-    clearQueue();
-    return resolveAndPlayImmediate(query);
-}
-
-bool MusicPlaybackService::playNext(const char* query) {
+bool MusicPlaybackService::playNextInternal(const char* query) {
     if (!query || query[0] == '\0') return false;
 
     InvidiousTrack track;
@@ -254,7 +510,6 @@ bool MusicPlaybackService::playNext(const char* query) {
         {
             std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
             _queue.push_front(track);
-            // Invalidate prefetched since head of queue changed
             _prefetchedUrl.clear();
             _prefetchedVideoId.clear();
             ESP_LOGI(TAG, "Queued to play next: '%s' (queue depth: %zu)", track.title.c_str(), _queue.size());
@@ -264,7 +519,7 @@ bool MusicPlaybackService::playNext(const char* query) {
     }
 }
 
-bool MusicPlaybackService::queue(const char* query) {
+bool MusicPlaybackService::queueInternal(const char* query) {
     if (!query || query[0] == '\0') return false;
 
     InvidiousTrack track;
@@ -315,259 +570,173 @@ void MusicPlaybackService::shuffleQueue() {
 }
 
 void MusicPlaybackService::prefetchNextTrack() {
-    std::string nextId;
-    uint32_t generation = 0;
+    std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+    if (_queue.empty() || _prefetchInProgress) return;
+
+    std::string nextId = _queue.front().videoId;
+    if (nextId.empty() || nextId == _prefetchedVideoId) return;
+
+    if (NexusPlayer::getInstance().getStorageManager().fileExists(nextId.c_str())) {
+        ESP_LOGD(TAG, "Next track %s is already cached locally, skipping prefetch", nextId.c_str());
+        return;
+    }
+
+    _prefetchInProgress = true;
+    MediaAuxCommand cmd{};
+    cmd.type = MediaAuxCmdType::PREFETCH;
+    cmd.generation = _queueGeneration;
+    strncpy(cmd.targetId, nextId.c_str(), sizeof(cmd.targetId) - 1);
+
+    if (m_aux_queue && xQueueSend(m_aux_queue, &cmd, 0) != pdTRUE) {
+        _prefetchInProgress = false;
+        ESP_LOGW(TAG, "Aux queue full, skipping prefetch for %s", nextId.c_str());
+    }
+}
+
+void MusicPlaybackService::handlePrefetch(const char* targetId, uint32_t generation) {
+    if (!targetId || targetId[0] == '\0') {
+        _prefetchInProgress = false;
+        return;
+    }
+
+    // Yield CPU so playback startup, I2S DMA, and AFE processing settle cleanly
+    vTaskDelay(pdMS_TO_TICKS(150));
+
+    std::string url;
+    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(targetId, url);
+
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-        if (_queue.empty() || _prefetchInProgress) return;
-
-        nextId = _queue.front().videoId;
-        if (nextId.empty() || nextId == _prefetchedVideoId) return;
-
-        // Skip network prefetch if already cached locally on SD card
-        if (NexusPlayer::getInstance().getStorageManager().fileExists(nextId.c_str())) {
-            ESP_LOGD(TAG, "Next track %s is already cached locally, skipping prefetch", nextId.c_str());
-            return;
-        }
-
-        _prefetchInProgress = true;
-        generation = _queueGeneration;
-    }
-
-    struct PrefetchContext {
-        MusicPlaybackService* self;
-        std::string targetId;
-        uint32_t generation;
-        bool withCaps;
-    };
-    auto* ctx = new PrefetchContext{this, nextId, generation, true};
-
-    auto taskFn = [](void* arg) {
-        auto* c = static_cast<PrefetchContext*>(arg);
-        MusicPlaybackService* self = c->self;
-        std::string targetId = c->targetId;
-        uint32_t gen = c->generation;
-        bool caps = c->withCaps;
-        delete c;
-
-        // Yield CPU so playback startup, I2S DMA, and AFE processing settle cleanly
-        vTaskDelay(pdMS_TO_TICKS(150));
-
-        std::string url;
-        esp_err_t err = self->_invidious.resolveWebMOpusStreamUrl(targetId, url);
-
-        // IMPORTANT: the lock MUST be released before vTaskDelete() below.
-        // vTaskDelete(NULL) never returns, so a lock_guard still in scope would
-        // skip its destructor and leak _serviceMutex forever (dead task holds it),
-        // which permanently hangs the next queue operation.
-        {
-            std::lock_guard<std::recursive_mutex> lock(self->_serviceMutex);
-            if (self->_queueGeneration == gen) {
-                if (err == ESP_OK && !url.empty()) {
-                    self->_prefetchedVideoId = targetId;
-                    self->_prefetchedUrl = url;
-                    ESP_LOGI(TAG, "Asynchronously pre-fetched stream URL for upcoming track: %s", targetId.c_str());
-                } else if (err == ESP_ERR_NOT_FOUND) {
-                    // Video is gone - evict it from the queue now so the next advance
-                    // doesn't stall on a track we already know is dead.
-                    for (auto it = self->_queue.begin(); it != self->_queue.end(); ++it) {
-                        if (it->videoId == targetId) { self->_queue.erase(it); break; }
-                    }
-                    ESP_LOGW(TAG, "Prefetch: track %s is unavailable - dropped from queue", targetId.c_str());
-                } else {
-                    ESP_LOGW(TAG, "Background prefetch failed for %s: %s", targetId.c_str(), esp_err_to_name(err));
+        if (_queueGeneration == generation) {
+            if (err == ESP_OK && !url.empty()) {
+                _prefetchedVideoId = targetId;
+                _prefetchedUrl = url;
+                ESP_LOGI(TAG, "Asynchronously pre-fetched stream URL for upcoming track: %s", targetId);
+            } else if (err == ESP_ERR_NOT_FOUND) {
+                for (auto it = _queue.begin(); it != _queue.end(); ++it) {
+                    if (it->videoId == targetId) { _queue.erase(it); break; }
                 }
+                ESP_LOGW(TAG, "Prefetch: track %s is unavailable - dropped from queue", targetId);
             } else {
-                ESP_LOGD(TAG, "Prefetch for %s discarded (generation changed)", targetId.c_str());
+                ESP_LOGW(TAG, "Background prefetch failed for %s: %s", targetId, esp_err_to_name(err));
             }
-            self->_prefetchInProgress = false;
-        }
-
-        if (caps) {
-            vTaskDeleteWithCaps(NULL);
         } else {
-            vTaskDelete(NULL);
+            ESP_LOGD(TAG, "Prefetch for %s discarded (generation changed)", targetId);
         }
-    };
-
-    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
-        taskFn,
-        "bg_prefetch",
-        ThreadConfig::StackSize::STACK_PLAYER,
-        ctx,
-        ThreadConfig::Priority::LOW,
-        NULL,
-        // Not pinned to Core 0: the HTTPS TLS handshake (ECDSA verify) is a heavy
-        // CPU burst that would otherwise pile onto the WiFi + Opus-decode core and
-        // starve IDLE0. Let the scheduler place it on whichever core has slack.
-        ThreadConfig::CORE_ANY,
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-    );
-
-    if (ret != pdPASS) {
-        ctx->withCaps = false;
-        ret = xTaskCreatePinnedToCore(
-            taskFn,
-            "bg_prefetch",
-            ThreadConfig::StackSize::STACK_PLAYER,
-            ctx,
-            ThreadConfig::Priority::LOW,
-            NULL,
-            ThreadConfig::CORE_ANY
-        );
-    }
-
-    if (ret != pdPASS) {
-        delete ctx;
-        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         _prefetchInProgress = false;
-        ESP_LOGW(TAG, "Failed to spawn background prefetch task");
     }
 }
 
 void MusicPlaybackService::checkAndReplenishQueue() {
+    std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+    if (!isAutoplayEnabled() || _replenishInProgress) return;
+    if (_queue.size() > QUEUE_LOW_WATERMARK) return;
+
     std::string baseTrackId;
     std::string baseAuthor;
     std::string baseTitle;
-    uint32_t generation = 0;
-    {
-        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-        if (!isAutoplayEnabled() || _replenishInProgress) return;
-        if (_queue.size() > QUEUE_LOW_WATERMARK) return;
 
-        if (!_queue.empty()) {
-            baseTrackId = _queue.back().videoId;
-            baseAuthor = _queue.back().author;
-            baseTitle = _queue.back().title;
-        } else {
-            baseTrackId = _currentTrack.videoId;
-            baseAuthor = _currentTrack.author;
-            baseTitle = _currentTrack.title;
-        }
-        if (baseTrackId.empty()) return;
-
-        _replenishInProgress = true;
-        generation = _queueGeneration;
+    if (!_queue.empty()) {
+        baseTrackId = _queue.back().videoId;
+        baseAuthor = _queue.back().author;
+        baseTitle = _queue.back().title;
+    } else {
+        baseTrackId = _currentTrack.videoId;
+        baseAuthor = _currentTrack.author;
+        baseTitle = _currentTrack.title;
     }
+    if (baseTrackId.empty()) return;
 
-    struct ReplenishContext {
-        MusicPlaybackService* self;
-        std::string baseId;
-        std::string baseAuthor;
-        std::string baseTitle;
-        uint32_t generation;
-        bool withCaps;
-    };
-    auto* ctx = new ReplenishContext{this, baseTrackId, baseAuthor, baseTitle, generation, true};
+    _replenishInProgress = true;
+    MediaAuxCommand cmd{};
+    cmd.type = MediaAuxCmdType::REPLENISH;
+    cmd.generation = _queueGeneration;
+    strncpy(cmd.targetId, baseTrackId.c_str(), sizeof(cmd.targetId) - 1);
+    strncpy(cmd.baseAuthor, baseAuthor.c_str(), sizeof(cmd.baseAuthor) - 1);
+    strncpy(cmd.baseTitle, baseTitle.c_str(), sizeof(cmd.baseTitle) - 1);
 
-    auto taskFn = [](void* arg) {
-        auto* c = static_cast<ReplenishContext*>(arg);
-        MusicPlaybackService* self = c->self;
-        std::string baseId = c->baseId;
-        std::string baseAuthor = c->baseAuthor;
-        std::string baseTitle = c->baseTitle;
-        uint32_t gen = c->generation;
-        bool caps = c->withCaps;
-        delete c;
-
-        // Yield CPU to let concurrent audio startup settle
-        vTaskDelay(pdMS_TO_TICKS(200));
-
-        // Bail out of the (potentially slow, multi-request) fallback chain the moment
-        // a user action changes the queue - each call below serializes on the shared
-        // Invidious HTTP mutex and would otherwise stall a pending track change.
-        auto stale = [&]() {
-            std::lock_guard<std::recursive_mutex> lock(self->_serviceMutex);
-            return self->_queueGeneration != gen;
-        };
-
-        std::vector<InvidiousTrack> recs;
-        esp_err_t err = self->_invidious.getRecommendedTracks(baseId, recs, 8);
-        if ((err != ESP_OK || recs.empty()) && !baseAuthor.empty() && !stale()) {
-            ESP_LOGI(TAG, "Recommended videos not returned for %s (%s). Falling back to search for artist '%s'...",
-                     baseId.c_str(), esp_err_to_name(err), baseAuthor.c_str());
-            err = self->_invidious.searchList(baseAuthor, recs, 8);
-        }
-        if ((err != ESP_OK || recs.empty()) && !baseTitle.empty() && !stale()) {
-            ESP_LOGI(TAG, "Falling back to search for title '%s'...", baseTitle.c_str());
-            err = self->_invidious.searchList(baseTitle, recs, 8);
-        }
-
-        bool needPrefetch = false;
-        {
-            std::lock_guard<std::recursive_mutex> lock(self->_serviceMutex);
-            if (self->_queueGeneration == gen) {
-                if (err == ESP_OK && !recs.empty()) {
-                    size_t added = 0;
-                    for (const auto& track : recs) {
-                        if (!self->isTrackInQueueOrHistory(track.videoId)) {
-                            self->_queue.push_back(track);
-                            added++;
-                        }
-                    }
-                    ESP_LOGI(TAG, "Autoplay replenished %zu new recommendations (queue size now %zu) based on %s",
-                             added, self->_queue.size(), baseId.c_str());
-
-                    if (self->_prefetchedUrl.empty()) {
-                        needPrefetch = true;
-                    }
-                } else {
-                    ESP_LOGW(TAG, "Failed to replenish recommendations for %s: %s",
-                             baseId.c_str(), esp_err_to_name(err));
-                }
-            } else {
-                ESP_LOGD(TAG, "Replenish for %s discarded (generation changed)", baseId.c_str());
-            }
-            self->_replenishInProgress = false;
-        }
-
-        if (needPrefetch) {
-            self->prefetchNextTrack();
-        }
-        if (caps) {
-            vTaskDeleteWithCaps(NULL);
-        } else {
-            vTaskDelete(NULL);
-        }
-    };
-
-    BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
-        taskFn,
-        "bg_replenish",
-        ThreadConfig::StackSize::STACK_PLAYER,
-        ctx,
-        ThreadConfig::Priority::LOW,
-        NULL,
-        ThreadConfig::CORE_ANY,  // keep heavy TLS crypto off the WiFi + decode core
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-    );
-
-    if (ret != pdPASS) {
-        ctx->withCaps = false;
-        ret = xTaskCreatePinnedToCore(
-            taskFn,
-            "bg_replenish",
-            ThreadConfig::StackSize::STACK_PLAYER,
-            ctx,
-            ThreadConfig::Priority::LOW,
-            NULL,
-            ThreadConfig::CORE_ANY
-        );
-    }
-
-    if (ret != pdPASS) {
-        delete ctx;
-        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+    if (m_aux_queue && xQueueSend(m_aux_queue, &cmd, 0) != pdTRUE) {
         _replenishInProgress = false;
-        ESP_LOGW(TAG, "Failed to spawn background replenish task");
+        ESP_LOGW(TAG, "Aux queue full, skipping replenish for %s", baseTrackId.c_str());
     }
 }
 
-bool MusicPlaybackService::next() {
-    ESP_LOGI(TAG, "Advancing to next track");
+void MusicPlaybackService::handleReplenish(const char* baseId, const char* baseAuthor, const char* baseTitle, uint32_t generation) {
+    if (!baseId || baseId[0] == '\0') {
+        _replenishInProgress = false;
+        return;
+    }
 
-    // A user-initiated skip supersedes any background prefetch/replenish already
-    // in flight - mark their results stale so they don't clobber the new track.
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    auto stale = [&]() {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        return _queueGeneration != generation;
+    };
+
+    std::vector<InvidiousTrack> recs;
+    esp_err_t err = _invidious.getRecommendedTracks(baseId, recs, 8);
+    if ((err != ESP_OK || recs.empty()) && baseAuthor && baseAuthor[0] != '\0' && !stale()) {
+        ESP_LOGI(TAG, "Recommended videos not returned for %s (%s). Falling back to search for artist '%s'...",
+                 baseId, esp_err_to_name(err), baseAuthor);
+        err = _invidious.searchList(baseAuthor, recs, 8);
+    }
+    if ((err != ESP_OK || recs.empty()) && baseTitle && baseTitle[0] != '\0' && !stale()) {
+        ESP_LOGI(TAG, "Falling back to search for title '%s'...", baseTitle);
+        err = _invidious.searchList(baseTitle, recs, 8);
+    }
+
+    bool needPrefetch = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        if (_queueGeneration == generation) {
+            if (err == ESP_OK && !recs.empty()) {
+                size_t added = 0;
+                for (const auto& track : recs) {
+                    if (!isTrackInQueueOrHistory(track.videoId)) {
+                        _queue.push_back(track);
+                        added++;
+                    }
+                }
+                ESP_LOGI(TAG, "Autoplay replenished %zu new recommendations (queue size now %zu) based on %s",
+                         added, _queue.size(), baseId);
+
+                if (_prefetchedUrl.empty()) {
+                    needPrefetch = true;
+                }
+            } else {
+                ESP_LOGW(TAG, "Failed to replenish recommendations for %s: %s",
+                         baseId, esp_err_to_name(err));
+            }
+        } else {
+            ESP_LOGD(TAG, "Replenish for %s discarded (generation changed)", baseId);
+        }
+        _replenishInProgress = false;
+    }
+
+    if (needPrefetch) {
+        prefetchNextTrack();
+    }
+}
+
+bool MusicPlaybackService::play(const char* query) {
+    return postCommand(MediaCmdType::PLAY, query);
+}
+
+bool MusicPlaybackService::playNext(const char* query) {
+    return postCommand(MediaCmdType::PLAY_NEXT, query);
+}
+
+bool MusicPlaybackService::queue(const char* query) {
+    return postCommand(MediaCmdType::QUEUE, query);
+}
+
+bool MusicPlaybackService::next() {
+    return postCommand(MediaCmdType::NEXT);
+}
+
+bool MusicPlaybackService::nextInternal() {
+    ESP_LOGI(TAG, "Advancing to next track");
     invalidateBackgroundWork();
 
     {
@@ -593,16 +762,15 @@ bool MusicPlaybackService::advanceToNextPlayable() {
                 _queue.pop_front();
             }
         }
-        if (nextTrack.videoId.empty()) break;  // queue drained; fall through to autoplay refill
+        if (nextTrack.videoId.empty()) break;
 
         esp_err_t rc = playTrackInternal(nextTrack);
         if (rc == ESP_OK) return true;
         if (rc == ESP_ERR_NOT_FOUND) {
             ESP_LOGW(TAG, "Track '%s' [%s] unavailable - skipping to next queued track",
                      nextTrack.title.c_str(), nextTrack.videoId.c_str());
-            continue;  // dead video: try the next one
+            continue;
         }
-        // Transient network/instance failure: don't burn through the queue, stop here.
         ESP_LOGE(TAG, "Transient error advancing to '%s'; halting playback", nextTrack.title.c_str());
         NexusPlayer::getInstance().stop();
         return false;
@@ -628,7 +796,6 @@ bool MusicPlaybackService::advanceToNextPlayable() {
                         }
                     }
                 }
-                // Retry the skip loop now that the queue has fresh candidates.
                 for (int skips = 0; skips < MAX_SKIP_ON_ADVANCE; ++skips) {
                     InvidiousTrack cand;
                     {
@@ -651,10 +818,20 @@ bool MusicPlaybackService::advanceToNextPlayable() {
 
     ESP_LOGI(TAG, "No more playable tracks in queue or recommendations");
     NexusPlayer::getInstance().stop();
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.media.state = MediaPlaybackState::IDLE;
+        s.media.active_song_id[0] = '\0';
+        s.media.title[0] = '\0';
+        s.media.artist[0] = '\0';
+    });
     return false;
 }
 
 bool MusicPlaybackService::previous() {
+    return postCommand(MediaCmdType::PREVIOUS);
+}
+
+bool MusicPlaybackService::previousInternal() {
     ESP_LOGI(TAG, "Going back to previous track");
     invalidateBackgroundWork();
 
@@ -688,18 +865,15 @@ bool MusicPlaybackService::previous() {
 }
 
 void MusicPlaybackService::pause() {
-    NexusPlayer::getInstance().pause();
+    postCommand(MediaCmdType::PAUSE);
 }
 
 void MusicPlaybackService::resume() {
-    NexusPlayer::getInstance().resume();
+    postCommand(MediaCmdType::RESUME);
 }
 
 void MusicPlaybackService::stop() {
-    NexusPlayer::getInstance().stop();
-    clearQueue();
-    std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-    _currentTrack = InvidiousTrack();
+    postCommand(MediaCmdType::STOP);
 }
 
 void MusicPlaybackService::onTrackStarted(const char* songId) {
@@ -722,7 +896,7 @@ void MusicPlaybackService::onTrackFinished(const char* songId) {
 
     if (mode == RepeatMode::One && !curr.videoId.empty()) {
         ESP_LOGI(TAG, "Repeating single track: %s", curr.title.c_str());
-        playTrack(curr);
+        postCommand(MediaCmdType::REPLAY);
         return;
     }
 
@@ -736,7 +910,7 @@ void MusicPlaybackService::onTrackFinished(const char* songId) {
             _history.erase(_history.begin());
         }
     }
-    next();
+    postCommand(MediaCmdType::NEXT);
 }
 
 void MusicPlaybackService::onPlaybackError(const char* songId, int errorCode) {
@@ -752,12 +926,14 @@ void MusicPlaybackService::onPlaybackError(const char* songId, int errorCode) {
     if (errorCode == -1 && songId && curr.videoId == songId) {
         ESP_LOGW(TAG, "Local file error for %s. Deleting corrupted cache and falling back to live stream!", songId);
         NexusPlayer::getInstance().getStorageManager().deleteFile(songId);
-        if (playTrackFallback(curr)) {
-            return;
-        }
+        postCommand(MediaCmdType::REPLAY);
+        return;
     }
     if (hasQueue || isAutoplayEnabled()) {
-        next();
+        postCommand(MediaCmdType::NEXT);
+    } else {
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::ERROR_STATE;
+        });
     }
 }
-

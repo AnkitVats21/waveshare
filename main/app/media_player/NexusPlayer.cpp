@@ -188,11 +188,20 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
         ESP_LOGI(TAG, "Cache Hit! Playing local file for songId: %s", songId);
         _state = STATE_LOCAL_PLAYBACK;
         _audioEngine.start();
+        EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
+            s.media.state = MediaPlaybackState::PLAYING;
+            strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
+            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+        });
 
         if (!_storageManager.openFileForReading(songId)) {
             ESP_LOGE(TAG, "Failed to open local file for reading");
             stopActivePipelines();
             _state = STATE_IDLE;
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.state = MediaPlaybackState::ERROR_STATE;
+                s.media.active_song_id[0] = '\0';
+            });
             notifyPlaybackError(songId, -1);
             return;
         }
@@ -204,11 +213,20 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
             ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);
             _state = STATE_STREAMING_AND_CACHING;
             _audioEngine.start();
+            EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
+                s.media.state = MediaPlaybackState::PLAYING;
+                strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
+                s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+            });
 
             if (!_storageManager.openFileForCaching(songId)) {
                 ESP_LOGE(TAG, "Failed to open file for caching");
                 stopActivePipelines();
                 _state = STATE_IDLE;
+                EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                    s.media.state = MediaPlaybackState::ERROR_STATE;
+                    s.media.active_song_id[0] = '\0';
+                });
                 notifyPlaybackError(songId, -2);
                 return;
             }
@@ -217,6 +235,10 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
                 ESP_LOGE(TAG, "Failed to start streaming");
                 stopActivePipelines();
                 _state = STATE_IDLE;
+                EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                    s.media.state = MediaPlaybackState::ERROR_STATE;
+                    s.media.active_song_id[0] = '\0';
+                });
                 notifyPlaybackError(songId, -3);
                 return;
             }
@@ -224,11 +246,20 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
             ESP_LOGI(TAG, "Cache Miss! Pure live streaming (no SD cache) songId: %s", songId);
             _state = STATE_STREAMING_AND_CACHING;
             _audioEngine.start();
+            EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
+                s.media.state = MediaPlaybackState::PLAYING;
+                strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
+                s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+            });
 
             if (!_streamManager.beginStreaming(downloadUrl, false)) {
                 ESP_LOGE(TAG, "Failed to start live streaming");
                 stopActivePipelines();
                 _state = STATE_IDLE;
+                EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                    s.media.state = MediaPlaybackState::ERROR_STATE;
+                    s.media.active_song_id[0] = '\0';
+                });
                 notifyPlaybackError(songId, -3);
                 return;
             }
@@ -249,6 +280,9 @@ void NexusPlayer::pause_internal() {
         _audioEngine.pause();
         _state = STATE_PAUSED;
         AudioOrchestrator::getInstance().notifyMediaStopped();
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::PAUSED;
+        });
     }
 }
 
@@ -273,6 +307,9 @@ void NexusPlayer::resume_internal() {
             _state = STATE_LOCAL_PLAYBACK;
         }
         AudioOrchestrator::getInstance().notifyMediaStarted();
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::PLAYING;
+        });
     }
 }
 
@@ -290,6 +327,10 @@ void NexusPlayer::stop() {
     _pendingSongId.clear();
     _pendingDownloadUrl.clear();
     AudioOrchestrator::getInstance().notifyMediaStopped();
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.media.state = MediaPlaybackState::IDLE;
+        s.media.active_song_id[0] = '\0';
+    });
 }
 
 void NexusPlayer::stopActivePipelines() {
@@ -396,6 +437,10 @@ void NexusPlayer::checkPlaybackFinished() {
                     _pendingDownloadUrl.clear();
                     AudioOrchestrator::getInstance().notifyMediaStopped();
                     trackFinished = true;
+                    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                        s.media.state = MediaPlaybackState::IDLE;
+                        s.media.active_song_id[0] = '\0';
+                    });
                 }
             }
         }
