@@ -21,7 +21,7 @@ AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles)
           ThreadConfig::StackSize::STACK_NORMAL,
           ThreadConfig::AUDIO_SERVICE,
           ThreadConfig::CORE_AUDIO,
-          COMP::AUDIO | COMP::PIPELINE
+          COMP::AUDIO | COMP::PIPELINE | COMP::ASSISTANT
       })
     , m_hal(hal)
     , m_handles(handles)
@@ -87,7 +87,7 @@ bool AudioService::begin() {
 
 void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap) {
     // 1. Reconcile Playback Volume
-    if ((changed & BIT_AUDIO::SPEAKER_VOLUME) || (changed == 0)) {
+    if (((changed & COMP::AUDIO) && (changed & BIT_AUDIO::SPEAKER_VOLUME)) || (changed == 0)) {
         int target_vol = snap.audio.speaker_volume;
         if (m_hal.getPlayVolume() != target_vol) {
             m_hal.setPlayVolume(target_vol);
@@ -96,7 +96,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
     }
 
     // 2. Reconcile Mic Record Gain
-    if ((changed & BIT_AUDIO::MIC_GAIN) || (changed == 0)) {
+    if (((changed & COMP::AUDIO) && (changed & BIT_AUDIO::MIC_GAIN)) || (changed == 0)) {
         float target_gain = snap.audio.mic_gain_db;
         if (m_hal.getRecordGain() != target_gain) {
             m_hal.setRecordGain(target_gain);
@@ -105,7 +105,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
     }
 
     // 3. Reconcile Mic Enablement
-    if ((changed & BIT_AUDIO::MIC_ENABLED) || (changed == 0)) {
+    if (((changed & COMP::AUDIO) && (changed & BIT_AUDIO::MIC_ENABLED)) || (changed == 0)) {
         if (snap.audio.mic_enabled != m_last_applied_mic_enabled) {
             m_last_applied_mic_enabled = snap.audio.mic_enabled;
         }
@@ -113,10 +113,8 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
 
     // 4. Assistant session state management
     auto session = snap.assistant.session_state;
-    bool session_changed = (changed & BIT_ASSISTANT::SESSION_STATE) || 
-                           (changed & BIT_AUDIO::SESSION_ACTIVE) ||
-                           (changed & BIT_AUDIO::ASST_SPEAKING) ||
-                           (changed & BIT_AUDIO::TURN_COMPLETE) ||
+    bool session_changed = ((changed & COMP::ASSISTANT) && (changed & BIT_ASSISTANT::SESSION_STATE)) || 
+                           ((changed & COMP::AUDIO) && (changed & (BIT_AUDIO::SESSION_ACTIVE | BIT_AUDIO::ASST_SPEAKING | BIT_AUDIO::TURN_COMPLETE))) ||
                            (changed == 0);
 
     if (session_changed) {
@@ -140,14 +138,14 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
     }
 
     // 5. Reconcile Pipeline Mode (runs after session management)
-    if ((changed & BIT_PIPELINE::MODE) || (changed == 0)) {
+    if (((changed & COMP::PIPELINE) && (changed & BIT_PIPELINE::MODE)) || (changed == 0)) {
         if (snap.pipeline.mode != m_current_pipeline_mode) {
             applyPipelineModeSwitch(snap.pipeline.mode);
         }
     }
 
     // Transition C: Turn-complete cleanup (re-arm WakeNet)
-    if ((changed & BIT_AUDIO::TURN_COMPLETE) && !snap.audio.turn_complete_pending) {
+    if ((changed & COMP::AUDIO) && (changed & BIT_AUDIO::TURN_COMPLETE) && !snap.audio.turn_complete_pending) {
         auto& ww = WakeWordEngine::getInstance();
         ww.setAssistantActive(false);
         ww.setVadDeferred(false);
@@ -159,7 +157,7 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
     }
 
     // Transition D: Reactive WAV status logging (playback resampled in software to 44.1kHz)
-    if ((changed & BIT_AUDIO::WAV_PLAYING) || (changed == 0)) {
+    if (((changed & COMP::AUDIO) && (changed & BIT_AUDIO::WAV_PLAYING)) || (changed == 0)) {
         if (snap.audio.wav_playing) {
             LOGI_AUDIO("WAV playback active (resampled to native 44.1 kHz).");
         }

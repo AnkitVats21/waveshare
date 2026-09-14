@@ -88,7 +88,7 @@ bool MqttService::publish(const char* topic, const char* payload, int qos, int r
 
 void MqttService::onStateChanged(ComponentMask changed, const SystemState& snap) {
 #if CONFIG_WAVESHARE_MQTT_ENABLE
-    if (changed & BIT_SYSTEM::WIFI_CONNECTED) {
+    if ((changed & COMP::SYSTEM) && (changed & BIT_SYSTEM::WIFI_CONNECTED)) {
         bool wifi_ok = snap.system.wifi_connected;
 
         // 1. React to WiFi Connectivity

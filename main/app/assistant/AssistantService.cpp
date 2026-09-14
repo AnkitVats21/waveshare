@@ -159,9 +159,9 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
     auto ws = snap.assistant.ws_state;
     bool wifi_ok = snap.system.wifi_connected;
 
-    // 2. Synchronize current state shadow
+    // 2. Synchronize current state shadow if external component changed session_state
     if (session != m_current_state) {
-        handleStateTransition(m_current_state, session, snap);
+        executeTransition(session, snap, true);
     }
 
     // 3. React to state machine condition triggers
@@ -265,15 +265,24 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
         local_snap = sysdb.snapshot();
         snap_ptr = &local_snap;
     }
-    const SystemState& snap = *snap_ptr;
-    AssistantState oldState = snap.assistant.session_state;
+    executeTransition(newState, *snap_ptr, false);
+}
+
+void AssistantService::executeTransition(AssistantState newState, const SystemState& snap, bool is_external_sync) {
+    AssistantState oldState = m_current_state;
     if (oldState == newState) {
         return;
     }
 
-    LOGI_SYSTEM("Assistant transition request: %s ──> %s", assistantStateToString(oldState), assistantStateToString(newState));
+    if (is_external_sync) {
+        LOGI_SYSTEM("Syncing local state machine from external change: %s ──> %s",
+                    assistantStateToString(oldState), assistantStateToString(newState));
+    } else {
+        LOGI_SYSTEM("Assistant transition request: %s ──> %s",
+                    assistantStateToString(oldState), assistantStateToString(newState));
+    }
 
-    // 1. Cleanup timers/actions of the old state
+    // 1. Cleanup timers of the old state
     switch (oldState) {
         case AssistantState::Connecting:
             if (m_connect_timer) esp_timer_stop(m_connect_timer);
@@ -288,92 +297,113 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
             break;
     }
 
-    // 2. Setup actions/timers of the new state
+    // 2. Compute visual state, pipeline mode, and triggers for the new state
     AssistantVisualState visState = AssistantVisualState::Idle;
+    PipelineMode pipeMode = PipelineMode::WAKE_IDLE;
+    bool sessionActive = false;
+    bool micEnabled = false;
+    bool connectRequested = false;
     bool trigger_auto_transition_to_idle = false;
     bool wifi_connected = snap.system.wifi_connected;
 
     switch (newState) {
         case AssistantState::Idle:
             visState = wifi_connected ? AssistantVisualState::Idle : AssistantVisualState::Offline;
+            pipeMode = PipelineMode::WAKE_IDLE;
+            sessionActive = false;
+            micEnabled = false;
+            connectRequested = false;
             GeminiProtocol::getInstance().closeConnection();
-            sysdb.mutate([](SystemState& s) {
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
-                s.assistant.media_pending_idle = false;
-            });
             break;
 
         case AssistantState::StartingSession:
             visState = AssistantVisualState::Thinking;
+            pipeMode = PipelineMode::WAKE_IDLE;
+            sessionActive = false;
+            micEnabled = false;
+            connectRequested = false;
             break;
 
         case AssistantState::Connecting:
             visState = AssistantVisualState::Connecting;
-            sysdb.mutate([](SystemState& s) {
-                s.assistant.connect_requested = true;
-            });
+            pipeMode = PipelineMode::WAKE_IDLE;
+            sessionActive = false;
+            micEnabled = false;
+            connectRequested = true;
             if (m_connect_timer) {
-                esp_timer_start_once(m_connect_timer, 10ULL * 1000 * 1000); // 10s timeout
+                esp_timer_start_once(m_connect_timer, CONNECT_TIMEOUT_US);
             }
             break;
 
         case AssistantState::StreamingUserAudio:
             visState = AssistantVisualState::Listening;
-            sysdb.mutate([](SystemState& s) {
-                s.pipeline.mode = PipelineMode::GEMINI_LIVE;
-                s.audio.session_active = true;
-                s.audio.mic_enabled = true;
-            });
+            pipeMode = PipelineMode::GEMINI_LIVE;
+            sessionActive = true;
+            micEnabled = true;
+            connectRequested = false;
             break;
 
         case AssistantState::AssistantSpeaking:
             visState = AssistantVisualState::Speaking;
-            sysdb.mutate([](SystemState& s) {
-                s.audio.assistant_speaking = true;
-                s.audio.mic_enabled = false;
-            });
+            pipeMode = PipelineMode::GEMINI_LIVE;
+            sessionActive = true;
+            micEnabled = false;
+            connectRequested = false;
             break;
 
         case AssistantState::WaitingForFollowup:
             visState = AssistantVisualState::Thinking;
+            pipeMode = PipelineMode::GEMINI_LIVE;
+            sessionActive = true;
+            micEnabled = false;
+            connectRequested = false;
             if (m_idle_timer) {
-                esp_timer_start_once(m_idle_timer, 60ULL * 1000 * 1000); // 60s window
+                esp_timer_start_once(m_idle_timer, SESSION_FOLLOWUP_TIMEOUT_US);
             }
             break;
 
         case AssistantState::Closing:
-            sysdb.mutate([](SystemState& s) {
-                s.assistant.connect_requested = false;
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
-            });
-            trigger_auto_transition_to_idle = true; 
+            visState = AssistantVisualState::Idle;
+            pipeMode = PipelineMode::WAKE_IDLE;
+            sessionActive = false;
+            micEnabled = false;
+            connectRequested = false;
+            trigger_auto_transition_to_idle = true;
             break;
 
         case AssistantState::ErrorCooldown:
             visState = AssistantVisualState::Error;
-            sysdb.mutate([](SystemState& s) {
-                s.assistant.connect_requested = false;
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
-            });
+            pipeMode = PipelineMode::WAKE_IDLE;
+            sessionActive = false;
+            micEnabled = false;
+            connectRequested = false;
             if (m_cooldown_timer) {
-                esp_timer_start_once(m_cooldown_timer, 5ULL * 1000 * 1000); // 5s cooldown
+                esp_timer_start_once(m_cooldown_timer, COOLDOWN_TIMEOUT_US);
             }
             break;
     }
 
-    // Apply session and visual states to SysDb
-    sysdb.mutate([newState, visState](SystemState& s) {
+    // 3. Single atomic SysDb mutation
+    sysdb.mutate([newState, visState, pipeMode, sessionActive, micEnabled, connectRequested](SystemState& s) {
         s.assistant.session_state = newState;
-        s.assistant.visual_state = visState;
+        s.assistant.visual_state  = visState;
+        s.pipeline.mode           = pipeMode;
+        s.audio.session_active    = sessionActive;
+        s.audio.mic_enabled       = micEnabled;
+        s.assistant.connect_requested = connectRequested;
+        if (newState == AssistantState::AssistantSpeaking) {
+            s.audio.assistant_speaking = true;
+        }
         if (newState == AssistantState::Idle) {
-            s.assistant.connect_requested = false;
+            s.assistant.media_pending_idle = false;
+            s.audio.turn_complete_pending  = false;
+            s.audio.assistant_speaking     = false;
         }
     });
 
-    // 3. Play audio alerts asynchronously
+    m_current_state = newState;
+
+    // 4. Play audio alerts asynchronously
     switch (newState) {
         case AssistantState::StartingSession:
             AudioOrchestrator::getInstance().notifyWakeWordDetected();
@@ -392,76 +422,9 @@ void AssistantService::transitionTo(AssistantState newState, const SystemState* 
             break;
     }
 
-    // Defer Closing→Idle via task notification to avoid a recursive transitionTo() call.
-    // A direct recursive call pushes another large SystemState onto an already deep stack.
+    // Defer Closing→Idle via task notification to avoid recursive executeTransition()
     if (trigger_auto_transition_to_idle) {
         m_pending_idle_transition = true;
         xTaskNotify(m_task_handle, COMP::ASSISTANT, eSetBits);
-    }
-}
-
-void AssistantService::handleStateTransition(AssistantState oldState, AssistantState newState, const SystemState& snap) {
-    m_current_state = newState;
-    LOGI_SYSTEM("Syncing local state machine from external change: %s ──> %s", assistantStateToString(oldState), assistantStateToString(newState));
-
-    // Sync timers and internal variables
-    switch (oldState) {
-        case AssistantState::Connecting:
-            if (m_connect_timer) esp_timer_stop(m_connect_timer);
-            break;
-        case AssistantState::WaitingForFollowup:
-            if (m_idle_timer) esp_timer_stop(m_idle_timer);
-            break;
-        case AssistantState::ErrorCooldown:
-            if (m_cooldown_timer) esp_timer_stop(m_cooldown_timer);
-            break;
-        default:
-            break;
-    }
-
-    // Start appropriate timers or sync database if updated externally
-    switch (newState) {
-        case AssistantState::StartingSession:
-            AudioOrchestrator::getInstance().notifyWakeWordDetected();
-            playAlertAsync(ALERT_WAKE_CONFIRM);
-            break;
-        case AssistantState::Idle:
-            GeminiProtocol::getInstance().closeConnection();
-            sysdb.mutate([](SystemState& s) {
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
-                s.assistant.connect_requested = false;
-                s.assistant.media_pending_idle = false;
-            });
-            break;
-        case AssistantState::Connecting:
-            if (m_connect_timer) {
-                esp_timer_start_once(m_connect_timer, 10ULL * 1000 * 1000);
-            }
-            break;
-        case AssistantState::WaitingForFollowup:
-            if (m_idle_timer) {
-                esp_timer_start_once(m_idle_timer, 30ULL * 1000 * 1000);
-            }
-            break;
-        case AssistantState::Closing:
-            sysdb.mutate([](SystemState& s) {
-                s.assistant.connect_requested = false;
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
-            });
-            break;
-        case AssistantState::ErrorCooldown:
-            sysdb.mutate([](SystemState& s) {
-                s.assistant.connect_requested = false;
-                s.pipeline.mode = PipelineMode::WAKE_IDLE;
-                s.audio.session_active = false;
-            });
-            if (m_cooldown_timer) {
-                esp_timer_start_once(m_cooldown_timer, 5ULL * 1000 * 1000);
-            }
-            break;
-        default:
-            break;
     }
 }

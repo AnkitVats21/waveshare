@@ -17,7 +17,11 @@ public:
 protected:
 
 private:
-    void handleStateTransition(AssistantState oldState, AssistantState newState, const SystemState& snap);
+    static constexpr uint64_t SESSION_FOLLOWUP_TIMEOUT_US = 60ULL * 1000 * 1000;
+    static constexpr uint64_t CONNECT_TIMEOUT_US          = 10ULL * 1000 * 1000;
+    static constexpr uint64_t COOLDOWN_TIMEOUT_US         = 5ULL * 1000 * 1000;
+
+    void executeTransition(AssistantState newState, const SystemState& snap, bool is_external_sync);
     void transitionTo(AssistantState newState, const SystemState* snap_ptr = nullptr);
 
     static void connectTimeoutCallback(void* arg);
