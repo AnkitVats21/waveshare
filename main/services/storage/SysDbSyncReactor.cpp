@@ -16,6 +16,7 @@ struct StateParseCtx {
     int r = 0, g = 0, b = 0;
     bool autoplay = true;
     bool cache_downloads = false;
+    bool record_all_mic_channels = true;
 };
 
 static void onStatePair(const std::string& key, const std::string& val, void* ctx) {
@@ -28,6 +29,8 @@ static void onStatePair(const std::string& key, const std::string& val, void* ct
         p->autoplay = (val == "1" || val == "true");
     } else if (key == "cache_downloads" || key == "caching") {
         p->cache_downloads = (val == "1" || val == "true");
+    } else if (key == "record_all_mic_channels") {
+        p->record_all_mic_channels = (val == "1" || val == "true");
     }
 }
 } // namespace
@@ -72,10 +75,12 @@ bool SysDbSyncReactor::loadPersistentState() {
         s.led.mode = LedMode::SOLID;
         s.media.autoplay_enabled = parseCtx.autoplay;
         s.media.cache_downloads = parseCtx.cache_downloads;
+        s.audio.record_all_mic_channels = parseCtx.record_all_mic_channels;
     });
 
-    ESP_LOGI(TAG, "Persistent state restored from SD card: vol=%d, color=%d,%d,%d, autoplay=%d, cache_downloads=%d",
-             parseCtx.volume, parseCtx.r, parseCtx.g, parseCtx.b, parseCtx.autoplay, parseCtx.cache_downloads);
+    ESP_LOGI(TAG, "Persistent state restored from SD card: vol=%d, color=%d,%d,%d, autoplay=%d, cache_downloads=%d, record_all_mic_channels=%d",
+             parseCtx.volume, parseCtx.r, parseCtx.g, parseCtx.b, parseCtx.autoplay, parseCtx.cache_downloads,
+             parseCtx.record_all_mic_channels);
     return true;
 }
 
@@ -99,8 +104,8 @@ void SysDbSyncReactor::run() {
             m_last_changed = changed_bits;
             
             // Check if mutated bits contain the fields we care about persisting
-            bool has_audio_change = (m_last_changed & COMP::AUDIO) && 
-                                    (m_last_changed & BIT_AUDIO::SPEAKER_VOLUME);
+            bool has_audio_change = (m_last_changed & COMP::AUDIO) &&
+                                    (m_last_changed & (BIT_AUDIO::SPEAKER_VOLUME | BIT_AUDIO::RECORD_CHANNELS));
             bool has_media_change = (m_last_changed & COMP::MEDIA) && 
                                     (m_last_changed & (BIT_MEDIA::AUTOPLAY | BIT_MEDIA::CACHE));
             bool has_led_change = (m_last_changed & COMP::LED) && 
@@ -129,15 +134,16 @@ void SysDbSyncReactor::writeStateToSD() {
     }
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
-    char buf[160];
+    char buf[192];
     snprintf(buf, sizeof(buf),
-             "speaker_volume=%d\nled_color=%d,%d,%d\nautoplay=%d\ncache_downloads=%d\n",
+             "speaker_volume=%d\nled_color=%d,%d,%d\nautoplay=%d\ncache_downloads=%d\nrecord_all_mic_channels=%d\n",
              snap.audio.speaker_volume,
              snap.led.color.r,
              snap.led.color.g,
              snap.led.color.b,
              snap.media.autoplay_enabled ? 1 : 0,
-             snap.media.cache_downloads ? 1 : 0);
+             snap.media.cache_downloads ? 1 : 0,
+             snap.audio.record_all_mic_channels ? 1 : 0);
 
     if (StorageService::getInstance().writeFile("/sdcard/state_sync.txt", buf)) {
         ESP_LOGI(TAG, "Persistent state successfully synchronized to /sdcard/state_sync.txt");

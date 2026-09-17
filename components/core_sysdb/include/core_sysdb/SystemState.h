@@ -79,6 +79,7 @@ namespace BIT_AUDIO {
     static constexpr ComponentMask HW_RATE        = (1u << 7);
     static constexpr ComponentMask LAST_ACTIVITY  = (1u << 8);
     static constexpr ComponentMask WAV_PLAYING    = (1u << 9);
+    static constexpr ComponentMask RECORD_CHANNELS = (1u << 10);
 }
 namespace BIT_PIPELINE {
     static constexpr ComponentMask MODE           = (1u << 0);
@@ -128,7 +129,8 @@ namespace BIT_MQTT {
     X(AudioStreamFormat, stream_format, AudioStreamFormat::PCM_S16LE, 0) \
     X(bool, wav_playing, false, BIT_AUDIO::WAV_PLAYING) \
     X(uint32_t, wav_sample_rate, 16000, 0) \
-    X(bool, wav_prefetched, false, 0)
+    X(bool, wav_prefetched, false, 0) \
+    X(bool, record_all_mic_channels, true, BIT_AUDIO::RECORD_CHANNELS)
 
 #define PIPELINE_FIELDS \
     X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE) \

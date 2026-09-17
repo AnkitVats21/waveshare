@@ -4,6 +4,7 @@
 #include "common/thread_config.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/MusicPlaybackService.h"
+#include "app/audio/recording/AudioRecorder.h"
 #include "freertos/idf_additions.h"
 #include <algorithm>
 
@@ -47,6 +48,9 @@ void KeyService::run() {
                     m_prevState[i] = true;
                     m_pressCount[i] = 0;
                     m_longPressedTriggered[i] = false;
+                    if (keys[i] == KeyId::KEY_2) {
+                        m_key2StopConsumedThisPress = false;
+                    }
                     ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
 
                     // Key 4: toggle Play/Pause on press down
@@ -54,7 +58,7 @@ void KeyService::run() {
                         ESP_LOGI("KeySvc", "Key 4: toggling playback");
                         MusicPlaybackService::getInstance().postCommand(MediaCmdType::TOGGLE_PLAY_PAUSE);
                     }
-                    // Key 2: stop alarm on press down
+                    // Key 2: stop alarm on press down, and stop any active recording
                     else if (keys[i] == KeyId::KEY_2) {
                         sysdb.mutate([](SystemState& s) {
                             if (s.alarm.playing) {
@@ -62,6 +66,11 @@ void KeyService::run() {
                                 ESP_LOGI("KeySvc", "Alarm stop requested via Key 2");
                             }
                         });
+                        if (AudioRecorder::getInstance().isRecording()) {
+                            ESP_LOGI("KeySvc", "Key 2 press: stopping active recording");
+                            AudioRecorder::getInstance().stopRecording(AudioRecorder::StopReason::MANUAL);
+                            m_key2StopConsumedThisPress = true;
+                        }
                     }
                 } else {
                     m_pressCount[i]++;
@@ -76,6 +85,11 @@ void KeyService::run() {
                         } else if (keys[i] == KeyId::KEY_5) {
                             ESP_LOGI(TAG, "Key 5 long press: requesting previous track");
                             MusicPlaybackService::getInstance().postCommand(MediaCmdType::PREVIOUS);
+                        } else if (keys[i] == KeyId::KEY_2) {
+                            if (!m_key2StopConsumedThisPress) {
+                                ESP_LOGI(TAG, "Key 2 long press: starting RAW recording");
+                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::RAW);
+                            }
                         }
                     }
                 }
@@ -98,6 +112,11 @@ void KeyService::run() {
                                 s.audio.speaker_volume = std::max(old_vol - 5, 0);
                                 ESP_LOGI("KeySvc", "Volume decrease request: %d -> %d", old_vol, s.audio.speaker_volume);
                             });
+                        } else if (keys[i] == KeyId::KEY_2) {
+                            if (!m_key2StopConsumedThisPress) {
+                                ESP_LOGI(TAG, "Key 2 short press: starting RESAMPLED recording");
+                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::RESAMPLED);
+                            }
                         }
                     }
                 }

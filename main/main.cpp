@@ -47,6 +47,7 @@ extern "C" void app_main(void) {
             s.audio.rtp_tx_port       = CONFIG_WAVESHARE_RTP_TX_PORT;
             s.audio.rtp_rx_port       = CONFIG_WAVESHARE_RTP_RX_PORT;
             s.audio.buffer_size       = 131072;
+            s.audio.record_all_mic_channels = true;
         }
     );
 

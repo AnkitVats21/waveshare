@@ -21,6 +21,7 @@ private:
     bool m_prevState[5] = {false};
     uint32_t m_pressCount[5] = {0};
     bool m_longPressedTriggered[5] = {false};
+    bool m_key2StopConsumedThisPress = false;
 
     static constexpr const char *TAG = "KeySvc";
 };

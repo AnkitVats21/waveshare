@@ -28,6 +28,8 @@ set(srcs
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
+            "app/audio/recording/WavPcmEncoder.cpp"
+            "app/audio/recording/AudioRecorder.cpp"
             "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
 

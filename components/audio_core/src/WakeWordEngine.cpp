@@ -21,6 +21,9 @@
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
+
+DEFINE_BUFFER_WITH_TYPE(RECORD_TX_BUF, "record_tx", 320 * 1024, RINGBUF_TYPE_NOSPLIT)
 
 // ============================================================================
 // Singleton
@@ -56,6 +59,45 @@ void WakeWordEngine::setAssistantActive(bool active) {
     if (active) {
         m_interruption_triggered = false;
     }
+}
+
+// ============================================================================
+// setWakeWordSuppressed — suppress WakeNet only, mic feed keeps running.
+// ============================================================================
+
+void WakeWordEngine::setWakeWordSuppressed(bool suppressed) {
+    m_wake_word_suppressed = suppressed;
+    if (m_afe_handle && m_afe_data) {
+        if (suppressed) {
+            m_afe_handle->disable_wakenet(m_afe_data);
+            ESP_LOGI(TAG, "setWakeWordSuppressed(true): WakeNet suppressed (feed/AFE still running)");
+        } else {
+            m_afe_handle->enable_wakenet(m_afe_data);
+            ESP_LOGI(TAG, "setWakeWordSuppressed(false): WakeNet re-armed");
+        }
+    }
+}
+
+// ============================================================================
+// Recording tap control — driven by AudioRecorder, consumed by feedTask/detectTask.
+// ============================================================================
+
+void WakeWordEngine::startRawRecording(RecordChannels channels) {
+    m_recording_raw_channels = channels;
+    m_recording_drop_count   = 0;
+    m_raw_tap_seq            = 0;
+    m_recording_raw_active   = true;
+}
+
+void WakeWordEngine::startResampledRecording() {
+    m_recording_drop_count       = 0;
+    m_resampled_tap_seq          = 0;
+    m_recording_resampled_active = true;
+}
+
+void WakeWordEngine::stopRecordingTap() {
+    m_recording_raw_active       = false;
+    m_recording_resampled_active = false;
 }
 
 // ============================================================================
@@ -213,6 +255,17 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
     ESP_LOGI(TAG, "feedTask: %luHz→16kHz downsample active (hw_chunk=%d, afe_chunk=%d, ch=%d)",
              (unsigned long)HW_RATE, hw_chunksize, afe_chunksize, feed_channel);
 
+    // Scratch for the RAW recording tap — sized for the worst case (all
+    // feed_channel channels at hw_chunksize frames). Allocated unconditionally
+    // (cheap, SPIRAM) so a recording can start on demand without a task restart.
+    size_t raw_tap_scratch_bytes = sizeof(RecordChunkHeader) + (size_t)hw_buf_bytes;
+    m_raw_tap_scratch = static_cast<uint8_t *>(
+        heap_caps_malloc(raw_tap_scratch_bytes, MALLOC_CAP_SPIRAM));
+    if (!m_raw_tap_scratch) {
+        ESP_LOGW(TAG, "feedTask: failed to allocate raw recording tap scratch (%u bytes)",
+                 (unsigned)raw_tap_scratch_bytes);
+    }
+
     esp_task_wdt_add(nullptr);
 
     // Warm-up: ignore the first ~800ms to let mic hardware bias settle
@@ -253,11 +306,46 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
 
         // Feed 16kHz data to AFE SR engine
         m_afe_handle->feed(afe_data, afe_buff);
+
+        // ── RAW recording tap (pre-resample, native hw_chunksize/rate) ──────
+        // Bounded (not indefinite) wait: a few ms of backpressure tolerance
+        // absorbs brief SD-write stalls without risking a real stall of this
+        // already-starved task. seq is incremented every attempt (even on
+        // drop) so the writer can detect exactly how many chunks were lost
+        // and pad with silence instead of splicing non-adjacent audio.
+        if (m_recording_raw_active && m_raw_tap_scratch) {
+            int rec_channels = (m_recording_raw_channels == RecordChannels::ALL)
+                                    ? feed_channel : 1;
+            size_t frame_bytes = (size_t)hw_chunksize * rec_channels * sizeof(int16_t);
+            auto *hdr = reinterpret_cast<RecordChunkHeader *>(m_raw_tap_scratch);
+            hdr->type = RecordChunkType::DATA;
+            hdr->size = (uint32_t)frame_bytes;
+            hdr->seq  = m_raw_tap_seq++;
+            int16_t *payload = reinterpret_cast<int16_t *>(m_raw_tap_scratch + sizeof(RecordChunkHeader));
+            if (rec_channels == feed_channel) {
+                std::memcpy(payload, hw_buff, frame_bytes);
+            } else {
+                // De-interleave channel index 1 (Mic1) out of the 4-ch hw_buff.
+                for (int f = 0; f < hw_chunksize; ++f) {
+                    payload[f] = hw_buff[f * feed_channel + 1];
+                }
+            }
+            if (!BufferManager::getInstance().send(Buffers::RECORD_TX_BUF, m_raw_tap_scratch,
+                                                    sizeof(RecordChunkHeader) + frame_bytes,
+                                                    pdMS_TO_TICKS(5))) {
+                m_recording_drop_count = m_recording_drop_count + 1;
+            }
+        }
+
         esp_task_wdt_reset();
         // Yield 1 tick so lower-priority tasks and IDLE1 (CPU 1) can run and pet watchdog
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
+    if (m_raw_tap_scratch) {
+        heap_caps_free(m_raw_tap_scratch);
+        m_raw_tap_scratch = nullptr;
+    }
     heap_caps_free(hw_buff);
     heap_caps_free(afe_buff);
     esp_task_wdt_delete(nullptr);
@@ -285,6 +373,17 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
 
     // Convenience ref to the ring buffer we stream beamformed audio into
     auto &bm = BufferManager::getInstance();
+
+    // Scratch for the RESAMPLED recording tap — AFE's fetch() output is
+    // always mono; size for the worst case fetch_chunksize.
+    size_t resampled_tap_scratch_bytes =
+        sizeof(RecordChunkHeader) + (size_t)fetch_chunksize * sizeof(int16_t);
+    m_resampled_tap_scratch = static_cast<uint8_t *>(
+        heap_caps_malloc(resampled_tap_scratch_bytes, MALLOC_CAP_SPIRAM));
+    if (!m_resampled_tap_scratch) {
+        ESP_LOGW(TAG, "detectTask: failed to allocate resampled recording tap scratch (%u bytes)",
+                 (unsigned)resampled_tap_scratch_bytes);
+    }
 
     int silence_frames = 0;
 
@@ -323,6 +422,26 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
 
         if (m_streaming_active && !block_mic_capture && res->data && res->data_size > 0) {
             bm.send(Buffers::MIC_TX_BUF, res->data, res->data_size);
+        }
+
+        // ── RESAMPLED recording tap ───────────────────────────────────────────
+        // Independent of m_streaming_active — recording happens while idle
+        // (WakeNet suppressed), so this must not be gated by the assistant
+        // streaming state above. res->data stays valid even with WakeNet
+        // suppressed (same guarantee the MIC_TX_BUF send above relies on
+        // during active assistant sessions, which also run with WakeNet off).
+        if (m_recording_resampled_active && m_resampled_tap_scratch &&
+            res->data && res->data_size > 0) {
+            auto *hdr = reinterpret_cast<RecordChunkHeader *>(m_resampled_tap_scratch);
+            hdr->type = RecordChunkType::DATA;
+            hdr->size = (uint32_t)res->data_size;
+            hdr->seq  = m_resampled_tap_seq++;
+            std::memcpy(m_resampled_tap_scratch + sizeof(RecordChunkHeader),
+                        res->data, res->data_size);
+            if (!bm.send(Buffers::RECORD_TX_BUF, m_resampled_tap_scratch,
+                         sizeof(RecordChunkHeader) + res->data_size, pdMS_TO_TICKS(5))) {
+                m_recording_drop_count = m_recording_drop_count + 1;
+            }
         }
 
         // ── Wake word detection ───────────────────────────────────────────────
@@ -373,6 +492,10 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
         esp_task_wdt_reset();
     }
 
+    if (m_resampled_tap_scratch) {
+        heap_caps_free(m_resampled_tap_scratch);
+        m_resampled_tap_scratch = nullptr;
+    }
     ESP_LOGI(TAG, "detectTask exiting");
     esp_task_wdt_delete(nullptr);
     xSemaphoreGive(m_detect_done);
