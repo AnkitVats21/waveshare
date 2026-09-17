@@ -100,3 +100,5 @@ yarn-error.log*
 pnpm-debug.log*
 web-app/dist/
 web-app/.vite/
+
+.agent/
