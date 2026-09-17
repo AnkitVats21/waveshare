@@ -36,15 +36,27 @@ bool AlertPlayer::start() {
         return true;
     }
     m_running = true;
-    BaseType_t res = xTaskCreatePinnedToCore(
+    BaseType_t res = xTaskCreatePinnedToCoreWithCaps(
         workerTaskThunk,
         "alert_player",
         ThreadConfig::StackSize::STACK_LARGE,
         this,
         ThreadConfig::Priority::AUDIO_ALERT,
         &m_task_handle,
-        ThreadConfig::CORE_AUDIO
+        ThreadConfig::CORE_AUDIO,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
+    if (res != pdPASS || m_task_handle == nullptr) {
+        res = xTaskCreatePinnedToCore(
+            workerTaskThunk,
+            "alert_player",
+            ThreadConfig::StackSize::STACK_LARGE,
+            this,
+            ThreadConfig::Priority::AUDIO_ALERT,
+            &m_task_handle,
+            ThreadConfig::CORE_AUDIO
+        );
+    }
     return (res == pdPASS);
 }
 

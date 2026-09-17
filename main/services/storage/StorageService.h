@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <cstdio>
+#include <ctime>
+#include <cstdint>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -38,6 +40,25 @@ public:
     bool isStreamEOF(FILE* stream);
     // Flushes blocks to flash media and securely closes the stream
     void closeStream(FILE* stream);
+
+    struct FileEntryInfo {
+        std::string name;
+        size_t size = 0;
+        bool is_dir = false;
+        time_t mtime = 0;
+    };
+
+    // Extended CRUD APIs for remote file operations
+    bool getStorageInfo(const char* base_path, uint64_t& total_bytes, uint64_t& free_bytes);
+    std::vector<FileEntryInfo> listDirectoryDetailed(const char* dir_path);
+    bool createDirectory(const char* dir_path);
+    bool renamePath(const char* old_path, const char* new_path);
+    bool deletePath(const char* path);
+    static bool sanitizePath(const char* in_path, std::string& out_path, const char* base_mount = "/sdcard");
+
+    // Explicit mutex locking for multi-step / chunked streaming
+    void lock();
+    void unlock();
 
 private:
     StorageService();

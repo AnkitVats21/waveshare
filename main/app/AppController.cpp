@@ -20,6 +20,7 @@
 #include "hal/companion/BtPlayerI2s.h"
 #include "hal/companion/BtPlayerUart.h"
 #include "esp_heap_caps.h"
+#include "freertos/idf_additions.h"
 #include <string>
 #include <cstring>
 #include <ArduinoJson.h>
@@ -116,11 +117,17 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
 
         if (wifi_ok && !m_time_synced) {
             m_time_synced = true;
-            LOGI_SYSTEM("Wi-Fi connected. Spawning background NTP synchronization task...");
-            xTaskCreate([](void* arg) {
+            LOGI_SYSTEM("Wi-Fi connected. Spawning background NTP synchronization task in PSRAM...");
+            BaseType_t ret = xTaskCreateWithCaps([](void* arg) {
                 Services::TimeSyncHelper::synchronizeTimeAndCleanup();
                 vTaskDelete(NULL);
-            }, "ntp_sync", 3072, NULL, 4, NULL);
+            }, "ntp_sync", 4096, NULL, 4, NULL, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (ret != pdPASS) {
+                xTaskCreate([](void* arg) {
+                    Services::TimeSyncHelper::synchronizeTimeAndCleanup();
+                    vTaskDelete(NULL);
+                }, "ntp_sync", 3072, NULL, 4, NULL);
+            }
         }
         
         // if (wifi_ok && !m_wifi_connected) {

@@ -20,6 +20,7 @@
 #include "services/storage/AlertFileDecoder.h"
 #include "hal/input/ExpanderKeyInput.h"
 #include "services/network/WifiService.h"
+#include "services/network/HttpFileServerService.h"
 #include "services/BufferManager.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -64,7 +65,7 @@ extern "C" void app_main(void) {
     } else {
         LOGI_SYSTEM("Board hardware and NVS ready.");
 #if CONFIG_WAVESHARE_SDCARD_ENABLE
-        if (board.initSdCard(CONFIG_WAVESHARE_SDCARD_MOUNT_POINT, 5) != ESP_OK) {
+        if (board.initSdCard(CONFIG_WAVESHARE_SDCARD_MOUNT_POINT, 8) != ESP_OK) {
             LOGE_SYSTEM("Failed to mount SD card!");
         } else {
             LOGI_SYSTEM("SD Card mounted successfully at %s", CONFIG_WAVESHARE_SDCARD_MOUNT_POINT);
@@ -101,6 +102,9 @@ extern "C" void app_main(void) {
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
+#if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    static Services::HttpFileServerService& http_server = Services::HttpFileServerService::getInstance();
+#endif
 
     // Start services
     audio_svc.begin();
@@ -118,6 +122,9 @@ extern "C" void app_main(void) {
     gemini_pump.start();
     app_ctrl.begin();
     sync_reactor.begin();
+#if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    http_server.begin();
+#endif
 
     // 6. Initialize Key Input service
     static ExpanderKeyInput key_input(io_exp);
@@ -137,6 +144,9 @@ extern "C" void app_main(void) {
     key_svc.start();
     sync_reactor.start();
     NexusPlayer::getInstance().start();
+#if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    http_server.start();
+#endif
 
     // 7. Start WiFi service event bridge
     WifiService::Config wifi_cfg = {

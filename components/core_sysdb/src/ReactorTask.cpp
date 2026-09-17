@@ -20,18 +20,8 @@ bool ReactorTask::start() {
 
     m_running = true;
 
-    BaseType_t result = xTaskCreatePinnedToCore(
-        taskEntry,
-        m_cfg.name,
-        m_cfg.stack_size,
-        this,
-        m_cfg.priority,
-        &m_task_handle,
-        m_cfg.core_id
-    );
-
-    if (result != pdPASS || m_task_handle == nullptr) {
-        // Fallback to PSRAM if internal memory is tight
+    BaseType_t result = pdFAIL;
+    if (m_cfg.stack_caps != 0) {
         result = xTaskCreatePinnedToCoreWithCaps(
             taskEntry,
             m_cfg.name,
@@ -40,7 +30,20 @@ bool ReactorTask::start() {
             m_cfg.priority,
             &m_task_handle,
             m_cfg.core_id,
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+            m_cfg.stack_caps
+        );
+    }
+
+    if (result != pdPASS || m_task_handle == nullptr) {
+        // Fallback to internal SRAM if external allocation failed or wasn't requested
+        result = xTaskCreatePinnedToCore(
+            taskEntry,
+            m_cfg.name,
+            m_cfg.stack_size,
+            this,
+            m_cfg.priority,
+            &m_task_handle,
+            m_cfg.core_id
         );
     }
 

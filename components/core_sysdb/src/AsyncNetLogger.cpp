@@ -2,6 +2,8 @@
 #include "esp_log.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
+#include "esp_heap_caps.h"
+#include "freertos/idf_additions.h"
 #include <cstring>
 
 AsyncNetLogger &AsyncNetLogger::getInstance() {
@@ -24,8 +26,14 @@ void AsyncNetLogger::startWorker() {
   if (m_task_handle != nullptr)
     return;
 
-  xTaskCreatePinnedToCore(&AsyncNetLogger::taskWrapper, "async_net_log_task",
-                          4096, this, 2, &m_task_handle, 0);
+  BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
+      &AsyncNetLogger::taskWrapper, "async_net_log_task",
+      4096, this, 2, &m_task_handle, 0,
+      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (ret != pdPASS || m_task_handle == nullptr) {
+      xTaskCreatePinnedToCore(&AsyncNetLogger::taskWrapper, "async_net_log_task",
+                              4096, this, 2, &m_task_handle, 0);
+  }
 }
 
 void AsyncNetLogger::stopWorker() {

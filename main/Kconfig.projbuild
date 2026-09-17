@@ -230,6 +230,29 @@ config WAVESHARE_SDCARD_FORMAT_IF_MOUNT_FAILED
     depends on WAVESHARE_SDCARD_ENABLE
     default n
 
+config WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    bool "Enable SD Card HTTP File Server"
+    depends on WAVESHARE_WIFI_ENABLE && WAVESHARE_SDCARD_ENABLE
+    default y
+    help
+        Enables an embedded HTTP server providing CRUD operations and a Web Dashboard
+        for files on the SD card over the local network.
+
+config WAVESHARE_HTTP_FILE_SERVER_PORT
+    int "HTTP file server port"
+    depends on WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    range 1 65535
+    default 80
+    help
+        Port number for the HTTP file server and Web Dashboard.
+
+config WAVESHARE_HTTP_FILE_SERVER_BASE_PATH
+    string "HTTP file server base mount path"
+    depends on WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    default "/sdcard"
+    help
+        Base mount path on the local filesystem exposed via HTTP.
+
 config WAVESHARE_MQTT_ENABLE
     bool "Enable MQTT runtime"
     default y

@@ -4,6 +4,7 @@
 #include "core_sysdb/SystemState.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
 
 /**
  * @brief Base class for all state-reactive services.
@@ -23,20 +24,24 @@
  *     state. Do NOT call blocking I2S / HAL APIs here.
  *   - **run()** does the heavy lifting. Call ulTaskNotifyTake() at the top
  *     of its loop to wait for the next notification.
+ *   - Default stack location is PSRAM (MALLOC_CAP_SPIRAM) to maximize
+ *     internal SRAM headroom for time-critical audio DSP & DMA.
  *
  * ## Example
  * ```cpp
- * class AudioService : public ReactorTask {
+ * class VolumeReactor : public ReactorTask {
  * public:
- *     AudioService(AudioHal& hal)
- *         : ReactorTask({ "audio_svc", 6144, 10, 1, COMP::AUDIO | COMP::PIPELINE })
- *         , m_hal(hal) {}
+ *     VolumeReactor() : ReactorTask({
+ *         .name       = "vol_reactor",
+ *         .stack_size = 3072,
+ *         .priority   = ThreadConfig::Priority::LOW,
+ *         .core_id    = ThreadConfig::CORE_AUDIO,
+ *         .interest   = COMP::AUDIO
+ *     }) {}
  * protected:
  *     void onStateChanged(ComponentMask changed, const SystemState& snap) override {
- *         if (changed & COMP::AUDIO) {
+ *         if (changed & BIT_AUDIO::SPEAKER_VOLUME)
  *             m_pending_volume = snap.audio.speaker_volume;
- *             xTaskNotifyGive(m_task_handle); // wake run() loop
- *         }
  *     }
  *     void run() override {
  *         while (m_running) {
@@ -55,6 +60,7 @@ public:
         UBaseType_t   priority;    ///< FreeRTOS priority (use ThreadConfig::Priority)
         BaseType_t    core_id;     ///< Core affinity (use ThreadConfig::CORE_*)
         ComponentMask interest;    ///< OR'd COMP:: bits this reactor watches
+        UBaseType_t   stack_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; ///< Stack location (defaults to PSRAM)
     };
 
     /**
