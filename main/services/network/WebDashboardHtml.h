@@ -113,7 +113,8 @@ audio { outline: none; height: 36px; width: 340px; max-width: 60%; }
 <div class="container">
   <header>
     <h1>🎛 Waveshare S3 Control Hub</h1>
-    <div style="display:flex; align-items:center; gap:10px;">
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+      <span id="header-cpu-badge" class="badge" style="background:rgba(129,140,248,0.15); color:#a5b4fc; border:1px solid rgba(129,140,248,0.3);">CPU: 0% / 0%</span>
       <span id="header-rec-badge" class="badge badge-rec" style="display:none;">● RECORDING</span>
       <span id="header-wifi-badge" class="badge badge-wifi">Wi-Fi: ...</span>
     </div>
@@ -244,6 +245,21 @@ audio { outline: none; height: 36px; width: 340px; max-width: 60%; }
 
   <!-- Tab 3: Telemetry & Metrics -->
   <div id="tab-telemetry" class="tab-pane">
+    <div class="grid-2" style="margin-bottom:16px;">
+      <div class="card">
+        <h2>⚡ Core 0 (Network / System)</h2>
+        <div style="font-size:1.4rem; font-weight:700;" id="metric-cpu0">0%</div>
+        <div style="font-size:0.8rem; color:var(--text-muted);" id="metric-cpu0-detail">Wi-Fi, HTTP Server, MQTT, SysDb</div>
+        <div class="progress-bar-bg"><div id="metric-cpu0-bar" class="progress-bar-fill" style="width:0%;"></div></div>
+      </div>
+      <div class="card">
+        <h2>🎛 Core 1 (Audio DSP / Pipeline)</h2>
+        <div style="font-size:1.4rem; font-weight:700;" id="metric-cpu1">0%</div>
+        <div style="font-size:0.8rem; color:var(--text-muted);" id="metric-cpu1-detail">I2S DMA, DSP AFE, Wake Word, Synthesizer</div>
+        <div class="progress-bar-bg"><div id="metric-cpu1-bar" class="progress-bar-fill" style="width:0%;"></div></div>
+      </div>
+    </div>
+
     <div class="grid-3">
       <div class="card">
         <h2>🧠 Internal SRAM</h2>
@@ -269,9 +285,11 @@ audio { outline: none; height: 36px; width: 340px; max-width: 60%; }
         <h2>⚙ System Overview</h2>
         <table style="font-size:0.85rem;">
           <tr><td style="color:var(--text-muted);">Uptime</td><td id="metric-uptime">-</td></tr>
-          <tr><td style="color:var(--text-muted);">Active FreeRTOS Tasks</td><td id="metric-tasks">-</td></tr>
+          <tr><td style="color:var(--text-muted);">Board Model</td><td id="metric-board">ESP32-S3 (Waveshare)</td></tr>
+          <tr><td style="color:var(--text-muted);">Firmware Version</td><td id="metric-version">-</td></tr>
+          <tr><td style="color:var(--text-muted);">Compile Date/Time</td><td id="metric-compile-time">-</td></tr>
+          <tr><td style="color:var(--text-muted);">Active Partition</td><td id="metric-running-part">-</td></tr>
           <tr><td style="color:var(--text-muted);">Boot Reset Reason</td><td id="metric-reset-reason">-</td></tr>
-          <tr><td style="color:var(--text-muted);">Chip Hardware</td><td id="metric-chip">ESP32-S3 Dual-Core</td></tr>
         </table>
       </div>
       <div class="card">
@@ -729,62 +747,107 @@ async function applyLedSettings() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Telemetry
+// Telemetry & Real-Time Delta Stream
 // ─────────────────────────────────────────────────────────────────────────────
-async function loadTelemetry() {
-  try {
-    const res = await fetch('/api/system/metrics');
-    if (!res.ok) return;
-    const m = await res.json();
+let sysInfo = { internal_total: 311931, psram_total: 7864320 };
 
-    // SRAM
-    const sramUsed = m.heap.internal_total - m.heap.internal_free;
-    const sramPct = ((sramUsed / m.heap.internal_total) * 100).toFixed(1);
-    document.getElementById('metric-sram-free').innerText = formatBytes(m.heap.internal_free) + ' Free';
-    document.getElementById('metric-sram-detail').innerText = `${formatBytes(sramUsed)} / ${formatBytes(m.heap.internal_total)} (Min: ${formatBytes(m.heap.internal_min_free)})`;
+async function initSystem() {
+  try {
+    const res = await fetch('/api/system/init');
+    if (!res.ok) return;
+    const init = await res.json();
+    sysInfo = init;
+
+    if (document.getElementById('metric-board')) document.getElementById('metric-board').innerText = init.board || 'ESP32-S3';
+    if (document.getElementById('metric-version')) document.getElementById('metric-version').innerText = init.version || '-';
+    if (document.getElementById('metric-compile-time')) document.getElementById('metric-compile-time').innerText = `${init.compile_date} ${init.compile_time}`;
+    if (document.getElementById('metric-running-part')) document.getElementById('metric-running-part').innerText = `${init.running_partition} (Target: ${init.target_partition})`;
+    if (document.getElementById('metric-reset-reason')) document.getElementById('metric-reset-reason').innerText = init.reset_reason || 'Normal Boot';
+
+    if (init.state) applyState(init.state);
+  } catch (err) {}
+}
+
+function applyState(st) {
+  if (st.speaker_volume !== undefined) {
+    document.getElementById('val-volume').innerText = st.speaker_volume + '%';
+    document.getElementById('slider-volume').value = st.speaker_volume;
+    document.getElementById('metric-speaker-vol').innerText = st.speaker_volume + '%';
+  }
+  if (st.mic_gain_db !== undefined) {
+    document.getElementById('val-mic-gain').innerText = Number(st.mic_gain_db).toFixed(1) + ' dB';
+    document.getElementById('slider-mic-gain').value = st.mic_gain_db;
+    document.getElementById('metric-mic-gain').innerText = Number(st.mic_gain_db).toFixed(1) + ' dB';
+  }
+  if (st.sample_rate !== undefined) {
+    document.getElementById('metric-sample-rate').innerText = st.sample_rate + ' Hz';
+  }
+  if (st.is_recording !== undefined && st.is_recording !== isRecordingActive) {
+    isRecordingActive = st.is_recording;
+    document.getElementById('btn-record-toggle').innerText = isRecordingActive ? '⏹ Stop Recording' : '🔴 Start Recording';
+    document.getElementById('header-rec-badge').style.display = isRecordingActive ? 'inline-flex' : 'none';
+    document.getElementById('metric-recorder-state').innerText = isRecordingActive ? 'Recording' : 'Idle';
+  }
+}
+
+async function fetchDelta() {
+  try {
+    const res = await fetch('/api/system/delta?log_seq=' + lastLogSeq);
+    if (!res.ok) return;
+    const d = await res.json();
+
+    // 1. Real-Time CPU%
+    const c0 = d.c0 || 0;
+    const c1 = d.c1 || 0;
+    document.getElementById('header-cpu-badge').innerText = `CPU: C0: ${c0}% | C1: ${c1}%`;
+    if (document.getElementById('metric-cpu0')) {
+      document.getElementById('metric-cpu0').innerText = c0 + '%';
+      document.getElementById('metric-cpu0-bar').style.width = c0 + '%';
+      document.getElementById('metric-cpu1').innerText = c1 + '%';
+      document.getElementById('metric-cpu1-bar').style.width = c1 + '%';
+    }
+
+    // 2. High-churn Memory
+    const sramTotal = sysInfo.internal_total || 311931;
+    const sramUsed = sramTotal - d.sram;
+    const sramPct = ((sramUsed / sramTotal) * 100).toFixed(1);
+    document.getElementById('metric-sram-free').innerText = formatBytes(d.sram) + ' Free';
+    document.getElementById('metric-sram-detail').innerText = `${formatBytes(sramUsed)} / ${formatBytes(sramTotal)} (Min: ${formatBytes(d.min_sram)})`;
     document.getElementById('metric-sram-bar').style.width = sramPct + '%';
 
-    // PSRAM
-    if (m.heap.psram_total > 0) {
-      const psramUsed = m.heap.psram_total - m.heap.psram_free;
-      const psramPct = ((psramUsed / m.heap.psram_total) * 100).toFixed(1);
-      document.getElementById('metric-psram-free').innerText = formatBytes(m.heap.psram_free) + ' Free';
-      document.getElementById('metric-psram-detail').innerText = `${formatBytes(psramUsed)} / ${formatBytes(m.heap.psram_total)}`;
+    const psramTotal = sysInfo.psram_total || 7864320;
+    if (psramTotal > 0) {
+      const psramUsed = psramTotal - d.psram;
+      const psramPct = ((psramUsed / psramTotal) * 100).toFixed(1);
+      document.getElementById('metric-psram-free').innerText = formatBytes(d.psram) + ' Free';
+      document.getElementById('metric-psram-detail').innerText = `${formatBytes(psramUsed)} / ${formatBytes(psramTotal)}`;
       document.getElementById('metric-psram-bar').style.width = psramPct + '%';
     }
 
-    // Wi-Fi
-    const rssi = m.wifi.rssi;
+    // 3. Wi-Fi
+    const rssi = d.rssi;
     document.getElementById('metric-wifi-rssi').innerText = rssi ? `${rssi} dBm` : 'Offline';
-    document.getElementById('metric-wifi-detail').innerText = `SSID: ${m.wifi.ssid || '-'} | IP: ${m.wifi.ip || '-'} (Ch ${m.wifi.channel || '-'})`;
     document.getElementById('header-wifi-badge').innerText = `Wi-Fi: ${rssi ? rssi + ' dBm' : 'Off'}`;
 
-    // Overview
-    const upSec = m.uptime_sec;
-    const d = Math.floor(upSec / 86400);
+    // 4. Uptime
+    const upSec = d.up || 0;
+    const days = Math.floor(upSec / 86400);
     const h = Math.floor((upSec % 86400) / 3600);
-    const min = Math.floor((upSec % 3600) / 60);
+    const m = Math.floor((upSec % 3600) / 60);
     const s = upSec % 60;
-    document.getElementById('metric-uptime').innerText = `${d > 0 ? d+'d ' : ''}${h}h ${min}m ${s}s`;
-    document.getElementById('metric-tasks').innerText = m.num_tasks;
-    document.getElementById('metric-reset-reason').innerText = m.reset_reason;
+    document.getElementById('metric-uptime').innerText = `${days > 0 ? days+'d ' : ''}${h}h ${m}m ${s}s`;
 
-    // Controls sync
-    if (m.audio) {
-      document.getElementById('val-volume').innerText = m.audio.speaker_volume + '%';
-      document.getElementById('slider-volume').value = m.audio.speaker_volume;
-      document.getElementById('val-mic-gain').innerText = m.audio.mic_gain_db.toFixed(1) + ' dB';
-      document.getElementById('slider-mic-gain').value = m.audio.mic_gain_db;
-      document.getElementById('metric-speaker-vol').innerText = m.audio.speaker_volume + '%';
-      document.getElementById('metric-mic-gain').innerText = m.audio.mic_gain_db.toFixed(1) + ' dB';
-      document.getElementById('metric-sample-rate').innerText = m.audio.sample_rate + ' Hz';
-      document.getElementById('metric-recorder-state').innerText = m.audio.is_recording ? 'Recording' : 'Idle';
+    // 5. Delta State
+    if (d.state) applyState(d.state);
 
-      if (m.audio.is_recording !== isRecordingActive) {
-        isRecordingActive = m.audio.is_recording;
-        document.getElementById('btn-record-toggle').innerText = isRecordingActive ? '⏹ Stop Recording' : '🔴 Start Recording';
-        document.getElementById('header-rec-badge').style.display = isRecordingActive ? 'inline-flex' : 'none';
-      }
+    // 6. Delta Logs
+    if (d.logs && d.logs.length > 0) {
+      logEntries.push(...d.logs);
+      if (logEntries.length > 300) logEntries.splice(0, logEntries.length - 300);
+      lastLogSeq = d.latest_seq;
+      if (currentTab === 'logs') renderLogs();
+    } else if (d.latest_seq !== undefined) {
+      lastLogSeq = d.latest_seq;
     }
   } catch (err) {}
 }
@@ -938,12 +1001,12 @@ otaDrop.onclick = () => document.getElementById('ota-file-input').click();
 ['dragleave', 'drop'].forEach(n => otaDrop.addEventListener(n, e => { e.preventDefault(); otaDrop.classList.remove('active'); }));
 otaDrop.addEventListener('drop', e => { if (e.dataTransfer.files.length > 0) uploadOta(e.dataTransfer.files[0]); });
 
-// Boot loops
+// Boot
 loadStorageInfo();
 navigateTo('/sdcard');
-loadTelemetry();
-setInterval(loadTelemetry, 2500);
-setInterval(pollLogs, 1500);
+initSystem();
+fetchDelta();
+setInterval(fetchDelta, 1000); // 1 single unified 1Hz delta & log stream
 </script>
 </body>
 </html>

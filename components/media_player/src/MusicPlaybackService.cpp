@@ -1,6 +1,8 @@
 #include "MusicPlaybackService.h"
+#include "media_player/MusicLibraryManager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -22,6 +24,8 @@ MusicPlaybackService::MusicPlaybackService() {}
 
 bool MusicPlaybackService::begin() {
     if (_initialized) return true;
+
+    MusicLibraryManager::getInstance().begin();
     
     m_cmd_queue = xQueueCreate(10, sizeof(MediaCommand));
     if (!m_cmd_queue) {
@@ -722,6 +726,99 @@ void MusicPlaybackService::handleReplenish(const char* baseId, const char* baseA
 
 bool MusicPlaybackService::play(const char* query) {
     return postCommand(MediaCmdType::PLAY, query);
+}
+
+bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* streamUrl) {
+    if (!streamUrl || streamUrl[0] == '\0') return false;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        _queueGeneration++;
+        _currentTrack = track;
+        if (track.videoId.length() > 0 && (_history.empty() || _history.back().videoId != track.videoId)) {
+            _history.push_back(track);
+            if (_history.size() > 20) _history.erase(_history.begin());
+        }
+    }
+
+    // Index into local SD library
+    LibraryTrack libTrack;
+    libTrack.id = track.videoId;
+    libTrack.title = track.title;
+    libTrack.artist = track.author;
+    libTrack.durationSeconds = track.durationSeconds;
+    libTrack.format = "opus";
+    libTrack.filePath = std::string(MusicLibraryManager::MUSIC_DIR) + "/" + track.videoId + ".opus";
+    libTrack.cachedAt = static_cast<uint32_t>(esp_timer_get_time() / 1000000ULL);
+    MusicLibraryManager::getInstance().addOrUpdateTrack(libTrack);
+
+    // Call NexusPlayer directly with direct stream URL
+    NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl);
+
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.state = MediaPlaybackState::PLAYING;
+        strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+        s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+    });
+
+    ESP_LOGI(TAG, "playDirect: Started '%s' (%s)", track.title.c_str(), track.videoId.c_str());
+    return true;
+}
+
+bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
+    if (!songIdOrPath || songIdOrPath[0] == '\0') return false;
+
+    std::string id = songIdOrPath;
+    std::string path;
+    LibraryTrack libTrack;
+
+    if (MusicLibraryManager::getInstance().getTrack(id, libTrack)) {
+        path = libTrack.filePath;
+    } else if (id.rfind("/sdcard/", 0) == 0) {
+        path = id;
+        size_t lastSlash = path.rfind('/');
+        size_t dot = path.rfind('.');
+        std::string baseId = (lastSlash != std::string::npos && dot != std::string::npos && dot > lastSlash)
+                             ? path.substr(lastSlash + 1, dot - lastSlash - 1)
+                             : path;
+        libTrack.id = baseId;
+        libTrack.title = baseId;
+        libTrack.artist = "Local";
+        libTrack.filePath = path;
+    } else {
+        path = std::string(MusicLibraryManager::MUSIC_DIR) + "/" + id + ".opus";
+        libTrack.id = id;
+        libTrack.title = id;
+        libTrack.artist = "Local";
+        libTrack.filePath = path;
+    }
+
+    InvidiousTrack track;
+    track.videoId = libTrack.id;
+    track.title = libTrack.title;
+    track.author = libTrack.artist;
+    track.durationSeconds = libTrack.durationSeconds;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        _queueGeneration++;
+        _currentTrack = track;
+        if (_history.empty() || _history.back().videoId != track.videoId) {
+            _history.push_back(track);
+            if (_history.size() > 20) _history.erase(_history.begin());
+        }
+    }
+
+    NexusPlayer::getInstance().play(libTrack.id.c_str(), path.c_str());
+
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.state = MediaPlaybackState::PLAYING;
+        strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+        s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+    });
+
+    ESP_LOGI(TAG, "playLocal: Playing '%s' from %s", libTrack.title.c_str(), path.c_str());
+    return true;
 }
 
 bool MusicPlaybackService::playNext(const char* query) {

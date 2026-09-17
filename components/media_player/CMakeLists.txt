@@ -11,6 +11,7 @@ idf_component_register(
         "src/OggOpusDecoderStrategy.cpp"
         "src/AudioDecoderFactory.cpp"
         "src/MusicPlaybackService.cpp"
+        "src/MusicLibraryManager.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

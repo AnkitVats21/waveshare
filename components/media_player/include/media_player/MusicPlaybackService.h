@@ -60,6 +60,8 @@ public:
 
     // Convenience API wrappers for backward compatibility and simplicity
     bool play(const char* query);
+    bool playDirect(const InvidiousTrack& track, const char* streamUrl);
+    bool playLocal(const char* songIdOrPath);
     bool playNext(const char* query);
     bool queue(const char* query);
     bool next();

@@ -89,3 +89,14 @@ refactor_phases/
 
 # Antigravity agent customizations
 .agents/
+
+# Node.js / Web Application
+node_modules/
+**/node_modules/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+web-app/dist/
+web-app/.vite/

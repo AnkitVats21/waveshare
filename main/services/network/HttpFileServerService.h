@@ -52,11 +52,22 @@ private:
     static esp_err_t audioAlertHandler(httpd_req_t* req);
     static esp_err_t audioRecordHandler(httpd_req_t* req);
 
+    // Static URI Handlers — Music & Library
+    static esp_err_t musicPlayHandler(httpd_req_t* req);
+    static esp_err_t musicPlayLocalHandler(httpd_req_t* req);
+    static esp_err_t musicControlHandler(httpd_req_t* req);
+    static esp_err_t musicStatusHandler(httpd_req_t* req);
+    static esp_err_t musicLibraryHandler(httpd_req_t* req);
+    static esp_err_t musicLibraryScanHandler(httpd_req_t* req);
+    static esp_err_t musicLibraryDeleteHandler(httpd_req_t* req);
+
     // Static URI Handlers — LED Control
     static esp_err_t ledSetHandler(httpd_req_t* req);
 
     // Static URI Handlers — System Metrics & Telemetry
     static esp_err_t metricsHandler(httpd_req_t* req);
+    static esp_err_t systemInitHandler(httpd_req_t* req);
+    static esp_err_t systemDeltaHandler(httpd_req_t* req);
 
     // Static URI Handlers — Config Management
     static esp_err_t configGetHandler(httpd_req_t* req);

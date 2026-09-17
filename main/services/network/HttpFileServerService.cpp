@@ -8,6 +8,9 @@
 #include "core_sysdb/led_types.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
+#include "media_player/MusicPlaybackService.h"
+#include "media_player/MusicLibraryManager.h"
+#include "media_player/NexusPlayer.h"
 
 #include <ArduinoJson.h>
 #include <esp_log.h>
@@ -19,6 +22,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_app_desc.h>
+#include <freertos/idf_additions.h>
 #include <sys/stat.h>
 #include <cstring>
 #include <cstdlib>
@@ -99,6 +103,9 @@ bool HttpFileServerService::startServer() {
     config.core_id = ThreadConfig::CORE_NETWORK;
     config.max_uri_handlers = 48;
     config.uri_match_fn = httpd_uri_match_wildcard;
+    config.max_open_sockets = 12;
+    config.recv_wait_timeout = 3;
+    config.send_wait_timeout = 3;
     config.lru_purge_enable = true;
 
     esp_err_t ret = httpd_start(&m_server, &config);
@@ -155,11 +162,22 @@ void HttpFileServerService::registerUriHandlers() {
     reg("/api/audio/record/start", HTTP_POST, audioRecordHandler);
     reg("/api/audio/record/stop", HTTP_POST, audioRecordHandler);
 
-    // 4. LED Lighting Controls
+    // 4. Music & Library APIs
+    reg("/api/music/play", HTTP_POST, musicPlayHandler);
+    reg("/api/music/play_local", HTTP_POST, musicPlayLocalHandler);
+    reg("/api/music/control", HTTP_POST, musicControlHandler);
+    reg("/api/music/status", HTTP_GET, musicStatusHandler);
+    reg("/api/music/library", HTTP_GET, musicLibraryHandler);
+    reg("/api/music/library/scan", HTTP_POST, musicLibraryScanHandler);
+    reg("/api/music/library", HTTP_DELETE, musicLibraryDeleteHandler);
+
+    // 5. LED Lighting Controls
     reg("/api/led/set", HTTP_POST, ledSetHandler);
 
     // 5. System Metrics & Telemetry
     reg("/api/system/metrics", HTTP_GET, metricsHandler);
+    reg("/api/system/init", HTTP_GET, systemInitHandler);
+    reg("/api/system/delta", HTTP_GET, systemDeltaHandler);
 
     // 6. Config Management
     reg("/api/config/settings", HTTP_GET, configGetHandler);
@@ -229,6 +247,7 @@ esp_err_t HttpFileServerService::sendJsonResponse(httpd_req_t* req, int status_c
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_set_type(req, "application/json");
 
     if (status_code == 200) httpd_resp_set_status(req, "200 OK");
@@ -278,6 +297,7 @@ esp_err_t HttpFileServerService::optionsHandler(httpd_req_t* req) {
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_set_status(req, "200 OK");
     return httpd_resp_send(req, nullptr, 0);
 }
@@ -708,15 +728,300 @@ esp_err_t HttpFileServerService::ledSetHandler(httpd_req_t* req) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Telemetry & Metrics Handler
+// Music & Library Handlers
 // ─────────────────────────────────────────────────────────────────────────────
+
+esp_err_t HttpFileServerService::musicPlayHandler(httpd_req_t* req) {
+    if (req->content_len <= 0 || req->content_len > 8192) {
+        return sendJsonError(req, 400, "Invalid payload size");
+    }
+
+    std::string body(req->content_len + 1, '\0');
+    int received = httpd_req_recv(req, &body[0], req->content_len);
+    if (received <= 0) {
+        return sendJsonError(req, 400, "Failed to read request body");
+    }
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, body.c_str());
+    if (err) {
+        return sendJsonError(req, 400, "Invalid JSON payload");
+    }
+
+    const char* stream_url = doc["stream_url"];
+    if (!stream_url || strlen(stream_url) == 0) {
+        return sendJsonError(req, 400, "stream_url is required");
+    }
+
+    std::string id = doc["id"] | doc["videoId"] | "";
+    std::string title = doc["title"] | "Unknown Title";
+    std::string artist = doc["artist"] | doc["author"] | "Unknown Artist";
+    int duration = doc["duration"] | doc["durationSeconds"] | 0;
+
+    InvidiousTrack track;
+    track.videoId = id;
+    track.title = title;
+    track.author = artist;
+    track.durationSeconds = duration;
+
+    bool ok = MusicPlaybackService::getInstance().playDirect(track, stream_url);
+    if (!ok) {
+        return sendJsonError(req, 500, "Failed to start direct playback");
+    }
+
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["message"] = "Playback started";
+    resp["id"] = id;
+    resp["title"] = title;
+    std::string out;
+    serializeJson(resp, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::musicPlayLocalHandler(httpd_req_t* req) {
+    std::string id_or_path;
+    if (!getQueryParam(req, "id", id_or_path) && !getQueryParam(req, "path", id_or_path)) {
+        if (req->content_len > 0 && req->content_len < 2048) {
+            std::string body(req->content_len + 1, '\0');
+            httpd_req_recv(req, &body[0], req->content_len);
+            JsonDocument doc;
+            if (!deserializeJson(doc, body.c_str())) {
+                const char* id = doc["id"];
+                const char* path = doc["path"];
+                if (id) id_or_path = id;
+                else if (path) id_or_path = path;
+            }
+        }
+    }
+
+    if (id_or_path.empty()) {
+        return sendJsonError(req, 400, "Missing id or path parameter");
+    }
+
+    bool ok = MusicPlaybackService::getInstance().playLocal(id_or_path.c_str());
+    if (!ok) {
+        return sendJsonError(req, 404, "Track file not found or failed to play");
+    }
+
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["target"] = id_or_path;
+    std::string out;
+    serializeJson(resp, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::musicControlHandler(httpd_req_t* req) {
+    std::string action;
+    int int_val = 0;
+    bool bool_val = false;
+
+    if (getQueryParam(req, "action", action)) {
+        std::string val_str;
+        if (getQueryParam(req, "value", val_str)) {
+            int_val = atoi(val_str.c_str());
+            bool_val = (val_str == "1" || val_str == "true");
+        }
+    } else if (req->content_len > 0 && req->content_len < 2048) {
+        std::string body(req->content_len + 1, '\0');
+        httpd_req_recv(req, &body[0], req->content_len);
+        JsonDocument doc;
+        if (!deserializeJson(doc, body.c_str())) {
+            const char* a = doc["action"];
+            if (a) action = a;
+            if (doc["value"].is<int>()) {
+                int_val = doc["value"].as<int>();
+            } else if (doc["value"].is<bool>()) {
+                bool_val = doc["value"].as<bool>();
+            }
+        }
+    }
+
+    if (action.empty()) {
+        return sendJsonError(req, 400, "Missing action parameter");
+    }
+
+    if (action == "pause") {
+        MusicPlaybackService::getInstance().pause();
+    } else if (action == "resume") {
+        MusicPlaybackService::getInstance().resume();
+    } else if (action == "toggle") {
+        MusicPlaybackService::getInstance().postCommand(MediaCmdType::TOGGLE_PLAY_PAUSE);
+    } else if (action == "next") {
+        MusicPlaybackService::getInstance().next();
+    } else if (action == "prev" || action == "previous") {
+        MusicPlaybackService::getInstance().previous();
+    } else if (action == "stop") {
+        MusicPlaybackService::getInstance().stop();
+    } else if (action == "clear_queue") {
+        MusicPlaybackService::getInstance().clearQueue();
+    } else if (action == "shuffle") {
+        MusicPlaybackService::getInstance().shuffleQueue();
+    } else if (action == "repeat") {
+        RepeatMode m = static_cast<RepeatMode>(int_val);
+        MusicPlaybackService::getInstance().setRepeatMode(m);
+    } else if (action == "autoplay") {
+        MusicPlaybackService::getInstance().setAutoplay(bool_val);
+    } else if (action == "caching") {
+        MusicPlaybackService::getInstance().setCaching(bool_val);
+    } else {
+        return sendJsonError(req, 400, "Unknown action");
+    }
+
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["action"] = action;
+    std::string out;
+    serializeJson(resp, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::musicStatusHandler(httpd_req_t* req) {
+    PlayerState pState = NexusPlayer::getInstance().getState();
+    const char* state_str = "IDLE";
+    switch (pState) {
+        case STATE_STREAMING_AND_CACHING: state_str = "STREAMING"; break;
+        case STATE_LOCAL_PLAYBACK:        state_str = "LOCAL"; break;
+        case STATE_PAUSED:                state_str = "PAUSED"; break;
+        default:                          state_str = "IDLE"; break;
+    }
+
+    InvidiousTrack cur = MusicPlaybackService::getInstance().getCurrentTrack();
+    auto q = MusicPlaybackService::getInstance().getQueue();
+
+    JsonDocument doc;
+    doc["state"] = state_str;
+    JsonObject t = doc["current_track"].to<JsonObject>();
+    t["id"] = cur.videoId;
+    t["title"] = cur.title;
+    t["artist"] = cur.author;
+    t["duration"] = cur.durationSeconds;
+
+    doc["repeat_mode"] = static_cast<int>(MusicPlaybackService::getInstance().getRepeatMode());
+    doc["autoplay"] = MusicPlaybackService::getInstance().isAutoplayEnabled();
+    doc["caching"] = MusicPlaybackService::getInstance().isCachingEnabled();
+    doc["queue_count"] = q.size();
+
+    JsonArray qa = doc["queue"].to<JsonArray>();
+    int count = 0;
+    for (const auto& item : q) {
+        if (++count > 10) break;
+        JsonObject obj = qa.add<JsonObject>();
+        obj["id"] = item.videoId;
+        obj["title"] = item.title;
+        obj["artist"] = item.author;
+    }
+
+    std::string out;
+    serializeJson(doc, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::musicLibraryHandler(httpd_req_t* req) {
+    std::string filter;
+    getQueryParam(req, "q", filter);
+
+    std::string json = MusicLibraryManager::getInstance().serializeLibraryJson(filter);
+    return sendJsonResponse(req, 200, json);
+}
+
+esp_err_t HttpFileServerService::musicLibraryScanHandler(httpd_req_t* req) {
+    size_t count = MusicLibraryManager::getInstance().scanAndSync();
+    JsonDocument doc;
+    doc["status"] = "ok";
+    doc["scanned_count"] = count;
+    std::string out;
+    serializeJson(doc, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::musicLibraryDeleteHandler(httpd_req_t* req) {
+    std::string id;
+    if (!getQueryParam(req, "id", id) || id.empty()) {
+        if (req->content_len > 0 && req->content_len < 512) {
+            std::string body(req->content_len + 1, '\0');
+            httpd_req_recv(req, &body[0], req->content_len);
+            JsonDocument doc;
+            if (!deserializeJson(doc, body.c_str())) {
+                const char* id_field = doc["id"];
+                if (id_field) id = id_field;
+            }
+        }
+    }
+
+    if (id.empty()) {
+        return sendJsonError(req, 400, "Missing id parameter");
+    }
+
+    bool ok = MusicLibraryManager::getInstance().removeTrack(id);
+    JsonDocument doc;
+    doc["status"] = ok ? "ok" : "error";
+    doc["id"] = id;
+    if (!ok) doc["message"] = "Track not found in library";
+    std::string out;
+    serializeJson(doc, out);
+    return sendJsonResponse(req, ok ? 200 : 404, out);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-time CPU Usage & Telemetry Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void getCpuUsage(int& cpu0_pct, int& cpu1_pct) {
+#if (configGENERATE_RUN_TIME_STATS == 1)
+    static uint32_t s_last_idle0 = 0;
+    static uint32_t s_last_idle1 = 0;
+    static int64_t  s_last_time_us = 0;
+    static int      s_cached_cpu0 = 0;
+    static int      s_cached_cpu1 = 0;
+
+    int64_t now_us = esp_timer_get_time();
+    uint32_t idle0 = ulTaskGetIdleRunTimeCounterForCore(0);
+    uint32_t idle1 = ulTaskGetIdleRunTimeCounterForCore(1);
+
+    if (s_last_time_us > 0) {
+        int64_t dt_us = now_us - s_last_time_us;
+        if (dt_us >= 250000) { // Refresh at least every 250ms
+            float idle0_fraction = static_cast<float>(idle0 - s_last_idle0) / static_cast<float>(dt_us);
+            float idle1_fraction = static_cast<float>(idle1 - s_last_idle1) / static_cast<float>(dt_us);
+
+            if (idle0_fraction > 1.0f) idle0_fraction = 1.0f;
+            if (idle0_fraction < 0.0f) idle0_fraction = 0.0f;
+            if (idle1_fraction > 1.0f) idle1_fraction = 1.0f;
+            if (idle1_fraction < 0.0f) idle1_fraction = 0.0f;
+
+            s_cached_cpu0 = static_cast<int>((1.0f - idle0_fraction) * 100.0f);
+            s_cached_cpu1 = static_cast<int>((1.0f - idle1_fraction) * 100.0f);
+
+            s_last_idle0 = idle0;
+            s_last_idle1 = idle1;
+            s_last_time_us = now_us;
+        }
+    } else {
+        s_last_idle0 = idle0;
+        s_last_idle1 = idle1;
+        s_last_time_us = now_us;
+    }
+
+    cpu0_pct = s_cached_cpu0;
+    cpu1_pct = s_cached_cpu1;
+#else
+    cpu0_pct = 0;
+    cpu1_pct = 0;
+#endif
+}
 
 esp_err_t HttpFileServerService::metricsHandler(httpd_req_t* req) {
     JsonDocument doc;
 
-    // 1. System Overview
+    // 1. System Overview & Realtime CPU%
     doc["uptime_sec"] = static_cast<uint64_t>(esp_timer_get_time() / 1000000ULL);
     doc["num_tasks"] = uxTaskGetNumberOfTasks();
+    int cpu0 = 0, cpu1 = 0;
+    getCpuUsage(cpu0, cpu1);
+    doc["cpu0"] = cpu0;
+    doc["cpu1"] = cpu1;
 
     const char* reset_desc = "Unknown";
     switch (esp_reset_reason()) {
@@ -769,6 +1074,156 @@ esp_err_t HttpFileServerService::metricsHandler(httpd_req_t* req) {
     audio["mic_enabled"]    = snap.audio.mic_enabled;
     audio["sample_rate"]    = snap.audio.sample_rate;
     audio["is_recording"]   = AudioRecorder::getInstance().isRecording();
+
+    std::string out;
+    serializeJson(doc, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::systemInitHandler(httpd_req_t* req) {
+    JsonDocument doc;
+    doc["board"] = "ESP32-S3 (Waveshare)";
+    const esp_app_desc_t* app_desc = esp_app_get_description();
+    doc["version"]      = app_desc ? app_desc->version : "unknown";
+    doc["compile_date"] = app_desc ? app_desc->date : "unknown";
+    doc["compile_time"] = app_desc ? app_desc->time : "unknown";
+
+    const char* reset_desc = "Unknown";
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON:   reset_desc = "Power-on Reset"; break;
+        case ESP_RST_SW:        reset_desc = "Software Reset"; break;
+        case ESP_RST_PANIC:     reset_desc = "Software Panic / Crash"; break;
+        case ESP_RST_INT_WDT:   reset_desc = "Interrupt Watchdog"; break;
+        case ESP_RST_TASK_WDT:  reset_desc = "Task Watchdog"; break;
+        case ESP_RST_BROWNOUT:  reset_desc = "Brownout (Voltage Drop)"; break;
+        default:                reset_desc = "Normal Boot"; break;
+    }
+    doc["reset_reason"] = reset_desc;
+
+    doc["internal_total"] = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+    doc["psram_total"]    = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* target  = esp_ota_get_next_update_partition(nullptr);
+    doc["running_partition"] = running ? running->label : "unknown";
+    doc["target_partition"]  = target ? target->label : "unknown";
+
+    wifi_ap_record_t ap_info = {};
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        doc["wifi_ssid"]    = reinterpret_cast<const char*>(ap_info.ssid);
+        doc["wifi_channel"] = ap_info.primary;
+    }
+    esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif) {
+        esp_netif_ip_info_t ip_info;
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            char ip_str[16];
+            esp_ip4addr_ntoa(&ip_info.ip, ip_str, sizeof(ip_str));
+            doc["ip"] = ip_str;
+        }
+    }
+
+    SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+    JsonObject state = doc["state"].to<JsonObject>();
+    state["speaker_volume"] = snap.audio.speaker_volume;
+    state["mic_gain_db"]    = snap.audio.mic_gain_db;
+    state["mic_enabled"]    = snap.audio.mic_enabled;
+    state["sample_rate"]    = snap.audio.sample_rate;
+    state["is_recording"]   = AudioRecorder::getInstance().isRecording();
+    state["led_mode"]       = static_cast<int>(snap.led.mode);
+    state["led_r"]          = snap.led.color.r;
+    state["led_g"]          = snap.led.color.g;
+    state["led_b"]          = snap.led.color.b;
+
+    std::string out;
+    serializeJson(doc, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::systemDeltaHandler(httpd_req_t* req) {
+    JsonDocument doc;
+
+    // 1. Dynamic Uptime & Realtime CPU%
+    doc["up"] = static_cast<uint64_t>(esp_timer_get_time() / 1000000ULL);
+    int cpu0 = 0, cpu1 = 0;
+    getCpuUsage(cpu0, cpu1);
+    doc["c0"] = cpu0;
+    doc["c1"] = cpu1;
+
+    // 2. High-churn Dynamic Memory
+    doc["sram"]     = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    doc["min_sram"] = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    doc["psram"]    = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    // 3. Wi-Fi RSSI
+    wifi_ap_record_t ap_info = {};
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        doc["rssi"] = ap_info.rssi;
+    } else {
+        doc["rssi"] = 0;
+    }
+
+    // 4. State Delta: check if control state changed since last request
+    SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+    static int   s_last_vol = -1;
+    static float s_last_gain = -1.0f;
+    static bool  s_last_mic = false;
+    static bool  s_last_rec = false;
+    bool is_rec = AudioRecorder::getInstance().isRecording();
+
+    if (snap.audio.speaker_volume != s_last_vol ||
+        snap.audio.mic_gain_db != s_last_gain ||
+        snap.audio.mic_enabled != s_last_mic ||
+        is_rec != s_last_rec) {
+        s_last_vol  = snap.audio.speaker_volume;
+        s_last_gain = snap.audio.mic_gain_db;
+        s_last_mic  = snap.audio.mic_enabled;
+        s_last_rec  = is_rec;
+
+        JsonObject state = doc["state"].to<JsonObject>();
+        state["speaker_volume"] = s_last_vol;
+        state["mic_gain_db"]    = s_last_gain;
+        state["mic_enabled"]    = s_last_mic;
+        state["is_recording"]   = s_last_rec;
+    }
+
+    // 5. Delta Logs: fetch only logs since client's last seen sequence number
+    std::string seq_str;
+    uint32_t since_seq = 0;
+    if (getQueryParam(req, "log_seq", seq_str)) {
+        since_seq = static_cast<uint32_t>(strtoul(seq_str.c_str(), nullptr, 10));
+    }
+    std::vector<std::pair<uint32_t, std::string>> logs;
+    uint32_t latest_seq = 0;
+    LogRouter::getInstance().getLogsSince(since_seq, logs, latest_seq);
+    doc["latest_seq"] = latest_seq;
+    if (!logs.empty()) {
+        JsonArray log_arr = doc["logs"].to<JsonArray>();
+        for (const auto& l : logs) {
+            log_arr.add(l.second);
+        }
+    }
+
+    // 6. Music Playback State
+    PlayerState pState = NexusPlayer::getInstance().getState();
+    const char* mstate_str = "IDLE";
+    switch (pState) {
+        case STATE_STREAMING_AND_CACHING: mstate_str = "STREAMING"; break;
+        case STATE_LOCAL_PLAYBACK:        mstate_str = "LOCAL"; break;
+        case STATE_PAUSED:                mstate_str = "PAUSED"; break;
+        default:                          mstate_str = "IDLE"; break;
+    }
+    JsonObject mobj = doc["music"].to<JsonObject>();
+    mobj["state"] = mstate_str;
+    InvidiousTrack cur = MusicPlaybackService::getInstance().getCurrentTrack();
+    JsonObject t = mobj["current_track"].to<JsonObject>();
+    t["id"] = cur.videoId;
+    t["title"] = cur.title;
+    t["artist"] = cur.author;
+    t["duration"] = cur.durationSeconds;
+    mobj["repeat_mode"] = static_cast<int>(MusicPlaybackService::getInstance().getRepeatMode());
+    mobj["autoplay"] = MusicPlaybackService::getInstance().isAutoplayEnabled();
+    mobj["caching"] = MusicPlaybackService::getInstance().isCachingEnabled();
 
     std::string out;
     serializeJson(doc, out);
@@ -882,8 +1337,8 @@ struct OtaWorkState {
 // Static task control block, stack, and chunk buffer strictly in internal SRAM (.bss).
 // Guarantees s_task_stack_is_sane_when_cache_frozen() passes without allocating from heap!
 static StaticTask_t s_ota_tcb;
-static StackType_t  s_ota_stack[2048]; // 8192 bytes (in internal SRAM, accommodates esp_ota_end SHA-256 verification)
-static char         s_ota_chunk[2048]; // 2048 bytes (in internal SRAM)
+static StackType_t  s_ota_stack[3072]; // 12288 bytes (12 KB in internal SRAM, bulletproof for esp_image validation & SHA-256)
+static char         s_ota_chunk[4096]; // 4096 bytes (4 KB aligned to flash sector size for 2x faster flashing)
 
 static void otaWorkerThunk(void* arg) {
     auto* s = static_cast<OtaWorkState*>(arg);
@@ -1029,10 +1484,16 @@ esp_err_t HttpFileServerService::otaUploadHandler(httpd_req_t* req) {
 
     ESP_LOGI(TAG, "OTA Flashing complete! Scheduled restart in 2 seconds...");
 
-    xTaskCreate([](void*) {
-        vTaskDelay(pdMS_TO_TICKS(2500));
-        esp_restart();
-    }, "ota_reboot", 2048, nullptr, 5, nullptr);
+    static esp_timer_handle_t s_ota_reboot_timer = nullptr;
+    if (!s_ota_reboot_timer) {
+        esp_timer_create_args_t timer_args = {};
+        timer_args.callback = [](void*) { esp_restart(); };
+        timer_args.arg = nullptr;
+        timer_args.dispatch_method = ESP_TIMER_TASK;
+        timer_args.name = "ota_reboot";
+        esp_timer_create(&timer_args, &s_ota_reboot_timer);
+    }
+    esp_timer_start_once(s_ota_reboot_timer, 2000000ULL);
 
     JsonDocument doc;
     doc["status"] = "ok";
@@ -1043,10 +1504,16 @@ esp_err_t HttpFileServerService::otaUploadHandler(httpd_req_t* req) {
 }
 
 esp_err_t HttpFileServerService::systemRebootHandler(httpd_req_t* req) {
-    xTaskCreate([](void*) {
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        esp_restart();
-    }, "web_reboot", 2048, nullptr, 5, nullptr);
+    static esp_timer_handle_t s_web_reboot_timer = nullptr;
+    if (!s_web_reboot_timer) {
+        esp_timer_create_args_t timer_args = {};
+        timer_args.callback = [](void*) { esp_restart(); };
+        timer_args.arg = nullptr;
+        timer_args.dispatch_method = ESP_TIMER_TASK;
+        timer_args.name = "web_reboot";
+        esp_timer_create(&timer_args, &s_web_reboot_timer);
+    }
+    esp_timer_start_once(s_web_reboot_timer, 1500000ULL);
 
     JsonDocument doc;
     doc["status"] = "ok";
