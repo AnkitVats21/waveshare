@@ -9,7 +9,7 @@
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
 #include "media_player/MusicPlaybackService.h"
-#include "media_player/MusicLibraryManager.h"
+#include "media_player/CatalogDB.h"
 #include "media_player/NexusPlayer.h"
 
 #include <ArduinoJson.h>
@@ -865,6 +865,8 @@ esp_err_t HttpFileServerService::musicControlHandler(httpd_req_t* req) {
         MusicPlaybackService::getInstance().setAutoplay(bool_val);
     } else if (action == "caching") {
         MusicPlaybackService::getInstance().setCaching(bool_val);
+    } else if (action == "seek") {
+        MusicPlaybackService::getInstance().seekTo(static_cast<uint32_t>(int_val));
     } else {
         return sendJsonError(req, 400, "Unknown action");
     }
@@ -889,9 +891,15 @@ esp_err_t HttpFileServerService::musicStatusHandler(httpd_req_t* req) {
 
     InvidiousTrack cur = MusicPlaybackService::getInstance().getCurrentTrack();
     auto q = MusicPlaybackService::getInstance().getQueue();
+    uint32_t pos_ms = MusicPlaybackService::getInstance().getPositionMs();
+    uint32_t dur_ms = cur.durationSeconds * 1000;
+    bool seekable = (pState == STATE_LOCAL_PLAYBACK || pState == STATE_STREAMING_AND_CACHING || pState == STATE_PAUSED);
 
     JsonDocument doc;
     doc["state"] = state_str;
+    doc["position_ms"] = pos_ms;
+    doc["duration_ms"] = dur_ms;
+    doc["seekable"] = seekable;
     JsonObject t = doc["current_track"].to<JsonObject>();
     t["id"] = cur.videoId;
     t["title"] = cur.title;
@@ -922,12 +930,12 @@ esp_err_t HttpFileServerService::musicLibraryHandler(httpd_req_t* req) {
     std::string filter;
     getQueryParam(req, "q", filter);
 
-    std::string json = MusicLibraryManager::getInstance().serializeLibraryJson(filter);
+    std::string json = CatalogDB::getInstance().serializeLibraryJson(filter);
     return sendJsonResponse(req, 200, json);
 }
 
 esp_err_t HttpFileServerService::musicLibraryScanHandler(httpd_req_t* req) {
-    size_t count = MusicLibraryManager::getInstance().scanAndSync();
+    size_t count = CatalogDB::getInstance().scanAndSync();
     JsonDocument doc;
     doc["status"] = "ok";
     doc["scanned_count"] = count;
@@ -954,7 +962,7 @@ esp_err_t HttpFileServerService::musicLibraryDeleteHandler(httpd_req_t* req) {
         return sendJsonError(req, 400, "Missing id parameter");
     }
 
-    bool ok = MusicLibraryManager::getInstance().removeTrack(id);
+    bool ok = CatalogDB::getInstance().remove(id.c_str());
     JsonDocument doc;
     doc["status"] = ok ? "ok" : "error";
     doc["id"] = id;
@@ -1221,6 +1229,9 @@ esp_err_t HttpFileServerService::systemDeltaHandler(httpd_req_t* req) {
     t["title"] = cur.title;
     t["artist"] = cur.author;
     t["duration"] = cur.durationSeconds;
+    mobj["position_ms"] = MusicPlaybackService::getInstance().getPositionMs();
+    mobj["duration_ms"] = cur.durationSeconds * 1000;
+    mobj["seekable"] = (pState == STATE_LOCAL_PLAYBACK || pState == STATE_STREAMING_AND_CACHING || pState == STATE_PAUSED);
     mobj["repeat_mode"] = static_cast<int>(MusicPlaybackService::getInstance().getRepeatMode());
     mobj["autoplay"] = MusicPlaybackService::getInstance().isAutoplayEnabled();
     mobj["caching"] = MusicPlaybackService::getInstance().isCachingEnabled();

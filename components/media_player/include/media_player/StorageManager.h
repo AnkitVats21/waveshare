@@ -19,10 +19,14 @@ public:
     // Cache Hit Path (local file read and playback)
     bool openFileForReading(const char* songId);
     
+    // Seek active playback stream
+    bool seekTo(uint32_t byteOffset);
+    
     void closeActiveFile();
     void setDownloadCompleteSignal(bool complete) { _downloadComplete = complete; }
 
 private:
+    SemaphoreHandle_t _streamMutex = nullptr;
     bool getValidCachedPath(const char* songId, char* outPath, size_t maxLen);
 
     BufferManager& _bm;

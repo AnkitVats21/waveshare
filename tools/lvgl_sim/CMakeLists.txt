@@ -28,28 +28,32 @@ find_package(Threads REQUIRED)
 
 set(ARDUINOJSON_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../managed_components/bblanchon__arduinojson")
 
+set(SHARED_UI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../components/ui_view/src/ui")
+
 add_executable(lvgl_sim
     main.cpp
     src/MiniHttpClient.cpp
     src/HttpUiDataSource.cpp
-    src/ui/DashboardScreen.cpp
-    src/ui/AssistantScreen.cpp
-    src/ui/widgets/IconButton.cpp
-    src/ui/widgets/BarStrip.cpp
-    src/ui/widgets/EqualizerBars.cpp
-    src/ui/widgets/Sparkline.cpp
-    src/ui/widgets/HBar.cpp
-    src/ui/widgets/Card.cpp
-    src/ui/widgets/StatRow.cpp
-    src/ui/widgets/GroupCarousel.cpp
-    src/ui/widgets/MusicPage.cpp
-    src/ui/widgets/LedColorSheet.cpp
-    src/ui/widgets/DetailSheet.cpp
-    src/ui/widgets/TranscriptList.cpp
+    ${SHARED_UI_DIR}/DashboardScreen.cpp
+    ${SHARED_UI_DIR}/AssistantScreen.cpp
+    ${SHARED_UI_DIR}/widgets/IconButton.cpp
+    ${SHARED_UI_DIR}/widgets/BarStrip.cpp
+    ${SHARED_UI_DIR}/widgets/EqualizerBars.cpp
+    ${SHARED_UI_DIR}/widgets/Sparkline.cpp
+    ${SHARED_UI_DIR}/widgets/HBar.cpp
+    ${SHARED_UI_DIR}/widgets/Card.cpp
+    ${SHARED_UI_DIR}/widgets/StatRow.cpp
+    ${SHARED_UI_DIR}/widgets/GroupCarousel.cpp
+    ${SHARED_UI_DIR}/widgets/MusicPage.cpp
+    ${SHARED_UI_DIR}/widgets/LedColorSheet.cpp
+    ${SHARED_UI_DIR}/widgets/DetailSheet.cpp
+    ${SHARED_UI_DIR}/widgets/TranscriptList.cpp
 )
 
 target_include_directories(lvgl_sim PRIVATE
     src
+    ${SHARED_UI_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../components/ui_view/src
     ${ARDUINOJSON_ROOT}
     ${ARDUINOJSON_ROOT}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../components/ui_view/include

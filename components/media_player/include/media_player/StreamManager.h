@@ -9,6 +9,7 @@ public:
     ~StreamManager();
 
     bool beginStreaming(const char* url, bool cacheMode = false);
+    bool beginStreamingFrom(const char* url, uint32_t byteOffset, bool cacheMode = false);
     void stopStreaming();
     bool isStreaming() const { return _isStreaming; }
 
@@ -20,6 +21,7 @@ private:
     HttpClientStream _http;
     std::string _url;
     bool _cacheMode = false;
+    uint32_t _startByteOffset = 0;
     TaskHandle_t _networkTaskHandle = nullptr;
     volatile bool _isStreaming = false;
     bool _taskCreatedWithCaps = false;

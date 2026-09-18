@@ -25,6 +25,9 @@ set(srcs
             "hal/companion/BtPlayerUart.cpp"
             "hal/companion/BtPlayerI2s.cpp"
 
+            # HAL — Display & Touch
+            "hal/display/LcdManager.cpp"
+
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
@@ -60,6 +63,7 @@ idf_component_register(
             "hal/network"
             "hal/companion"
             "hal/input"
+            "hal/display"
             # App layers
             "app"
             "app/audio"
@@ -69,6 +73,40 @@ idf_component_register(
             "services"
             "services/network"
             "common"
+        REQUIRES
+            core_sysdb
+            audio_core
+            media_player
+            gemini_live
+            ui_view
+            nvs_flash
+            esp_wifi
+            esp_netif
+            esp_http_server
+            fatfs
+            mqtt
+            esp_lcd
+            esp_lcd_ili9341
+            atanisoft__esp_lcd_touch_xpt2046
+            esp_lvgl_port
+            lvgl
+            esp_driver_sdmmc
+            esp_driver_gpio
+            esp_driver_spi
+            esp_driver_i2c
+            esp_driver_uart
+            esp_driver_i2s
+            espressif__led_strip
+            espressif__esp_io_expander_tca95xx_16bit
+            espressif__esp_codec_dev
+            esp_system
+            esp_timer
+            freertos
+            log
+            heap
+            esp_event
+            app_update
+            lwip
 )
 
 

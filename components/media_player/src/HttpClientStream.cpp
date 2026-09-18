@@ -33,7 +33,7 @@ esp_err_t HttpClientStream::_httpEventThunk(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-bool HttpClientStream::open(const std::string& url) {
+bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
     close(); // Ensure any previous session is dead
 
     esp_http_client_config_t config = {};
@@ -74,11 +74,11 @@ bool HttpClientStream::open(const std::string& url) {
     esp_http_client_set_header(_clientHandle, "User-Agent", "Mozilla/5.0 (ESP32-S3 Waveshare)");
 
     // YouTube's googlevideo CDN throttles plain GETs on `videoplayback` URLs to
-    // ~32 KB/s (barely above the audio bitrate - causes underruns and 2-minute
-    // buffer fills). Sending an open-ended Range header makes it serve at full
-    // link speed (verified ~380x faster). Harmless for non-CDN hosts, which just
-    // return 200 and ignore it or answer 206 from offset 0.
-    esp_http_client_set_header(_clientHandle, "Range", "bytes=0-");
+    // ~32 KB/s. Sending an open-ended Range header makes it serve at full link speed.
+    // When seeking, startByteOffset positions the download at the desired keyframe.
+    char rangeHeader[48];
+    snprintf(rangeHeader, sizeof(rangeHeader), "bytes=%u-", (unsigned int)startByteOffset);
+    esp_http_client_set_header(_clientHandle, "Range", rangeHeader);
 
     // Open the connection and fetch headers only. The body is then consumed
     // incrementally via esp_http_client_read() in the network task.
@@ -96,10 +96,20 @@ bool HttpClientStream::open(const std::string& url) {
         return false;
     }
 
-    ESP_LOGI(TAG, "HTTP stream opened. content_length=%lld", (long long)content_length);
+    int status = esp_http_client_get_status_code(_clientHandle);
+    ESP_LOGI(TAG, "HTTP stream opened (status=%d, offset=%u, content_length=%lld)",
+             status, (unsigned int)startByteOffset, (long long)content_length);
+    if (startByteOffset > 0 && status != 206) {
+        ESP_LOGW(TAG, "Server responded with %d instead of 206 Partial Content", status);
+    }
+
     _is_connected = true;
     esp_http_client_set_header(_clientHandle, "Connection", "keep-alive");
     return true;
+}
+
+int HttpClientStream::getStatusCode() const {
+    return _clientHandle ? esp_http_client_get_status_code(_clientHandle) : -1;
 }
 
 int HttpClientStream::read(uint8_t* buffer, size_t size) {

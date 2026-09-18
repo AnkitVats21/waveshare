@@ -16,6 +16,11 @@ StreamManager::~StreamManager() {
     stopStreaming();
 }
 
+bool StreamManager::beginStreamingFrom(const char* url, uint32_t byteOffset, bool cacheMode) {
+    _startByteOffset = byteOffset;
+    return beginStreaming(url, cacheMode);
+}
+
 bool StreamManager::beginStreaming(const char* url, bool cacheMode) {
     if (!url) return false;
     stopStreaming();
@@ -57,6 +62,7 @@ void StreamManager::stopStreaming() {
         while (_networkTaskHandle != nullptr) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
+        _startByteOffset = 0;
         ESP_LOGI(TAG, "Streaming stopped completely");
     }
 }
@@ -74,11 +80,13 @@ void StreamManager::networkTaskThunk(void* pvParameters) {
 }
 
 void StreamManager::runStreamLoop() {
-    ESP_LOGI(TAG, "Network Task running on Core 0 (cacheMode=%s)", _cacheMode ? "true" : "false");
+    ESP_LOGI(TAG, "Network Task running on Core 0 (cacheMode=%s, offset=%u)",
+             _cacheMode ? "true" : "false", (unsigned int)_startByteOffset);
     BufferManager::BufferId targetBuf = _cacheMode ? _storageId : _playbackId;
 
-    if (!_http.open(_url)) {
-        ESP_LOGE(TAG, "Failed to connect to stream: %s", _url.c_str());
+    if (!_http.open(_url, _startByteOffset)) {
+        ESP_LOGE(TAG, "Failed to connect to stream (offset=%u): %s",
+                 (unsigned int)_startByteOffset, _url.c_str());
         AudioChunkHeader err_chunk = {ChunkType::ERROR, 0};
         _bm.send(targetBuf, &err_chunk, sizeof(err_chunk), portMAX_DELAY);
         _isStreaming = false;

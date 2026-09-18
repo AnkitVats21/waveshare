@@ -8,7 +8,7 @@ public:
     ~HttpClientStream();
 
     // Initializes connection settings
-    bool open(const std::string& url);
+    bool open(const std::string& url, uint32_t startByteOffset = 0);
     
     // Reads up to 'size' bytes from the active network socket into 'buffer'
     // Returns actual bytes read, 0 on completion, or -1 on network failure
@@ -18,6 +18,7 @@ public:
     void close();
 
     bool isConnected() const { return _clientHandle != nullptr && _is_connected; }
+    int getStatusCode() const;
 
 private:
     esp_http_client_handle_t _clientHandle = nullptr;

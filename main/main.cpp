@@ -22,6 +22,10 @@
 #include "services/network/WifiService.h"
 #include "services/network/HttpFileServerService.h"
 #include "services/BufferManager.h"
+#if CONFIG_DISPLAY_ENABLE
+#include "hal/display/LcdManager.h"
+#endif
+
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_ota_ops.h"
@@ -73,6 +77,19 @@ extern "C" void app_main(void) {
         }
 #endif
     }
+
+    // 3.5 Start WiFi service early to secure internal DMA buffers before tasks allocate stacks
+    WifiService::Config wifi_cfg = {
+        .ssid        = CONFIG_WAVESHARE_WIFI_SSID,
+        .password    = CONFIG_WAVESHARE_WIFI_PASSWORD,
+        .max_retries = 5,
+    };
+    static WifiService wifi(wifi_cfg);
+    wifi.begin();
+
+#if CONFIG_DISPLAY_ENABLE
+    LcdManager::getInstance().begin();
+#endif
 
     // 4. Extract typed HAL references (Dependency Injection)
     AudioHal&        audio_hal = board.getAudio();
@@ -148,16 +165,7 @@ extern "C" void app_main(void) {
     http_server.start();
 #endif
 
-    // 7. Start WiFi service event bridge
-    WifiService::Config wifi_cfg = {
-        .ssid        = CONFIG_WAVESHARE_WIFI_SSID,
-        .password    = CONFIG_WAVESHARE_WIFI_PASSWORD,
-        .max_retries = 5,
-    };
-    static WifiService wifi(wifi_cfg);
-    wifi.begin();
-
-    // 8. Confirm healthy boot for OTA rollback protection
+    // 7. Confirm healthy boot for OTA rollback protection
     esp_ota_mark_app_valid_cancel_rollback();
 
     LOGI_SYSTEM("System initialization complete. Monitoring system events...");

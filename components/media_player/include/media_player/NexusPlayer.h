@@ -3,6 +3,7 @@
 #include "StorageManager.h"
 #include "StreamManager.h"
 #include "AudioEngine.h"
+#include "CatalogDB.h"
 #include "IPlaybackObserver.h"
 #include "common/ReactorTask.h"
 #include "freertos/semphr.h"
@@ -34,6 +35,8 @@ public:
     void pause();
     void resume();
     void stop();
+    void seekTo(uint32_t positionMs);
+    uint32_t getPositionMs() const;
     
     PlayerState getState() { return _state; }
     StorageManager& getStorageManager() { return _storageManager; }
@@ -75,6 +78,11 @@ private:
 
     // Registered playback lifecycle observers
     std::vector<IPlaybackObserver*> _observers;
+
+    // Active seek table tracking
+    std::string _activeDownloadUrl;
+    std::vector<SeekEntry> _sessionSeekTable;
+    void commitSessionSeekTable();
 
     void pause_internal();
     void resume_internal();

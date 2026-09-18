@@ -137,7 +137,14 @@ bool WifiService::begin() {
     esp_netif_create_default_wifi_sta();
 
     // 3. Configure and init WiFi driver
+    ESP_LOGI(TAG, "Free internal heap before Wi-Fi init: %u bytes, largest DMA block: %u bytes",
+             (unsigned)esp_get_free_internal_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    init_cfg.static_rx_buf_num = 4;
+    init_cfg.dynamic_rx_buf_num = 16;
+    init_cfg.cache_tx_buf_num = 16;
+    init_cfg.mgmt_sbuf_num = 16;
     ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
 
     // 4. Register ESP system event handlers (runs in system event loop task)

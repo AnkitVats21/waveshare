@@ -1,4 +1,5 @@
 #include "NexusPlayer.h"
+#include "media_player/CatalogDB.h"
 #include "esp_log.h"
 #include <cstring>
 #include <algorithm>
@@ -66,6 +67,12 @@ bool NexusPlayer::begin() {
     }
 
     AudioOrchestrator::getInstance().addObserver(this);
+    _audioEngine.setSeekIndexCallback([this](uint32_t timecodeMs, uint32_t byteOffset) {
+        PlayerLock lock(_mutex);
+        if (_sessionSeekTable.size() < 100) {
+            _sessionSeekTable.push_back({timecodeMs, byteOffset});
+        }
+    });
     return _audioEngine.initialize(44100, 1);
 }
 
@@ -175,6 +182,8 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
 
     strncpy(_activeSongId, songId, sizeof(_activeSongId) - 1);
     _activeSongId[sizeof(_activeSongId) - 1] = '\0';
+    _activeDownloadUrl = downloadUrl ? downloadUrl : "";
+    _sessionSeekTable.clear();
 
     // Flush buffers before starting new stream
     BufferManager::getInstance().flush(_playbackId);
@@ -334,6 +343,7 @@ void NexusPlayer::stop() {
 }
 
 void NexusPlayer::stopActivePipelines() {
+    commitSessionSeekTable();
     auto& bm = BufferManager::getInstance();
 
     // 1. Signal the decoder to stop, then clear the rings it feeds on/into so it
@@ -440,3 +450,64 @@ void NexusPlayer::checkPlaybackFinished() {
         notifyTrackFinished(finishedSong);
     }
 }
+
+void NexusPlayer::commitSessionSeekTable() {
+    if (_activeSongId[0] != '\0' && !_sessionSeekTable.empty()) {
+        CatalogDB::getInstance().setSeekTable(_activeSongId, _sessionSeekTable.data(), _sessionSeekTable.size());
+        _sessionSeekTable.clear();
+    }
+}
+
+uint32_t NexusPlayer::getPositionMs() const {
+    return _audioEngine.getPositionMs();
+}
+
+void NexusPlayer::seekTo(uint32_t positionMs) {
+    PlayerLock lock(_mutex);
+    if (_state == STATE_IDLE || _activeSongId[0] == '\0') {
+        ESP_LOGW(TAG, "Cannot seek: player is idle");
+        return;
+    }
+
+    uint32_t nearestTime = 0;
+    uint32_t nearestOffset = 0;
+    bool hasOffset = CatalogDB::getInstance().lookupSeekEntry(_activeSongId, positionMs, nearestTime, nearestOffset);
+
+    ESP_LOGI(TAG, "Seek to %u ms (nearest: time=%u ms, offset=%u, resolved=%d)",
+             (unsigned int)positionMs, (unsigned int)nearestTime, (unsigned int)nearestOffset, (int)hasOffset);
+
+    if (_state == STATE_LOCAL_PLAYBACK) {
+        _audioEngine.resetDecoder();
+        _audioEngine.setStreamByteOffset(nearestOffset);
+        _storageManager.seekTo(nearestOffset);
+        BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
+    } else if (_state == STATE_STREAMING_AND_CACHING) {
+        if (_activeDownloadUrl.empty()) {
+            ESP_LOGW(TAG, "Cannot seek online stream: stream URL empty");
+            return;
+        }
+        _streamManager.stopStreaming();
+        _audioEngine.resetDecoder();
+        _audioEngine.setStreamByteOffset(nearestOffset);
+        BufferManager::getInstance().flush(_playbackId);
+        BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
+
+        _streamManager.beginStreamingFrom(_activeDownloadUrl.c_str(), nearestOffset, false);
+    } else if (_state == STATE_PAUSED) {
+        if (_storageManager.fileExists(_activeSongId)) {
+            _audioEngine.resetDecoder();
+            _audioEngine.setStreamByteOffset(nearestOffset);
+            _storageManager.seekTo(nearestOffset);
+            BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
+        } else if (!_activeDownloadUrl.empty()) {
+            _streamManager.stopStreaming();
+            _audioEngine.resetDecoder();
+            _audioEngine.setStreamByteOffset(nearestOffset);
+            BufferManager::getInstance().flush(_playbackId);
+            BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
+            _streamManager.beginStreamingFrom(_activeDownloadUrl.c_str(), nearestOffset, false);
+            _audioEngine.pause();
+        }
+    }
+}
+

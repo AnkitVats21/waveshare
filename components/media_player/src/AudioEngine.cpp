@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "AudioDecoderFactory.h"
+#include "WebMOpusDecoder.h"
 #include "BufferManager.h"
 #include "common/audio/Resampler.h"
 #include "esp_heap_caps.h"
@@ -74,6 +75,10 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
         if (_decoder) {
             _decoder->init(_sampleRate, _channels);
             _decoderIdentified = true;
+            if (_seekIndexCb) {
+                auto webm = dynamic_cast<WebMOpusDecoder*>(_decoder.get());
+                if (webm) webm->setSeekIndexCallback(_seekIndexCb);
+            }
             ESP_LOGI(TAG, "Initialized decoder strategy: %s", _decoder->getName());
         }
     }
@@ -300,3 +305,24 @@ void AudioEngine::decoderTaskThunk(void* pvParameters) {
     static_cast<AudioEngine*>(pvParameters)->_decoderTaskHandle = nullptr;
     vTaskDelete(NULL);
 }
+
+void AudioEngine::setSeekIndexCallback(std::function<void(uint32_t, uint32_t)> cb) {
+    _seekIndexCb = cb;
+    if (_decoder) {
+        auto webm = dynamic_cast<WebMOpusDecoder*>(_decoder.get());
+        if (webm) webm->setSeekIndexCallback(_seekIndexCb);
+    }
+}
+
+uint32_t AudioEngine::getPositionMs() const {
+    return _decoder ? _decoder->getPositionMs() : 0;
+}
+
+void AudioEngine::resetDecoder() {
+    if (_decoder) _decoder->reset();
+}
+
+void AudioEngine::setStreamByteOffset(uint32_t offset) {
+    if (_decoder) _decoder->setStreamByteOffset(offset);
+}
+

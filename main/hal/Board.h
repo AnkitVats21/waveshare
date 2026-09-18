@@ -13,6 +13,9 @@
 #include "hal/companion/BtPlayerI2s.h"
 #include "hal/companion/BtPlayerUart.h"
 #endif
+#if CONFIG_DISPLAY_ENABLE
+#include "hal/display/LcdManager.h"
+#endif
 #include <cstdint>
 
 /**
@@ -67,6 +70,10 @@ public:
     bool initCompanion();
     btplayer::BtPlayerUart& getCompanionUart() { return btplayer::BtPlayerUart::getInstance(); }
     btplayer::BtPlayerI2s&  getCompanionI2s()  { return btplayer::BtPlayerI2s::getInstance(); }
+#endif
+
+#if CONFIG_DISPLAY_ENABLE
+    LcdManager&      getDisplay()             { return LcdManager::getInstance(); }
 #endif
 
     // ── Raw handle accessors (kept for HardwareAudioHandles population) ───────

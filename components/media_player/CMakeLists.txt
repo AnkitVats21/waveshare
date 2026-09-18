@@ -11,7 +11,7 @@ idf_component_register(
         "src/OggOpusDecoderStrategy.cpp"
         "src/AudioDecoderFactory.cpp"
         "src/MusicPlaybackService.cpp"
-        "src/MusicLibraryManager.cpp"
+        "src/CatalogDB.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES
@@ -22,6 +22,8 @@ idf_component_register(
         freertos
         esp_system
         esp_timer
+        esp_rom
+        cjson
         log
         heap
 )

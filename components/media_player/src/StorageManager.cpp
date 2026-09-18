@@ -15,15 +15,21 @@ static const char* TAG = "StorageManager";
 StorageManager::StorageManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
     : _bm(BufferManager::getInstance()),
       _playbackId(playbackId),
-      _storageId(storageId) {}
+      _storageId(storageId) {
+    _streamMutex = xSemaphoreCreateMutex();
+}
 
 StorageManager::~StorageManager() {
     closeActiveFile();
+    if (_streamMutex) {
+        vSemaphoreDelete(_streamMutex);
+        _streamMutex = nullptr;
+    }
 }
 
 bool StorageManager::getValidCachedPath(const char* songId, char* outPath, size_t maxLen) {
     if (!songId || songId[0] == '\0' || !outPath || maxLen == 0 || !_storageService) return false;
-    const char* extensions[] = {".ogg", ".opus"};
+    const char* extensions[] = {".webm", ".opus", ".ogg"};
     struct stat st;
 
     for (const char* ext : extensions) {
@@ -51,11 +57,15 @@ bool StorageManager::deleteFile(const char* songId) {
     char path[128];
     bool deleted = false;
 
-    snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
+    snprintf(path, sizeof(path), "/sdcard/music/%s.webm", songId);
     if (_storageService->fileExists(path)) {
         deleted = _storageService->deleteFile(path) || deleted;
     }
     snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
+    if (_storageService->fileExists(path)) {
+        deleted = _storageService->deleteFile(path) || deleted;
+    }
+    snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
     if (_storageService->fileExists(path)) {
         deleted = _storageService->deleteFile(path) || deleted;
     }
@@ -78,7 +88,7 @@ bool StorageManager::openFileForCaching(const char* songId) {
     }
 
     char tempPath[128];
-    snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.ogg.tmp", songId);
+    snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", songId);
 
     ESP_LOGI(TAG, "Opening cache stream at: %s", tempPath);
     _writeStream = _storageService->openStream(tempPath, "wb");
@@ -212,8 +222,8 @@ void StorageManager::closeActiveFile() {
     if (_isWritingMode && _currentSongId[0] != '\0') {
         char tempPath[128];
         char targetPath[128];
-        snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.ogg.tmp", _currentSongId);
-        snprintf(targetPath, sizeof(targetPath), "/sdcard/music/%s.ogg", _currentSongId);
+        snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", _currentSongId);
+        snprintf(targetPath, sizeof(targetPath), "/sdcard/music/%s.webm", _currentSongId);
 
         if (_downloadComplete) {
             ESP_LOGI(TAG, "Download complete. Committing cache to target: %s", targetPath);
@@ -238,6 +248,20 @@ void StorageManager::closeActiveFile() {
     _downloadComplete = false;
     _bytesWritten = 0;
     _currentSongId[0] = '\0';
+}
+
+bool StorageManager::seekTo(uint32_t byteOffset) {
+    if (!_readStream) return false;
+    if (_streamMutex) xSemaphoreTake(_streamMutex, portMAX_DELAY);
+
+    ESP_LOGI(TAG, "Seeking local stream to byte offset: %u", (unsigned int)byteOffset);
+    fseek(_readStream, byteOffset, SEEK_SET);
+
+    // Flush any pending data in playback buffer to avoid playing stale audio
+    _bm.flush(_playbackId);
+
+    if (_streamMutex) xSemaphoreGive(_streamMutex);
+    return true;
 }
 
 void StorageManager::sdWriterTaskThunk(void* pvParameters) {
@@ -313,7 +337,7 @@ void StorageManager::runReaderTaskLoop() {
 
     char tempPath[128];
     if (_isWritingMode) {
-        snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.ogg.tmp", _currentSongId);
+        snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", _currentSongId);
     }
 
     while (_readerTaskRunning) {
@@ -374,7 +398,12 @@ void StorageManager::runReaderTaskLoop() {
             }
         } else {
             // Standard Local Cache Hit Playback
-            size_t read_bytes = _storageService ? _storageService->readStream(_readStream, payload, AUDIO_CHUNK_SIZE) : 0;
+            size_t read_bytes = 0;
+            if (_streamMutex) xSemaphoreTake(_streamMutex, portMAX_DELAY);
+            if (_storageService && _readStream) {
+                read_bytes = _storageService->readStream(_readStream, payload, AUDIO_CHUNK_SIZE);
+            }
+            if (_streamMutex) xSemaphoreGive(_streamMutex);
             if (read_bytes > 0) {
                 header->type = ChunkType::DATA;
                 header->size = read_bytes;

@@ -53,4 +53,14 @@ public:
      * @brief Native channel count reported by decoded stream.
      */
     virtual uint8_t getSourceChannels() const = 0;
+
+    /**
+     * @brief Current playback position in milliseconds.
+     */
+    virtual uint32_t getPositionMs() const { return 0; }
+
+    /**
+     * @brief Inform the decoder of a known absolute stream byte offset (e.g. on seek).
+     */
+    virtual void setStreamByteOffset(uint32_t offset) {}
 };

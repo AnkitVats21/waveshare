@@ -5,6 +5,7 @@
 #include "PlayerTypes.h" // For ChunkType, AudioChunkHeader
 #include "freertos/event_groups.h"
 #include <memory>
+#include <functional>
 
 class AudioEngine {
 public:
@@ -25,7 +26,13 @@ public:
     void resume();
     bool isPlaying() const { return _isPlaying; }
 
+    uint32_t getPositionMs() const;
+    void resetDecoder();
+    void setStreamByteOffset(uint32_t offset);
+    void setSeekIndexCallback(std::function<void(uint32_t timecodeMs, uint32_t byteOffset)> cb);
+
 private:
+    std::function<void(uint32_t, uint32_t)> _seekIndexCb = nullptr;
     BufferManager& _bm;
     BufferManager::BufferId _rawOpusInId;
     BufferManager::BufferId _pcmOutId;

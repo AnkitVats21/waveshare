@@ -27,7 +27,8 @@ enum class MediaCmdType : uint8_t {
     RESUME,
     STOP,
     TOGGLE_PLAY_PAUSE,
-    REPLAY
+    REPLAY,
+    SEEK
 };
 
 struct MediaCommand {
@@ -38,7 +39,8 @@ struct MediaCommand {
 
 enum class MediaAuxCmdType : uint8_t {
     PREFETCH,
-    REPLENISH
+    REPLENISH,
+    FETCH_THUMBNAIL
 };
 
 struct MediaAuxCommand {
@@ -69,6 +71,8 @@ public:
     void pause();
     void resume();
     void stop();
+    bool seekTo(uint32_t positionMs);
+    uint32_t getPositionMs() const;
 
     // Playlist / Queue Management
     void clearQueue();
@@ -156,6 +160,7 @@ private:
     bool previousInternal();
     bool nextInternal();
 
+    bool postAuxCommand(MediaAuxCmdType type, const char* targetId, const char* author = nullptr, const char* title = nullptr);
     void prefetchNextTrack();
     void checkAndReplenishQueue();
     void handlePrefetch(const char* targetId, uint32_t generation);

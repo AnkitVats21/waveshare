@@ -38,6 +38,8 @@ namespace BIT_MEDIA {
     static constexpr ComponentMask DUCKED     = (1u << 3);
     static constexpr ComponentMask AUTOPLAY   = (1u << 4);
     static constexpr ComponentMask CACHE      = (1u << 5);
+    static constexpr ComponentMask POSITION   = (1u << 6);
+    static constexpr ComponentMask DURATION   = (1u << 7);
 }
 
 enum class MediaPlaybackState : uint8_t {
@@ -176,6 +178,9 @@ namespace BIT_MQTT {
     X_STR(active_song_id, 64, "", BIT_MEDIA::TRACK) \
     X_STR(title, 64, "", BIT_MEDIA::TRACK) \
     X_STR(artist, 64, "", BIT_MEDIA::TRACK) \
+    X(uint32_t, position_ms, 0, BIT_MEDIA::POSITION) \
+    X(uint32_t, duration_ms, 0, BIT_MEDIA::DURATION) \
+    X(bool, seekable, false, 0) \
     X(uint8_t, repeat_mode, 0, BIT_MEDIA::REPEAT) \
     X(bool, is_ducked, false, BIT_MEDIA::DUCKED) \
     X(bool, autoplay_enabled, true, BIT_MEDIA::AUTOPLAY) \

@@ -336,10 +336,11 @@ menu "ESP32-WROOM Bluetooth Companion Player"
 
 config BT_COMPANION_ENABLE
     bool "Enable ESP32-WROOM Bluetooth Companion"
-    default y
+    default n
     help
         Enables continuous I2S master streaming and bidirectional UART control
         to an external ESP32-WROOM companion board running bluetoothPlayer.
+        When disabled (default), GPIOs 4 through 8 are freed for SPI display/touch.
 
 config BT_COMPANION_I2S_PORT
     int "Companion I2S Port Number"
@@ -407,6 +408,93 @@ config BT_COMPANION_TARGET_SPEAKER
     string "Default Target Bluetooth Speaker Name"
     depends on BT_COMPANION_ENABLE
     default "Tribit StormBox 2"
+
+endmenu
+
+menu "Waveshare SPI Display and Touch Configuration"
+
+config DISPLAY_ENABLE
+    bool "Enable SPI Display (ILI9341)"
+    default y
+    help
+        Enables the on-board SPI display using ILI9341 panel driver and LVGL v9.
+
+config DISPLAY_WIDTH
+    int "Display Width (pixels)"
+    depends on DISPLAY_ENABLE
+    default 320
+
+config DISPLAY_HEIGHT
+    int "Display Height (pixels)"
+    depends on DISPLAY_ENABLE
+    default 240
+
+config DISPLAY_SPI_HOST
+    int "SPI Host Controller (2=SPI2/FSPI, 3=SPI3/HSPI)"
+    depends on DISPLAY_ENABLE
+    range 2 3
+    default 2
+
+config DISPLAY_SCLK_PIN
+    int "SPI Clock (SCLK) GPIO"
+    depends on DISPLAY_ENABLE
+    range 0 48
+    default 4
+
+config DISPLAY_MOSI_PIN
+    int "SPI MOSI GPIO"
+    depends on DISPLAY_ENABLE
+    range 0 48
+    default 9
+
+config DISPLAY_MISO_PIN
+    int "SPI MISO GPIO"
+    depends on DISPLAY_ENABLE
+    range -1 48
+    default 8
+
+config DISPLAY_CS_PIN
+    int "Display Chip Select (CS) GPIO"
+    depends on DISPLAY_ENABLE
+    range 0 48
+    default 3
+
+config DISPLAY_DC_PIN
+    int "Display Data/Command (DC) GPIO"
+    depends on DISPLAY_ENABLE
+    range 0 48
+    default 7
+
+config DISPLAY_RST_PIN
+    int "Display Reset (RST) GPIO (-1 if tied to 3.3V/EN)"
+    depends on DISPLAY_ENABLE
+    range -1 48
+    default -1
+
+config DISPLAY_BL_PIN
+    int "Display Backlight (BL) GPIO (-1 if tied to 3.3V)"
+    depends on DISPLAY_ENABLE
+    range -1 48
+    default 5
+
+config TOUCH_ENABLE
+    bool "Enable XPT2046 SPI Touch Controller"
+    depends on DISPLAY_ENABLE
+    default y
+    help
+        Enables SPI touch input using XPT2046 controller on the same SPI bus.
+
+config TOUCH_CS_PIN
+    int "Touch Chip Select (CS) GPIO"
+    depends on TOUCH_ENABLE
+    range 0 48
+    default 1
+
+config TOUCH_IRQ_PIN
+    int "Touch Interrupt (PENIRQ) GPIO (-1 for polling)"
+    depends on TOUCH_ENABLE
+    range -1 48
+    default 2
 
 endmenu
 

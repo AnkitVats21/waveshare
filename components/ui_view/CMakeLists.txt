@@ -1,6 +1,23 @@
-# Header-only view-model shared between the on-device UI (future) and the
-# host LVGL emulator (tools/lvgl_sim/, which includes this directory directly
-# via a plain include path -- it does not go through idf_component_register).
+set(UI_SRCS
+    "src/SysDbUiDataSource.cpp"
+    "src/ui/DashboardScreen.cpp"
+    "src/ui/AssistantScreen.cpp"
+    "src/ui/widgets/BarStrip.cpp"
+    "src/ui/widgets/Card.cpp"
+    "src/ui/widgets/DetailSheet.cpp"
+    "src/ui/widgets/EqualizerBars.cpp"
+    "src/ui/widgets/GroupCarousel.cpp"
+    "src/ui/widgets/HBar.cpp"
+    "src/ui/widgets/IconButton.cpp"
+    "src/ui/widgets/LedColorSheet.cpp"
+    "src/ui/widgets/MusicPage.cpp"
+    "src/ui/widgets/Sparkline.cpp"
+    "src/ui/widgets/StatRow.cpp"
+    "src/ui/widgets/TranscriptList.cpp"
+)
+
 idf_component_register(
-    INCLUDE_DIRS "include"
+    SRCS ${UI_SRCS}
+    INCLUDE_DIRS "include" "src/ui" "src"
+    REQUIRES core_sysdb media_player lvgl esp_lvgl_port
 )

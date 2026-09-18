@@ -1,8 +1,9 @@
 #include "MusicPlaybackService.h"
-#include "media_player/MusicLibraryManager.h"
+#include "media_player/CatalogDB.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "esp_http_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <random>
 #include <cstring>
+#include <sys/stat.h>
 
 static const char* TAG = "MusicPlayback";
 
@@ -25,7 +27,7 @@ MusicPlaybackService::MusicPlaybackService() {}
 bool MusicPlaybackService::begin() {
     if (_initialized) return true;
 
-    MusicLibraryManager::getInstance().begin();
+    CatalogDB::getInstance().begin();
     
     m_cmd_queue = xQueueCreate(10, sizeof(MediaCommand));
     if (!m_cmd_queue) {
@@ -150,8 +152,28 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
             s.media.active_song_id[0] = '\0';
             s.media.title[0] = '\0';
             s.media.artist[0] = '\0';
+            s.media.position_ms = 0;
+            s.media.duration_ms = 0;
+            s.media.seekable = false;
         });
         return true;
+    }
+
+    if (type == MediaCmdType::SEEK) {
+        MediaCommand cmd{};
+        cmd.type = type;
+        {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            cmd.generation = _queueGeneration;
+        }
+        if (query) {
+            strncpy(cmd.query, query, sizeof(cmd.query) - 1);
+            cmd.query[sizeof(cmd.query) - 1] = '\0';
+        }
+        if (m_cmd_queue) {
+            return xQueueSend(m_cmd_queue, &cmd, 0) == pdTRUE;
+        }
+        return false;
     }
 
     if (type == MediaCmdType::PLAY) {
@@ -229,6 +251,12 @@ void MusicPlaybackService::workerLoop() {
                     }
                     break;
                 }
+                case MediaCmdType::SEEK: {
+                    uint32_t ms = static_cast<uint32_t>(strtoul(cmd.query, nullptr, 10));
+                    ESP_LOGI(TAG, "Executing SEEK command to %u ms", (unsigned int)ms);
+                    NexusPlayer::getInstance().seekTo(ms);
+                    break;
+                }
                 default:
                     break;
             }
@@ -256,6 +284,40 @@ void MusicPlaybackService::auxWorkerLoop() {
                 handlePrefetch(cmd.targetId, cmd.generation);
             } else if (cmd.type == MediaAuxCmdType::REPLENISH) {
                 handleReplenish(cmd.targetId, cmd.baseAuthor, cmd.baseTitle, cmd.generation);
+            } else if (cmd.type == MediaAuxCmdType::FETCH_THUMBNAIL) {
+                char thumbPath[128];
+                snprintf(thumbPath, sizeof(thumbPath), "%s/%s.jpg", CatalogDB::THUMBS_DIR, cmd.targetId);
+                struct stat st;
+                if (stat(thumbPath, &st) != 0 || st.st_size == 0) {
+                    std::string thumbUrl = "https://i.ytimg.com/vi/" + std::string(cmd.targetId) + "/default.jpg";
+                    ESP_LOGI(TAG, "Fetching album art thumbnail: %s", thumbUrl.c_str());
+
+                    esp_http_client_config_t config = {};
+                    config.url = thumbUrl.c_str();
+                    config.timeout_ms = 8000;
+                    config.skip_cert_common_name_check = true;
+                    esp_http_client_handle_t client = esp_http_client_init(&config);
+                    if (client) {
+                        esp_err_t err = esp_http_client_open(client, 0);
+                        if (err == ESP_OK) {
+                            int64_t clen = esp_http_client_fetch_headers(client);
+                            if (clen > 0 && clen < 65536) {
+                                FILE* tf = fopen(thumbPath, "wb");
+                                if (tf) {
+                                    char tbuf[1024];
+                                    int r = 0;
+                                    while ((r = esp_http_client_read(client, tbuf, sizeof(tbuf))) > 0) {
+                                        fwrite(tbuf, 1, r, tf);
+                                    }
+                                    fclose(tf);
+                                    CatalogDB::getInstance().setThumbnailCached(cmd.targetId, true);
+                                    ESP_LOGI(TAG, "Saved album art thumbnail to %s", thumbPath);
+                                }
+                            }
+                        }
+                        esp_http_client_cleanup(client);
+                    }
+                }
             }
         }
     }
@@ -574,6 +636,17 @@ void MusicPlaybackService::shuffleQueue() {
     prefetchNextTrack();
 }
 
+bool MusicPlaybackService::postAuxCommand(MediaAuxCmdType type, const char* targetId, const char* author, const char* title) {
+    if (!m_aux_queue || !targetId || targetId[0] == '\0') return false;
+    MediaAuxCommand cmd{};
+    cmd.type = type;
+    cmd.generation = _queueGeneration;
+    strncpy(cmd.targetId, targetId, sizeof(cmd.targetId) - 1);
+    if (author) strncpy(cmd.baseAuthor, author, sizeof(cmd.baseAuthor) - 1);
+    if (title)  strncpy(cmd.baseTitle,  title,  sizeof(cmd.baseTitle) - 1);
+    return (xQueueSend(m_aux_queue, &cmd, 0) == pdTRUE);
+}
+
 void MusicPlaybackService::prefetchNextTrack() {
     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
     if (_queue.empty() || _prefetchInProgress) return;
@@ -587,12 +660,7 @@ void MusicPlaybackService::prefetchNextTrack() {
     }
 
     _prefetchInProgress = true;
-    MediaAuxCommand cmd{};
-    cmd.type = MediaAuxCmdType::PREFETCH;
-    cmd.generation = _queueGeneration;
-    strncpy(cmd.targetId, nextId.c_str(), sizeof(cmd.targetId) - 1);
-
-    if (m_aux_queue && xQueueSend(m_aux_queue, &cmd, 0) != pdTRUE) {
+    if (!postAuxCommand(MediaAuxCmdType::PREFETCH, nextId.c_str())) {
         _prefetchInProgress = false;
         ESP_LOGW(TAG, "Aux queue full, skipping prefetch for %s", nextId.c_str());
     }
@@ -607,60 +675,52 @@ void MusicPlaybackService::handlePrefetch(const char* targetId, uint32_t generat
     // Yield CPU so playback startup, I2S DMA, and AFE processing settle cleanly
     vTaskDelay(pdMS_TO_TICKS(150));
 
-    std::string url;
-    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(targetId, url);
-
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-        if (_queueGeneration == generation) {
-            if (err == ESP_OK && !url.empty()) {
-                _prefetchedVideoId = targetId;
-                _prefetchedUrl = url;
-                ESP_LOGI(TAG, "Asynchronously pre-fetched stream URL for upcoming track: %s", targetId);
-            } else if (err == ESP_ERR_NOT_FOUND) {
-                for (auto it = _queue.begin(); it != _queue.end(); ++it) {
-                    if (it->videoId == targetId) { _queue.erase(it); break; }
-                }
-                ESP_LOGW(TAG, "Prefetch: track %s is unavailable - dropped from queue", targetId);
-            } else {
-                ESP_LOGW(TAG, "Background prefetch failed for %s: %s", targetId, esp_err_to_name(err));
-            }
-        } else {
-            ESP_LOGD(TAG, "Prefetch for %s discarded (generation changed)", targetId);
+        if (generation != _queueGeneration) {
+            ESP_LOGD(TAG, "Prefetch for %s discarded: generation mismatch (%lu vs %lu)",
+                     targetId, (unsigned long)generation, (unsigned long)_queueGeneration);
+            _prefetchInProgress = false;
+            return;
         }
-        _prefetchInProgress = false;
     }
+
+    std::string url;
+    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(targetId, url);
+    if (err == ESP_OK && !url.empty()) {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        if (generation == _queueGeneration) {
+            _prefetchedVideoId = targetId;
+            _prefetchedUrl = url;
+            ESP_LOGI(TAG, "Pre-fetched stream URL for next track: %s", targetId);
+        }
+    } else {
+        ESP_LOGW(TAG, "Pre-fetch failed for %s: %s", targetId, esp_err_to_name(err));
+    }
+    _prefetchInProgress = false;
 }
 
 void MusicPlaybackService::checkAndReplenishQueue() {
     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-    if (!isAutoplayEnabled() || _replenishInProgress) return;
-    if (_queue.size() > QUEUE_LOW_WATERMARK) return;
+    if (_queue.size() > QUEUE_LOW_WATERMARK || _replenishInProgress) return;
 
     std::string baseTrackId;
     std::string baseAuthor;
     std::string baseTitle;
-
     if (!_queue.empty()) {
         baseTrackId = _queue.back().videoId;
         baseAuthor = _queue.back().author;
         baseTitle = _queue.back().title;
-    } else {
+    } else if (!_currentTrack.videoId.empty()) {
         baseTrackId = _currentTrack.videoId;
         baseAuthor = _currentTrack.author;
         baseTitle = _currentTrack.title;
     }
+
     if (baseTrackId.empty()) return;
 
     _replenishInProgress = true;
-    MediaAuxCommand cmd{};
-    cmd.type = MediaAuxCmdType::REPLENISH;
-    cmd.generation = _queueGeneration;
-    strncpy(cmd.targetId, baseTrackId.c_str(), sizeof(cmd.targetId) - 1);
-    strncpy(cmd.baseAuthor, baseAuthor.c_str(), sizeof(cmd.baseAuthor) - 1);
-    strncpy(cmd.baseTitle, baseTitle.c_str(), sizeof(cmd.baseTitle) - 1);
-
-    if (m_aux_queue && xQueueSend(m_aux_queue, &cmd, 0) != pdTRUE) {
+    if (!postAuxCommand(MediaAuxCmdType::REPLENISH, baseTrackId.c_str(), baseAuthor.c_str(), baseTitle.c_str())) {
         _replenishInProgress = false;
         ESP_LOGW(TAG, "Aux queue full, skipping replenish for %s", baseTrackId.c_str());
     }
@@ -742,15 +802,20 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
     }
 
     // Index into local SD library
-    LibraryTrack libTrack;
-    libTrack.id = track.videoId;
-    libTrack.title = track.title;
-    libTrack.artist = track.author;
-    libTrack.durationSeconds = track.durationSeconds;
-    libTrack.format = "opus";
-    libTrack.filePath = std::string(MusicLibraryManager::MUSIC_DIR) + "/" + track.videoId + ".opus";
-    libTrack.cachedAt = static_cast<uint32_t>(esp_timer_get_time() / 1000000ULL);
-    MusicLibraryManager::getInstance().addOrUpdateTrack(libTrack);
+    auto rec = std::make_unique<TrackRecord>();
+    strncpy(rec->videoId, track.videoId.c_str(), sizeof(rec->videoId) - 1);
+    strncpy(rec->title, track.title.c_str(), sizeof(rec->title) - 1);
+    strncpy(rec->artist, track.author.c_str(), sizeof(rec->artist) - 1);
+    rec->durationMs = track.durationSeconds * 1000;
+    rec->cachedAt = static_cast<uint32_t>(time(nullptr));
+    rec->sampleRate = 48000;
+    rec->channels = 2;
+    rec->codecId = 0; // WebM/Opus
+    CatalogDB::getInstance().upsert(*rec);
+    CatalogDB::getInstance().recordPlay(track.videoId.c_str());
+
+    // Dispatch thumbnail prefetch to background aux task
+    postAuxCommand(MediaAuxCmdType::FETCH_THUMBNAIL, track.videoId.c_str(), track.author.c_str(), track.title.c_str());
 
     // Call NexusPlayer directly with direct stream URL
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl);
@@ -759,6 +824,11 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
         s.media.state = MediaPlaybackState::PLAYING;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
+        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+        s.media.duration_ms = track.durationSeconds * 1000;
+        s.media.position_ms = 0;
+        s.media.seekable = true;
     });
 
     ESP_LOGI(TAG, "playDirect: Started '%s' (%s)", track.title.c_str(), track.videoId.c_str());
@@ -769,35 +839,21 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
     if (!songIdOrPath || songIdOrPath[0] == '\0') return false;
 
     std::string id = songIdOrPath;
-    std::string path;
-    LibraryTrack libTrack;
-
-    if (MusicLibraryManager::getInstance().getTrack(id, libTrack)) {
-        path = libTrack.filePath;
-    } else if (id.rfind("/sdcard/", 0) == 0) {
-        path = id;
-        size_t lastSlash = path.rfind('/');
-        size_t dot = path.rfind('.');
-        std::string baseId = (lastSlash != std::string::npos && dot != std::string::npos && dot > lastSlash)
-                             ? path.substr(lastSlash + 1, dot - lastSlash - 1)
-                             : path;
-        libTrack.id = baseId;
-        libTrack.title = baseId;
-        libTrack.artist = "Local";
-        libTrack.filePath = path;
-    } else {
-        path = std::string(MusicLibraryManager::MUSIC_DIR) + "/" + id + ".opus";
-        libTrack.id = id;
-        libTrack.title = id;
-        libTrack.artist = "Local";
-        libTrack.filePath = path;
+    auto rec = std::make_unique<TrackRecord>();
+    if (!CatalogDB::getInstance().get(id.c_str(), *rec)) {
+        // Fallback: sync filesystem and search again
+        CatalogDB::getInstance().scanAndSync();
+        if (!CatalogDB::getInstance().get(id.c_str(), *rec)) {
+            ESP_LOGW(TAG, "playLocal: Track %s not found in CatalogDB", id.c_str());
+            return false;
+        }
     }
 
     InvidiousTrack track;
-    track.videoId = libTrack.id;
-    track.title = libTrack.title;
-    track.author = libTrack.artist;
-    track.durationSeconds = libTrack.durationSeconds;
+    track.videoId = rec->videoId;
+    track.title = rec->title;
+    track.author = rec->artist;
+    track.durationSeconds = rec->durationMs / 1000;
 
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
@@ -809,15 +865,21 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
         }
     }
 
-    NexusPlayer::getInstance().play(libTrack.id.c_str(), path.c_str());
+    CatalogDB::getInstance().recordPlay(rec->videoId);
+    NexusPlayer::getInstance().play(rec->videoId, "");
 
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
         s.media.state = MediaPlaybackState::PLAYING;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
+        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+        s.media.duration_ms = track.durationSeconds * 1000;
+        s.media.position_ms = 0;
+        s.media.seekable = true;
     });
 
-    ESP_LOGI(TAG, "playLocal: Playing '%s' from %s", libTrack.title.c_str(), path.c_str());
+    ESP_LOGI(TAG, "playLocal: Playing '%s' (%s)", track.title.c_str(), track.videoId.c_str());
     return true;
 }
 
@@ -1035,3 +1097,14 @@ void MusicPlaybackService::onPlaybackError(const char* songId, int errorCode) {
         });
     }
 }
+
+bool MusicPlaybackService::seekTo(uint32_t positionMs) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%u", (unsigned int)positionMs);
+    return postCommand(MediaCmdType::SEEK, buf);
+}
+
+uint32_t MusicPlaybackService::getPositionMs() const {
+    return NexusPlayer::getInstance().getPositionMs();
+}
+

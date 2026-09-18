@@ -58,7 +58,7 @@ AssistantScreen::AssistantScreen() {
     lv_label_set_text(switch_label, "Show transcript");
 
     m_transcript_switch = lv_switch_create(switch_row);
-    lv_obj_set_style_bg_color(m_transcript_switch, theme_ns::kAccent, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(m_transcript_switch, theme_ns::kAccent, static_cast<lv_style_selector_t>(LV_PART_INDICATOR) | LV_STATE_CHECKED);
     lv_obj_add_event_cb(m_transcript_switch, onTranscriptSwitchChanged, LV_EVENT_VALUE_CHANGED, this);
 
     const int transcript_width = (w > 400) ? 500 : (w - 2 * metrics.spacing_lg);

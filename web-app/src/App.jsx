@@ -32,6 +32,9 @@ export default function App() {
   // Playback state
   const [playbackState, setPlaybackState] = useState('IDLE');
   const [currentTrack, setCurrentTrack] = useState(null);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(0);
+  const [seekable, setSeekable] = useState(false);
   const [repeatMode, setRepeatMode] = useState(0);
   const [autoplay, setAutoplay] = useState(true);
   const [caching, setCaching] = useState(true);
@@ -82,6 +85,9 @@ export default function App() {
           if (delta.music.current_track && delta.music.current_track.id) {
             setCurrentTrack(delta.music.current_track);
           }
+          if (delta.music.position_ms !== undefined) setPositionMs(delta.music.position_ms);
+          if (delta.music.duration_ms !== undefined) setDurationMs(delta.music.duration_ms);
+          if (delta.music.seekable !== undefined) setSeekable(delta.music.seekable);
           if (delta.music.repeat_mode !== undefined) setRepeatMode(delta.music.repeat_mode);
           if (delta.music.autoplay !== undefined) setAutoplay(delta.music.autoplay);
           if (delta.music.caching !== undefined) setCaching(delta.music.caching);
@@ -113,7 +119,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-container">
+    <div className="min-h-screen bg-[#0b0c14] text-slate-100 flex flex-col font-sans pb-28">
       <Header
         espHost={espHost}
         onHostChange={handleHostChange}
@@ -121,29 +127,47 @@ export default function App() {
         telemetry={telemetry}
       />
 
-      <main className="app-layout">
-        <nav className="sub-nav">
+      <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 flex flex-col">
+        <nav className="flex items-center gap-2 border-b border-slate-800/80 pb-3 mb-6 overflow-x-auto">
           <button
-            className={`nav-tab ${activeTab === 'search' ? 'active' : ''}`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
+              activeTab === 'search'
+                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
+            }`}
             onClick={() => setActiveTab('search')}
           >
             <Search size={16} /> YouTube Streamer
           </button>
           <button
-            className={`nav-tab ${activeTab === 'library' ? 'active' : ''}`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
+              activeTab === 'library'
+                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
+            }`}
             onClick={() => setActiveTab('library')}
           >
             <HardDrive size={16} /> SD Card Library{' '}
-            <span className="badge">{libraryCount}</span>
+            <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-mono bg-slate-700/60 text-slate-300 border border-slate-600/40">
+              {libraryCount}
+            </span>
           </button>
           <button
-            className={`nav-tab ${activeTab === 'controls' ? 'active' : ''}`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
+              activeTab === 'controls'
+                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
+            }`}
             onClick={() => setActiveTab('controls')}
           >
             <Sliders size={16} /> Audio & LED Controls
           </button>
           <button
-            className={`nav-tab ${activeTab === 'logs' ? 'active' : ''}`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
+              activeTab === 'logs'
+                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
+            }`}
             onClick={() => setActiveTab('logs')}
           >
             <Terminal size={16} /> Live Logs
@@ -186,6 +210,9 @@ export default function App() {
       <PlayerDock
         currentTrack={currentTrack}
         playbackState={playbackState}
+        positionMs={positionMs}
+        durationMs={durationMs}
+        seekable={seekable}
         repeatMode={repeatMode}
         setRepeatMode={setRepeatMode}
         autoplay={autoplay}

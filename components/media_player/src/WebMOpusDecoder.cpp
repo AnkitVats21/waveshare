@@ -14,6 +14,7 @@ bool isMasterElement(uint64_t id) {
     switch (id) {
         case 0x1A45DFA3: // EBML Header
         case 0x18538067: // Segment
+        case 0x1549A966: // Info
         case 0x1654AE6B: // Tracks
         case 0xAE:       // TrackEntry
         case 0x1F43B675: // Cluster
@@ -90,7 +91,37 @@ void WebMOpusDecoder::reset() {
     cleanupOpusDecoder();
     _buffer.clear();
     _skipRemaining = 0;
+    _streamByteOffset = 0;
+    _currentClusterOffset = 0xFFFFFFFF;
+    _lastClusterTimeMs = 0;
+    _samplesDecodedSinceCluster = 0;
+    _timecodeScale = 1000000;
     initOpusDecoder();
+}
+
+void WebMOpusDecoder::setStreamByteOffset(uint32_t offset) {
+    _streamByteOffset = offset;
+    _currentClusterOffset = 0xFFFFFFFF;
+    _samplesDecodedSinceCluster = 0;
+}
+
+uint32_t WebMOpusDecoder::getPositionMs() const {
+    if (_channels == 0 || _targetSampleRate == 0) return _lastClusterTimeMs;
+    uint64_t elapsedMs = (_samplesDecodedSinceCluster * 1000) / (_channels * _targetSampleRate);
+    return _lastClusterTimeMs + static_cast<uint32_t>(elapsedMs);
+}
+
+bool WebMOpusDecoder::resyncToCluster(size_t& offset) {
+    const uint8_t syncMarker[4] = { 0x1F, 0x43, 0xB6, 0x75 };
+    if (_buffer.size() < 4) return false;
+    for (size_t i = offset; i + 4 <= _buffer.size(); ++i) {
+        if (memcmp(_buffer.data() + i, syncMarker, 4) == 0) {
+            ESP_LOGI(TAG, "EBML resync successful: skipped %zu bytes to cluster", i - offset);
+            offset = i;
+            return true;
+        }
+    }
+    return false;
 }
 
 DecodeResult WebMOpusDecoder::decode(const uint8_t* inData, size_t inLen,
@@ -116,6 +147,7 @@ DecodeResult WebMOpusDecoder::decode(const uint8_t* inData, size_t inLen,
         size_t toAppend = std::min(inLen - inOffset, static_cast<size_t>(16384 - _buffer.size()));
         _buffer.insert(_buffer.end(), inData + inOffset, inData + inOffset + toAppend);
         inOffset += toAppend;
+        _streamByteOffset += toAppend;
     }
     bytesConsumed = inOffset;
 
@@ -141,7 +173,12 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
         uint64_t elemId = 0;
         size_t idLen = 0;
         if (!readVint(_buffer.data(), _buffer.size(), offset, elemId, idLen, true)) {
-            // Incomplete ID header in buffer
+            // Check if buffer is getting large without header sync
+            if (_buffer.size() - elemStart > 512) {
+                if (resyncToCluster(offset)) {
+                    continue;
+                }
+            }
             offset = elemStart;
             break;
         }
@@ -149,13 +186,54 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
         uint64_t elemSize = 0;
         size_t sizeLen = 0;
         if (!readVint(_buffer.data(), _buffer.size(), offset, elemSize, sizeLen, false)) {
-            // Incomplete size header in buffer
             offset = elemStart;
             break;
         }
 
-        // Master element container: we descend into it without skipping
+        // Master element container: descend into it
         if (isMasterElement(elemId)) {
+            if (elemId == 0x1F43B675) { // Cluster
+                // Calculate absolute byte offset in the stream
+                _currentClusterOffset = (_streamByteOffset - _buffer.size()) + elemStart;
+            }
+            continue;
+        }
+
+        // Timestamp / Timecode inside Cluster (ID = 0xE7)
+        if (elemId == 0xE7) {
+            if (_buffer.size() - offset < elemSize) {
+                offset = elemStart;
+                break;
+            }
+            uint64_t tc = 0;
+            for (size_t i = 0; i < elemSize; ++i) {
+                tc = (tc << 8) | _buffer[offset + i];
+            }
+            offset += elemSize;
+            _lastClusterTimeMs = static_cast<uint32_t>((tc * _timecodeScale) / 1000000);
+            _samplesDecodedSinceCluster = 0;
+
+            if (_seekIndexCb && _currentClusterOffset != 0xFFFFFFFF) {
+                _seekIndexCb(_lastClusterTimeMs, _currentClusterOffset);
+                _currentClusterOffset = 0xFFFFFFFF;
+            }
+            continue;
+        }
+
+        // TimecodeScale inside Segment Info (ID = 0x2AD7B1)
+        if (elemId == 0x2AD7B1) {
+            if (_buffer.size() - offset < elemSize) {
+                offset = elemStart;
+                break;
+            }
+            uint64_t scale = 0;
+            for (size_t i = 0; i < elemSize; ++i) {
+                scale = (scale << 8) | _buffer[offset + i];
+            }
+            offset += elemSize;
+            if (scale > 0) {
+                _timecodeScale = scale;
+            }
             continue;
         }
 
@@ -176,6 +254,7 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
 
             offset += elemSize;
             samplesDecoded += blockDecoded;
+            _samplesDecodedSinceCluster += blockDecoded;
 
             if (res != DecodeResult::OK && res != DecodeResult::NEED_MORE_DATA) {
                 ESP_LOGW(TAG, "SimpleBlock decode warning: %d", (int)res);
@@ -183,7 +262,6 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
 
             if (samplesDecoded > 0) {
                 // Yield immediately to consumer per Opus frame (20-40ms)
-                // This ensures lowest latency and prevents resample buffer spikes.
                 break;
             }
         } else {
@@ -204,12 +282,17 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
         _buffer.erase(_buffer.begin(), _buffer.begin() + offset);
     }
 
-    // Safety guard against runaway buffer size
+    // Safety guard against runaway buffer size with resync attempt
     if (_buffer.size() > 65536) {
-        ESP_LOGW(TAG, "Buffer exceeded 64KB without sync; resetting");
-        _buffer.clear();
-        _skipRemaining = 0;
-        return DecodeResult::ERROR_INVALID_STREAM;
+        ESP_LOGW(TAG, "Buffer exceeded 64KB without sync; attempting cluster resync");
+        size_t resyncOffset = 0;
+        if (resyncToCluster(resyncOffset)) {
+            _buffer.erase(_buffer.begin(), _buffer.begin() + resyncOffset);
+        } else {
+            _buffer.clear();
+            _skipRemaining = 0;
+            return DecodeResult::ERROR_INVALID_STREAM;
+        }
     }
 
     return (samplesDecoded > 0) ? DecodeResult::OK : DecodeResult::NEED_MORE_DATA;
