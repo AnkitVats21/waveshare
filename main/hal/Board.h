@@ -9,10 +9,6 @@
 #include "hal/io/IoExpander.h"
 #include "hal/led/LedStripManager.h"
 #include "hal/storage/SdCardManager.h"
-#if CONFIG_BT_COMPANION_ENABLE
-#include "hal/companion/BtPlayerI2s.h"
-#include "hal/companion/BtPlayerUart.h"
-#endif
 #if CONFIG_DISPLAY_ENABLE
 #include "hal/display/LcdManager.h"
 #endif
@@ -64,13 +60,6 @@ public:
 
     /** @brief Direct reference to SD card storage (inject into storage consumers). */
     SdCardManager&   getStorage()             { return m_storage; }
-
-#if CONFIG_BT_COMPANION_ENABLE
-    /** @brief Initialize the Bluetooth Companion hardware (I2S master + UART). */
-    bool initCompanion();
-    btplayer::BtPlayerUart& getCompanionUart() { return btplayer::BtPlayerUart::getInstance(); }
-    btplayer::BtPlayerI2s&  getCompanionI2s()  { return btplayer::BtPlayerI2s::getInstance(); }
-#endif
 
 #if CONFIG_DISPLAY_ENABLE
     LcdManager&      getDisplay()             { return LcdManager::getInstance(); }

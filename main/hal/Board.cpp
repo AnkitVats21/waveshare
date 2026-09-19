@@ -90,52 +90,13 @@ bool Board::begin() {
   m_leds.clear();
   ESP_LOGI(TAG, "LED self-test complete (GPIO %d).", (int)LED_STRIP_GPIO_PIN);
 
-  // 5. Bluetooth Companion HAL (ESP32-WROOM I2S Master + UART Control)
-#if CONFIG_BT_COMPANION_ENABLE
-  if (!initCompanion()) {
-    ESP_LOGW(TAG, "Bluetooth Companion HAL initialization failed or degraded.");
-  }
-#endif
+  // Companion (ESP32-WROOM) audio transport is no longer wired here — it moves to
+  // a Wi-Fi/WebSocket bridge (DB A, opusBridge). See .agent/opus-bridge-part1-host-design.md.
 
   m_initialized = true;
   ESP_LOGI(TAG, "Board hardware ready.");
   return true;
 }
-
-#if CONFIG_BT_COMPANION_ENABLE
-bool Board::initCompanion() {
-  ESP_LOGI(TAG, "Initializing ESP32-WROOM Bluetooth Companion HAL...");
-
-  // 1. Initialize Continuous I2S Master output
-  btplayer::BtPlayerI2s::Config i2s_cfg;
-  i2s_cfg.port        = BT_COMPANION_I2S_PORT_NUM;
-  i2s_cfg.bclk_pin    = BT_COMPANION_I2S_BCLK_GPIO;
-  i2s_cfg.ws_pin      = BT_COMPANION_I2S_WS_GPIO;
-  i2s_cfg.dout_pin    = BT_COMPANION_I2S_DOUT_GPIO;
-  i2s_cfg.sample_rate = COMPANION_SAMPLE_RATE;
-  esp_err_t err = btplayer::BtPlayerI2s::getInstance().init(i2s_cfg);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to initialize BtPlayerI2s: %s", esp_err_to_name(err));
-    return false;
-  }
-
-  // 2. Configure UART Control channel
-  btplayer::BtPlayerUart::Config uart_cfg;
-  uart_cfg.uart_num = BT_COMPANION_UART_NUM;
-  uart_cfg.tx_pin   = BT_COMPANION_UART_TX_GPIO;
-  uart_cfg.rx_pin   = BT_COMPANION_UART_RX_GPIO;
-  uart_cfg.baudrate = BT_COMPANION_UART_BAUD_RATE;
-
-  if (!btplayer::BtPlayerUart::getInstance().init(uart_cfg)) {
-    ESP_LOGE(TAG, "Failed to initialize BtPlayerUart!");
-    return false;
-  }
-
-  ESP_LOGI(TAG, "Bluetooth Companion HAL ready.");
-  return true;
-}
-#endif
-
 
 // ---------------------------------------------------------------------------
 // Audio reinit — Board policy: guard against uninitialized board

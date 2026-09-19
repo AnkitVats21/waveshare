@@ -35,7 +35,6 @@ private:
     bool m_wifi_connected = false;
     bool m_time_synced = false;
 
-    void setupBtCompanion();
 
     static constexpr const char* TAG = "AppCtrl";
 };

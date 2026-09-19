@@ -24,7 +24,7 @@ dependencies:
   espressif/esp_websocket_client: '*'
   bblanchon/arduinojson: '*'
   esphome/micro-opus: '*'
-  lvgl/lvgl: ^9.2.2
-  espressif/esp_lvgl_port: ^2.9.0
-  espressif/esp_lcd_ili9341: '*'
-  atanisoft/esp_lcd_touch_xpt2046: ^1.0.6
+  # lvgl/lvgl: ^9.2.2
+  # espressif/esp_lvgl_port: ^2.9.0
+  # espressif/esp_lcd_ili9341: '*'
+  # atanisoft/esp_lcd_touch_xpt2046: ^1.0.6

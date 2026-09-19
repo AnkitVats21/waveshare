@@ -1,18 +1,4 @@
 dependencies:
-  atanisoft/esp_lcd_touch_xpt2046:
-    component_hash: 7e6381b67b6e487379118368b8e91624dc87036ef5734818de1db9eb35697998
-    dependencies:
-    - name: espressif/esp_lcd_touch
-      registry_url: https://components.espressif.com
-      require: private
-      version: '>=1.0.4'
-    - name: idf
-      require: private
-      version: '>=4.4'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.0.6
   bblanchon/arduinojson:
     component_hash: 5e6aff2bc5bc988b36c8e90c01e637495ee895ad3af93911860c21ec6da79b6a
     dependencies: []
@@ -40,16 +26,6 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.7.19~2
-  espressif/cmake_utilities:
-    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=4.1'
-    source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 0.5.3
   espressif/dl_fft:
     component_hash: 3e8f7d34e04bfa6333f289a6d126745bebe0cee9311b81a6a5d106047f63ef65
     dependencies:
@@ -126,30 +102,6 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.0.2
-  espressif/esp_lcd_ili9341:
-    component_hash: 840387ee0c90a473e43fdc75570f77c52f06423aa331d95479bde8b418c43547
-    dependencies:
-    - name: espressif/cmake_utilities
-      registry_url: https://components.espressif.com
-      require: private
-      version: 0.*
-    - name: idf
-      require: private
-      version: '>=5.2'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 2.1.0
-  espressif/esp_lcd_touch:
-    component_hash: 3f85a7d95af876f1a6ecca8eb90a81614890d0f03a038390804e5a77e2caf862
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=4.4.2'
-    source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 1.2.1
   espressif/esp_lvgl_port:
     component_hash: d3c020b45c3dfc0d1706a83b63a1c34a6eb444a6e935f9afff79f92b7b94dcef
     dependencies:
@@ -226,19 +178,17 @@ dependencies:
       type: service
     version: 9.6.0~1
 direct_dependencies:
-- atanisoft/esp_lcd_touch_xpt2046
 - bblanchon/arduinojson
 - esphome/micro-opus
 - espressif/esp-sr
 - espressif/esp_codec_dev
 - espressif/esp_io_expander_tca95xx_16bit
-- espressif/esp_lcd_ili9341
 - espressif/esp_lvgl_port
 - espressif/esp_websocket_client
 - espressif/led_strip
 - espressif/mqtt
 - idf
 - lvgl/lvgl
-manifest_hash: db73deb94bbfc9b68476db45ec7c26eaa6263d92aa3b0ff40c86c06b5f45a1c0
+manifest_hash: 5ef9b223d4744e2f605def3e222c25de9c3fc71af97a547df7fe0eb30f1ece96
 target: esp32s3
 version: 3.0.0

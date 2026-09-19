@@ -17,8 +17,6 @@
 #include "common/thread_config.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "hal/Board.h"
-#include "hal/companion/BtPlayerI2s.h"
-#include "hal/companion/BtPlayerUart.h"
 #include "esp_heap_caps.h"
 #include "freertos/idf_additions.h"
 #include <string>
@@ -49,67 +47,16 @@ bool AppController::begin() {
 
     m_wifi_connected = EmbeddedSysDb::getInstance().snapshot().system.wifi_connected;
 
-#if CONFIG_BT_COMPANION_ENABLE
-    setupBtCompanion();
-#endif
-
     LOGI_SYSTEM("AppController initialized.");
     return true;
-}
-
-void AppController::setupBtCompanion() {
-#if CONFIG_BT_COMPANION_ENABLE
-    auto& bt_uart = btplayer::BtPlayerUart::getInstance();
-    if (!bt_uart.isInitialized()) {
-        LOGW_SYSTEM("Companion UART not initialized by Board HAL.");
-        return;
-    }
-
-    bt_uart.setOnReady([](uint16_t fw_version) {
-        LOGI_SYSTEM("Companion board ready (FW 0x%04X). Synchronizing volume and connecting BT...", fw_version);
-        auto& uart = btplayer::BtPlayerUart::getInstance();
-        int vol = EmbeddedSysDb::getInstance().snapshot().audio.speaker_volume;
-        uart.setVolume(static_cast<uint8_t>(vol));
-
-        const char* target_speaker = CONFIG_BT_COMPANION_TARGET_SPEAKER;
-        if (target_speaker != nullptr && std::strlen(target_speaker) > 0) {
-            uart.connectBt(target_speaker);
-        } else {
-            uart.connectBt(nullptr);
-        }
-    });
-
-    bt_uart.setOnBtStatus([](bool connected, const std::string& name) {
-        if (connected) {
-            LOGI_SYSTEM("Companion connected to Bluetooth speaker: \"%s\"", name.c_str());
-        } else {
-            LOGW_SYSTEM("Companion disconnected from Bluetooth speaker. Audio fallback active.");
-        }
-    });
-
-    bt_uart.sendPing();
-    const char* target_speaker = CONFIG_BT_COMPANION_TARGET_SPEAKER;
-    if (target_speaker != nullptr && std::strlen(target_speaker) > 0) {
-        bt_uart.connectBt(target_speaker);
-    } else {
-        bt_uart.connectBt(nullptr);
-    }
-#endif
 }
 
 void AppController::onStateChanged(ComponentMask changed, const SystemState& snap) {
     // NOTE: per-field BIT_* values are only unique *within* a component. diffState()
     // OR's them together as (COMP::X | BIT_X::FIELD), so every per-field test must
-    // also gate on its COMP:: bit — otherwise e.g. a COMP::BT_COMPANION STATUS
-    // frame (BIT_BT_COMPANION::STATUS == 1<<2) would masquerade as a
-    // BIT_AUDIO::SPEAKER_VOLUME change (also 1<<2) and spuriously re-send SET_VOLUME.
+    // also gate on its COMP:: bit.
     if ((changed & COMP::AUDIO) && (changed & BIT_AUDIO::SPEAKER_VOLUME)) {
-#if CONFIG_BT_COMPANION_ENABLE
-        auto& bt_uart = btplayer::BtPlayerUart::getInstance();
-        if (bt_uart.isInitialized()) {
-            bt_uart.setVolume(static_cast<uint8_t>(snap.audio.speaker_volume));
-        }
-#endif
+        // Speaker volume changed
     }
 
     if ((changed & COMP::SYSTEM) && (changed & BIT_SYSTEM::WIFI_CONNECTED)) {

@@ -104,8 +104,8 @@ bool HttpFileServerService::startServer() {
     config.max_uri_handlers = 48;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_open_sockets = 12;
-    config.recv_wait_timeout = 3;
-    config.send_wait_timeout = 3;
+    config.recv_wait_timeout = 10;
+    config.send_wait_timeout = 10;
     config.lru_purge_enable = true;
 
     esp_err_t ret = httpd_start(&m_server, &config);
@@ -136,7 +136,11 @@ void HttpFileServerService::registerUriHandlers() {
             .uri      = uri,
             .method   = method,
             .handler  = handler,
-            .user_ctx = nullptr
+            .user_ctx = nullptr,
+            .is_websocket = false,
+            .handle_ws_control_frames = false,
+            .supported_subprotocol = nullptr,
+            .ws_post_handshake_cb = nullptr
         };
         httpd_register_uri_handler(m_server, &u);
     };

@@ -21,13 +21,6 @@ set(srcs
             # HAL — Storage
             "hal/storage/SdCardManager.cpp"
 
-            # HAL — Bluetooth Companion
-            "hal/companion/BtPlayerUart.cpp"
-            "hal/companion/BtPlayerI2s.cpp"
-
-            # HAL — Display & Touch
-            "hal/display/LcdManager.cpp"
-
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
@@ -50,6 +43,18 @@ set(srcs
             "services/alarm/AlarmService.cpp"
 )
 
+if(CONFIG_DISPLAY_ENABLE)
+    list(APPEND srcs "hal/display/LcdManager.cpp")
+    set(DISPLAY_REQUIRES
+        ui_view
+        esp_lcd
+        esp_lcd_ili9341
+        atanisoft__esp_lcd_touch_xpt2046
+        esp_lvgl_port
+        lvgl
+    )
+endif()
+
 idf_component_register(
         SRCS "${srcs}"
         INCLUDE_DIRS
@@ -61,7 +66,6 @@ idf_component_register(
             "hal/storage"
             "hal/audio"
             "hal/network"
-            "hal/companion"
             "hal/input"
             "hal/display"
             # App layers
@@ -78,18 +82,13 @@ idf_component_register(
             audio_core
             media_player
             gemini_live
-            ui_view
+            ${DISPLAY_REQUIRES}
             nvs_flash
             esp_wifi
             esp_netif
             esp_http_server
             fatfs
             mqtt
-            esp_lcd
-            esp_lcd_ili9341
-            atanisoft__esp_lcd_touch_xpt2046
-            esp_lvgl_port
-            lvgl
             esp_driver_sdmmc
             esp_driver_gpio
             esp_driver_spi
