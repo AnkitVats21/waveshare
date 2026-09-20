@@ -206,6 +206,22 @@ waveshare/
 └── CMakeLists.txt                        # Root CMake file
 ```
 
+### Companion repositories
+
+The host-side services that used to live under `server/` and `web-app/`
+in this repo now live in their own repositories, each pulling in a
+vendored copy of the STAR wire-protocol headers generated here from
+`schema/sysdb.star`:
+
+- [`starhub`](https://github.com/AnkitVats21/starhub) — the STAR replica
+  daemon that syncs firmware system state over a binary WebSocket
+  protocol (formerly `server/star-replica-daemon`).
+- [`waveshare-dashboard`](https://github.com/AnkitVats21/waveshare-dashboard) —
+  the React/Vite web dashboard (formerly `web-app/`).
+- [`invidious-daemon`](https://github.com/AnkitVats21/invidious-daemon) —
+  the Invidious-backed YouTube audio resolver/cache daemon (formerly
+  `server/invidious-daemon`).
+
 ---
 
 ## ⚡ Hardware Specifications
