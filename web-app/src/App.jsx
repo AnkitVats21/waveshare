@@ -1,245 +1,124 @@
-import React, { useState, useEffect } from 'react';
-import { Search, HardDrive, Sliders, Terminal } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Play, Sliders } from 'lucide-react';
 import Header from './components/Header';
-import YouTubeSearch from './components/YouTubeSearch';
-import SdLibrary from './components/SdLibrary';
-import Controls from './components/Controls';
-import LiveLogs from './components/LiveLogs';
-import PlayerDock from './components/PlayerDock';
-import {
-  getEspHost,
-  setEspHost,
-  getDaemonHost,
-  getDaemonWsUrl,
-} from './api';
+import PlayTab from './components/PlayTab';
+import DeviceTab from './components/DeviceTab';
+import NowPlayingDock from './components/NowPlayingDock';
+import DevLogs from './components/DevLogs';
+import { useStarSocket } from './hooks/useStarSocket';
+import { usePendingValue } from './hooks/usePendingValue';
+import { getEspHost, setEspHost } from './lib/api';
+
+const ledEqual = (a, b) =>
+  a.mode === b.mode && a.speed_ms === b.speed_ms &&
+  a.color.r === b.color.r && a.color.g === b.color.g && a.color.b === b.color.b;
+
+// Optimistic track shown the instant a user hits "Play", before the daemon's
+// next snapshot confirms it (which can take a few seconds - stream
+// resolution + device round trip). Cleared once the snapshot's track id
+// matches, or after a grace period.
+const TRACK_OPTIMISM_MS = 5000;
 
 export default function App() {
   const [espHost, setHostState] = useState(getEspHost());
-  const [daemonHost, setDaemonHostState] = useState(getDaemonHost());
-  const [isOnline, setIsOnline] = useState(false);
-  const [activeTab, setActiveTab] = useState('search');
-
-  // Telemetry & Hardware state
-  const [telemetry, setTelemetry] = useState({});
-  const [logs, setLogs] = useState([]);
-  const [autoScroll, setAutoScroll] = useState(true);
-
-  // Audio / Hardware controls
-  const [volume, setVolume] = useState(70);
-  const [micGain, setMicGain] = useState(30);
-  const [micMuted, setMicMuted] = useState(false);
-
-  // Playback state
-  const [playbackState, setPlaybackState] = useState('IDLE');
-  const [currentTrack, setCurrentTrack] = useState(null);
-  const [positionMs, setPositionMs] = useState(0);
-  const [durationMs, setDurationMs] = useState(0);
-  const [seekable, setSeekable] = useState(false);
-  const [repeatMode, setRepeatMode] = useState(0);
-  const [autoplay, setAutoplay] = useState(true);
-  const [caching, setCaching] = useState(true);
+  const [activeTab, setActiveTab] = useState('play');
+  const [devMode, setDevMode] = useState(false);
   const [libraryCount, setLibraryCount] = useState(0);
+  const [optimisticTrack, setOptimisticTrack] = useState(null);
 
-  const handleHostChange = (newHost) => {
-    const saved = setEspHost(newHost);
-    setHostState(saved);
-  };
+  const { snapshot, online, send } = useStarSocket();
 
-  // WebSocket live push from star-replica-daemon
   useEffect(() => {
-    let ws = null;
-    let reconnectTimer = null;
-    let destroyed = false;
+    if (!optimisticTrack) return;
+    if (snapshot.music.current_track?.id === optimisticTrack.id) {
+      setOptimisticTrack(null);
+      return;
+    }
+    const t = setTimeout(() => setOptimisticTrack(null), TRACK_OPTIMISM_MS);
+    return () => clearTimeout(t);
+  }, [optimisticTrack, snapshot.music.current_track?.id]);
 
-    const applySnapshot = (data) => {
-      setIsOnline(true);
+  const handleHostChange = (newHost) => setHostState(setEspHost(newHost));
 
-      if (data.up !== undefined || data.sram !== undefined) {
-        setTelemetry({
-          up: data.up,
-          c0: data.c0,
-          c1: data.c1,
-          sram: data.sram,
-          min_sram: data.min_sram,
-          psram: data.psram,
-          rssi: data.rssi,
-        });
-      }
+  const volume = usePendingValue(snapshot.state.speaker_volume, (v) => send('volume', { value: v }));
+  const micGain = usePendingValue(snapshot.state.mic_gain_db, (v) => send('mic_gain', { value: v }));
+  const micMuted = usePendingValue(!snapshot.state.mic_enabled, (v) => send('mic_mute', { value: v }));
+  const repeat = usePendingValue(snapshot.music.repeat_mode, (v) => send('action', { action: 'repeat', value: v }));
+  const autoplay = usePendingValue(snapshot.music.autoplay, (v) => send('action', { action: 'autoplay', value: v }));
+  const caching = usePendingValue(snapshot.music.caching, (v) => send('action', { action: 'caching', value: v }));
+  const led = usePendingValue(snapshot.led, (v) => send('led', {
+    mode: ['off', 'solid', 'blink', 'breath', 'rainbow'][v.mode] || 'off',
+    color: v.color,
+    speed_ms: v.speed_ms,
+  }), ledEqual);
 
-      if (data.state) {
-        if (data.state.speaker_volume !== undefined) setVolume(data.state.speaker_volume);
-        if (data.state.mic_gain_db !== undefined) setMicGain(data.state.mic_gain_db);
-        if (data.state.mic_enabled !== undefined) setMicMuted(!data.state.mic_enabled);
-      }
+  const handlePlay = useCallback((track, streamUrl) => {
+    setOptimisticTrack(track);
+    send('action', { action: 'play', data: streamUrl });
+  }, [send]);
 
-      if (data.music) {
-        if (data.music.state) setPlaybackState(data.music.state);
-        if (data.music.current_track && data.music.current_track.id) {
-          setCurrentTrack(data.music.current_track);
-        }
-        if (data.music.position_ms !== undefined) setPositionMs(data.music.position_ms);
-        if (data.music.duration_ms !== undefined) setDurationMs(data.music.duration_ms);
-        if (data.music.seekable !== undefined) setSeekable(data.music.seekable);
-        if (data.music.repeat_mode !== undefined) setRepeatMode(data.music.repeat_mode);
-        if (data.music.autoplay !== undefined) setAutoplay(data.music.autoplay);
-        if (data.music.caching !== undefined) setCaching(data.music.caching);
-      }
-    };
+  const handlePlayLocal = useCallback((track) => {
+    setOptimisticTrack({ id: track.id, title: track.title, artist: track.artist, duration: track.durationSeconds });
+  }, []);
 
-    const connect = () => {
-      if (destroyed) return;
-      const url = getDaemonWsUrl();
-      ws = new WebSocket(url);
-
-      ws.onopen = () => {
-        if (destroyed) { ws.close(); return; }
-        setIsOnline(true);
-      };
-
-      ws.onmessage = (evt) => {
-        if (destroyed) return;
-        try {
-          const data = JSON.parse(evt.data);
-          if (data.type === 'disconnected') {
-            setIsOnline(false);
-          } else {
-            applySnapshot(data);
-          }
-        } catch (e) {
-          console.warn('[ws] parse error', e);
-        }
-      };
-
-      ws.onerror = () => {};
-      ws.onclose = () => {
-        setIsOnline(false);
-        if (!destroyed) {
-          reconnectTimer = setTimeout(connect, 3000);
-        }
-      };
-    };
-
-    connect();
-    return () => {
-      destroyed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (ws) ws.close();
-    };
-  }, [daemonHost]);
-
-  const handleTrackStarted = (track) => {
-    setCurrentTrack({
-      id: track.videoId || track.id,
-      title: track.title,
-      artist: track.author || track.artist,
-      duration: track.lengthSeconds || track.durationSeconds,
-    });
-    setPlaybackState('STREAMING');
+  const displayMusic = {
+    ...snapshot.music,
+    current_track: optimisticTrack || snapshot.music.current_track,
   };
 
   return (
-    <div className="min-h-screen bg-[#0b0c14] text-slate-100 flex flex-col font-sans pb-28">
+    <div className="app-shell">
       <Header
         espHost={espHost}
         onHostChange={handleHostChange}
-        isOnline={isOnline}
-        telemetry={telemetry}
+        online={online}
+        deviceConnected={snapshot.connected}
+        devMode={devMode}
+        onToggleDevMode={() => setDevMode((v) => !v)}
       />
 
-      <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 flex flex-col">
-        <nav className="flex items-center gap-2 border-b border-slate-800/80 pb-3 mb-6 overflow-x-auto">
-          <button
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
-              activeTab === 'search'
-                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
-            }`}
-            onClick={() => setActiveTab('search')}
-          >
-            <Search size={16} /> YouTube Streamer
-          </button>
-          <button
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
-              activeTab === 'library'
-                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
-            }`}
-            onClick={() => setActiveTab('library')}
-          >
-            <HardDrive size={16} /> SD Card Library{' '}
-            <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-mono bg-slate-700/60 text-slate-300 border border-slate-600/40">
-              {libraryCount}
-            </span>
-          </button>
-          <button
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
-              activeTab === 'controls'
-                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
-            }`}
-            onClick={() => setActiveTab('controls')}
-          >
-            <Sliders size={16} /> Audio & LED Controls
-          </button>
-          <button
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 cursor-pointer ${
-              activeTab === 'logs'
-                ? 'bg-slate-800/90 text-teal-300 border border-teal-500/30 shadow-[0_0_12px_rgba(45,212,191,0.15)]'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
-            }`}
-            onClick={() => setActiveTab('logs')}
-          >
-            <Terminal size={16} /> Live Logs
-          </button>
-        </nav>
-
-        {activeTab === 'search' && (
-          <YouTubeSearch onTrackStarted={handleTrackStarted} />
+      <main className="app-main">
+        {!devMode && (
+          <nav className="tab-bar">
+            <button className={activeTab === 'play' ? 'active' : ''} onClick={() => setActiveTab('play')}>
+              <Play size={15} /> Play
+            </button>
+            <button className={activeTab === 'device' ? 'active' : ''} onClick={() => setActiveTab('device')}>
+              <Sliders size={15} /> Device
+            </button>
+          </nav>
         )}
 
-        {activeTab === 'library' && (
-          <SdLibrary
-            onTrackStarted={handleTrackStarted}
+        {devMode ? (
+          <DevLogs snapshot={snapshot} />
+        ) : activeTab === 'play' ? (
+          <PlayTab
+            onPlay={handlePlay}
+            onPlayLocal={handlePlayLocal}
+            disabled={!online}
             libraryCount={libraryCount}
-            setLibraryCount={setLibraryCount}
+            onLibraryCount={setLibraryCount}
           />
-        )}
-
-        {activeTab === 'controls' && (
-          <Controls
+        ) : (
+          <DeviceTab
+            online={online}
+            send={send}
             volume={volume}
-            onVolumeChange={setVolume}
             micGain={micGain}
-            onMicGainChange={setMicGain}
             micMuted={micMuted}
-            onMicMuteChange={setMicMuted}
-          />
-        )}
-
-        {activeTab === 'logs' && (
-          <LiveLogs
-            logs={logs}
-            onClearLogs={() => setLogs([])}
-            autoScroll={autoScroll}
-            onToggleAutoScroll={setAutoScroll}
+            led={led}
           />
         )}
       </main>
 
-      <PlayerDock
-        currentTrack={currentTrack}
-        playbackState={playbackState}
-        positionMs={positionMs}
-        durationMs={durationMs}
-        seekable={seekable}
-        repeatMode={repeatMode}
-        setRepeatMode={setRepeatMode}
-        autoplay={autoplay}
-        setAutoplay={setAutoplay}
-        caching={caching}
-        setCaching={setCaching}
+      <NowPlayingDock
+        music={displayMusic}
+        online={online}
+        send={send}
         volume={volume}
-        setVolume={setVolume}
+        repeat={repeat}
+        autoplay={autoplay}
+        caching={caching}
       />
     </div>
   );
