@@ -1,5 +1,6 @@
 # 🎙️ Waveshare Audio Development Board Firmware
 
+[![Build Firmware](https://github.com/AnkitVats21/waveshare/actions/workflows/build.yml/badge.svg)](https://github.com/AnkitVats21/waveshare/actions/workflows/build.yml)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.0%2B%20%7C%20v6.0%2B-blue.svg)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/)
 [![Language](https://img.shields.io/badge/Language-C%2B%2B17-green.svg)](https://en.cppreference.com/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](https://www.espressif.com/en/products/socs/esp32-s3)

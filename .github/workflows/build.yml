@@ -1,0 +1,33 @@
+name: Build Firmware
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache ESP-IDF managed components
+        uses: actions/cache@v4
+        with:
+          path: managed_components
+          key: managed-components-${{ hashFiles('main/idf_component.yml', 'components/*/idf_component.yml') }}
+
+      - name: Build firmware (ESP-IDF v6.0.1, esp32s3)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.1
+          target: esp32s3
