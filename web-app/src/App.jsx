@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, HardDrive, Sliders, Terminal } from 'lucide-react';
 import Header from './components/Header';
 import YouTubeSearch from './components/YouTubeSearch';
@@ -9,12 +9,13 @@ import PlayerDock from './components/PlayerDock';
 import {
   getEspHost,
   setEspHost,
-  getSystemDelta,
-  getMusicStatus,
+  getDaemonHost,
+  getDaemonWsUrl,
 } from './api';
 
 export default function App() {
   const [espHost, setHostState] = useState(getEspHost());
+  const [daemonHost, setDaemonHostState] = useState(getDaemonHost());
   const [isOnline, setIsOnline] = useState(false);
   const [activeTab, setActiveTab] = useState('search');
 
@@ -22,7 +23,6 @@ export default function App() {
   const [telemetry, setTelemetry] = useState({});
   const [logs, setLogs] = useState([]);
   const [autoScroll, setAutoScroll] = useState(true);
-  const logSeqRef = useRef(0);
 
   // Audio / Hardware controls
   const [volume, setVolume] = useState(70);
@@ -45,68 +45,87 @@ export default function App() {
     setHostState(saved);
   };
 
-  // 1. High-frequency Delta Polling (1 Hz) for CPU, Memory, State Delta, and Live Logs
+  // WebSocket live push from star-replica-daemon
   useEffect(() => {
-    let timerId = null;
-    let isSubscribed = true;
+    let ws = null;
+    let reconnectTimer = null;
+    let destroyed = false;
 
-    const pollDelta = async () => {
-      try {
-        const delta = await getSystemDelta(logSeqRef.current);
-        if (!isSubscribed) return;
+    const applySnapshot = (data) => {
+      setIsOnline(true);
 
-        setIsOnline(true);
+      if (data.up !== undefined || data.sram !== undefined) {
         setTelemetry({
-          up: delta.up,
-          c0: delta.c0,
-          c1: delta.c1,
-          sram: delta.sram,
-          min_sram: delta.min_sram,
-          psram: delta.psram,
-          rssi: delta.rssi,
+          up: data.up,
+          c0: data.c0,
+          c1: data.c1,
+          sram: data.sram,
+          min_sram: data.min_sram,
+          psram: data.psram,
+          rssi: data.rssi,
         });
+      }
 
-        if (delta.latest_seq) {
-          logSeqRef.current = delta.latest_seq;
-        }
+      if (data.state) {
+        if (data.state.speaker_volume !== undefined) setVolume(data.state.speaker_volume);
+        if (data.state.mic_gain_db !== undefined) setMicGain(data.state.mic_gain_db);
+        if (data.state.mic_enabled !== undefined) setMicMuted(!data.state.mic_enabled);
+      }
 
-        if (delta.logs && delta.logs.length > 0) {
-          setLogs((prev) => [...prev.slice(-400), ...delta.logs]);
+      if (data.music) {
+        if (data.music.state) setPlaybackState(data.music.state);
+        if (data.music.current_track && data.music.current_track.id) {
+          setCurrentTrack(data.music.current_track);
         }
-
-        if (delta.state) {
-          if (delta.state.speaker_volume !== undefined) setVolume(delta.state.speaker_volume);
-          if (delta.state.mic_gain_db !== undefined) setMicGain(delta.state.mic_gain_db);
-          if (delta.state.mic_enabled !== undefined) setMicMuted(!delta.state.mic_enabled);
-        }
-
-        if (delta.music) {
-          if (delta.music.state) setPlaybackState(delta.music.state);
-          if (delta.music.current_track && delta.music.current_track.id) {
-            setCurrentTrack(delta.music.current_track);
-          }
-          if (delta.music.position_ms !== undefined) setPositionMs(delta.music.position_ms);
-          if (delta.music.duration_ms !== undefined) setDurationMs(delta.music.duration_ms);
-          if (delta.music.seekable !== undefined) setSeekable(delta.music.seekable);
-          if (delta.music.repeat_mode !== undefined) setRepeatMode(delta.music.repeat_mode);
-          if (delta.music.autoplay !== undefined) setAutoplay(delta.music.autoplay);
-          if (delta.music.caching !== undefined) setCaching(delta.music.caching);
-        }
-      } catch (err) {
-        if (isSubscribed) setIsOnline(false);
-      } finally {
-        if (isSubscribed) {
-          timerId = setTimeout(pollDelta, 1000);
-        }
+        if (data.music.position_ms !== undefined) setPositionMs(data.music.position_ms);
+        if (data.music.duration_ms !== undefined) setDurationMs(data.music.duration_ms);
+        if (data.music.seekable !== undefined) setSeekable(data.music.seekable);
+        if (data.music.repeat_mode !== undefined) setRepeatMode(data.music.repeat_mode);
+        if (data.music.autoplay !== undefined) setAutoplay(data.music.autoplay);
+        if (data.music.caching !== undefined) setCaching(data.music.caching);
       }
     };
 
-    pollDelta();
-    return () => {
-      isSubscribed = false;
-      if (timerId) clearTimeout(timerId);
+    const connect = () => {
+      if (destroyed) return;
+      const url = getDaemonWsUrl();
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        if (destroyed) { ws.close(); return; }
+        setIsOnline(true);
+      };
+
+      ws.onmessage = (evt) => {
+        if (destroyed) return;
+        try {
+          const data = JSON.parse(evt.data);
+          if (data.type === 'disconnected') {
+            setIsOnline(false);
+          } else {
+            applySnapshot(data);
+          }
+        } catch (e) {
+          console.warn('[ws] parse error', e);
+        }
+      };
+
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        setIsOnline(false);
+        if (!destroyed) {
+          reconnectTimer = setTimeout(connect, 3000);
+        }
+      };
     };
-  }, [espHost]);
+
+    connect();
+    return () => {
+      destroyed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    };
+  }, [daemonHost]);
 
   const handleTrackStarted = (track) => {
     setCurrentTrack({

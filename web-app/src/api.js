@@ -1,4 +1,5 @@
 const DEFAULT_ESP_HOST = '192.168.1.14';
+const DEFAULT_DAEMON_HOST = 'localhost:8765';
 const STREAM_API_BASE = 'https://stream.ankitm.xyz/api/v1';
 
 export function getEspHost() {
@@ -14,6 +15,25 @@ export function setEspHost(host) {
 export function getEspBaseUrl() {
   const host = getEspHost();
   return `http://${host}`;
+}
+
+// Daemon (star-replica-daemon) — telemetry & control proxy
+export function getDaemonHost() {
+  return localStorage.getItem('daemon_host') || DEFAULT_DAEMON_HOST;
+}
+
+export function setDaemonHost(host) {
+  const clean = host.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  localStorage.setItem('daemon_host', clean);
+  return clean;
+}
+
+export function getDaemonBaseUrl() {
+  return `http://${getDaemonHost()}`;
+}
+
+export function getDaemonWsUrl() {
+  return `ws://${getDaemonHost()}/api/dashboard/ws`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -56,7 +76,7 @@ export async function resolveStreamUrl(videoId) {
 // ─────────────────────────────────────────────────────────────
 
 export async function playDirectOnEsp(track, streamUrl) {
-  const url = `${getEspBaseUrl()}/api/music/play`;
+  const url = `${getDaemonBaseUrl()}/api/music/play`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -84,7 +104,7 @@ export async function playLocalOnEsp(idOrPath) {
 }
 
 export async function controlPlayback(action, value = null) {
-  const url = `${getEspBaseUrl()}/api/music/control`;
+  const url = `${getDaemonBaseUrl()}/api/music/control`;
   const payload = { action };
   if (value !== null) payload.value = value;
 
@@ -98,7 +118,7 @@ export async function controlPlayback(action, value = null) {
 }
 
 export async function getMusicStatus() {
-  const url = `${getEspBaseUrl()}/api/music/status`;
+  const url = `${getDaemonBaseUrl()}/api/music/status`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Status failed: ${res.status}`);
   return await res.json();
@@ -131,14 +151,14 @@ export async function deleteFromLibrary(id) {
 // ─────────────────────────────────────────────────────────────
 
 export async function getSystemDelta(logSeq = 0) {
-  const url = `${getEspBaseUrl()}/api/system/delta?log_seq=${logSeq}`;
+  const url = `${getDaemonBaseUrl()}/api/system/delta?log_seq=${logSeq}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Delta failed: ${res.status}`);
   return await res.json();
 }
 
 export async function setSpeakerVolume(volume) {
-  const url = `${getEspBaseUrl()}/api/audio/volume`;
+  const url = `${getDaemonBaseUrl()}/api/audio/volume`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -149,7 +169,7 @@ export async function setSpeakerVolume(volume) {
 }
 
 export async function setMicGain(gain) {
-  const url = `${getEspBaseUrl()}/api/audio/mic_gain`;
+  const url = `${getDaemonBaseUrl()}/api/audio/mic_gain`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -160,7 +180,7 @@ export async function setMicGain(gain) {
 }
 
 export async function setMicMute(muted) {
-  const url = `${getEspBaseUrl()}/api/audio/mic_mute`;
+  const url = `${getDaemonBaseUrl()}/api/audio/mic_mute`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

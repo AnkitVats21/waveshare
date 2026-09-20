@@ -72,7 +72,9 @@ int main(int argc, char* argv[]) {
     });
 
     // 3. Monitor state mutations from Waveshare
-    replica.addChangeListener([&player](uint8_t comp_id, uint8_t field_tag, const std::vector<uint8_t>& val) {
+    replica.addChangeListener([&server, &player](uint8_t comp_id, uint8_t field_tag, const std::vector<uint8_t>& val) {
+        server.broadcastSnapshot();
+
         if (comp_id == static_cast<uint8_t>(ComponentId::MEDIA) && field_tag == TAG_MEDIA::pending_command) {
             if (val.size() >= sizeof(MediaPendingCommand)) {
                 MediaPendingCommand cmd{};
