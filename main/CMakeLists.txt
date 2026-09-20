@@ -36,8 +36,6 @@ set(srcs
             "services/network/CaptiveDnsServer.cpp"
             "services/network/HttpFileServerService.cpp"
             "services/network/StarWsClient.cpp"
-            "services/config_manager/config_manager.cpp"
-            "services/config_manager/config_generated.cpp"
             "services/storage/StorageService.cpp"
             "services/storage/SysDbSyncReactor.cpp"
             "services/time/TimeSyncHelper.cpp"
