@@ -202,7 +202,6 @@ waveshare/
 │   └── main.cpp                          # System entry point (app_main)
 │
 ├── components/                           # Managed & external ESP-IDF components
-├── scripts/                              # Host testing tools & Invidious utilities
 ├── sdkconfig                             # Active project configuration
 └── CMakeLists.txt                        # Root CMake file
 ```
