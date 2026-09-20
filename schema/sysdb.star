@@ -65,10 +65,6 @@ component Led id=4 mask=0x00100000 {
     field repeat: uint8_t = 0 [writable]
 }
 
-component Mqtt id=5 mask=0x00200000 {
-    field connected: bool = false [readonly, bit=0:CONNECTED]
-}
-
 component Alarm id=6 mask=0x00400000 {
     field playing: bool = false [readonly, bit=0:PLAYING]
     field stop_requested: bool = false [writable, bit=1:STOP_REQUESTED]

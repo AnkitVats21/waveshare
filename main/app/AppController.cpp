@@ -154,10 +154,6 @@ bool AppController::appendFile(const char* path, const char* content) {
     return Services::StorageService::getInstance().appendFile(path, content);
 }
 
-bool AppController::publishMqtt(const char* /*topic*/, const char* /*message*/) {
-    return false;
-}
-
 bool AppController::setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) {
     auto alarms = Services::AlarmService::getInstance().getAlarms();
     int target_id = -1;

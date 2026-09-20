@@ -10,7 +10,7 @@
  * Higher numeric value = higher priority. IDLE = 0, max = configMAX_PRIORITIES-1.
  *
  * Core affinity conventions:
- *   Core 0: Network I/O (WiFi tx/rx, WebSocket, MQTT)
+ *   Core 0: Network I/O (WiFi tx/rx, WebSocket)
  *   Core 1: Audio DSP  (I2S DMA, AFE feed/detect, audio pump)
  */
 namespace ThreadConfig {
@@ -22,7 +22,6 @@ namespace ThreadConfig {
         STORAGE_IO       = 3,   ///< Low-priority SD card disk I/O (Core 0)
         NORMAL           = 5,
         KEY_POLL         = 5,   ///< KeyService polling loop
-        MQTT             = 5,   ///< MqttService background loop
         ASSISTANT        = 6,   ///< AssistantService state machine
         LED              = 6,   ///< LedService animation loop
         GEMINI_PROTOCOL  = 7,   ///< GeminiProtocol WebSocket handler (Core 0)
@@ -50,7 +49,7 @@ namespace ThreadConfig {
     };
 
     // ── Core affinities ────────────────────────────────────────────────────
-    static constexpr BaseType_t CORE_NETWORK = 0; ///< WiFi, WebSocket, MQTT
+    static constexpr BaseType_t CORE_NETWORK = 0; ///< WiFi, WebSocket
     static constexpr BaseType_t CORE_STORAGE = 0; ///< SD Card disk I/O (Core 0, off Core 1 DSP)
     static constexpr BaseType_t CORE_AUDIO   = 1; ///< I2S DMA, AFE, audio pump
     static constexpr BaseType_t CORE_ANY     = tskNO_AFFINITY;

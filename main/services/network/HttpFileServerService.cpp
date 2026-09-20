@@ -58,7 +58,16 @@ HttpFileServerService::~HttpFileServerService() {
 }
 
 bool HttpFileServerService::begin() {
-    ESP_LOGI(TAG, "HttpFileServerService initialized, awaiting Wi-Fi connection...");
+    SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+    if (snap.system.wifi_connected || snap.system.ap_active) {
+        m_wifi_was_connected = true;
+        ESP_LOGI(TAG, "Network active (%s) at boot — starting Control Hub & HTTP server on port %d...",
+                 snap.system.ap_active ? "SoftAP" : "STA",
+                 CONFIG_WAVESHARE_HTTP_FILE_SERVER_PORT);
+        startServer();
+    } else {
+        ESP_LOGI(TAG, "HttpFileServerService initialized, awaiting Wi-Fi connection...");
+    }
     return true;
 }
 
@@ -101,7 +110,7 @@ bool HttpFileServerService::startServer() {
     config.server_port = CONFIG_WAVESHARE_HTTP_FILE_SERVER_PORT;
     config.ctrl_port = config.server_port + 32000;
     config.task_priority = ThreadConfig::Priority::LOW;
-    config.task_caps = MALLOC_CAP_SPIRAM; // Keeps 100% of internal SRAM free for audio/Wi-Fi!
+    config.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // Keeps 100% of internal SRAM free for audio/Wi-Fi!
     config.stack_size = 12288;
     config.core_id = ThreadConfig::CORE_NETWORK;
     config.max_uri_handlers = 48;
@@ -387,11 +396,14 @@ esp_err_t HttpFileServerService::wifiConfigureHandler(httpd_req_t* req) {
         return sendJsonError(req, 400, "SSID cannot be empty");
     }
 
+    ESP_LOGI(TAG, "Wi-Fi credentials received for SSID '%s', initiating connection...", ssid.c_str());
+
     EmbeddedSysDb::getInstance().mutate([&ssid, &pass](SystemState& s) {
         std::strncpy(s.system.wifi_ssid, ssid.c_str(), sizeof(s.system.wifi_ssid) - 1);
         s.system.wifi_ssid[sizeof(s.system.wifi_ssid) - 1] = '\0';
         std::strncpy(s.system.wifi_password, pass.c_str(), sizeof(s.system.wifi_password) - 1);
         s.system.wifi_password[sizeof(s.system.wifi_password) - 1] = '\0';
+        s.system.network_state = NetworkState::Connecting;
         s.system.wifi_apply_creds = true;
     });
 

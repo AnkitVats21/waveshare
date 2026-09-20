@@ -32,16 +32,6 @@ catalog.
 - **`StreamManager` / `HttpClientStream`** — HTTP stream lifecycle and
   buffering for the audio pipeline.
 
-## Dead code warning: `MusicLibraryManager`
-
-`src/MusicLibraryManager.cpp` and `include/media_player/MusicLibraryManager.h`
-exist on disk but **`MusicLibraryManager.cpp` is not in `CMakeLists.txt`'s
-`SRCS` list and nothing outside the file itself references the class**.
-It looks like an earlier library-index implementation that `CatalogDB`
-superseded. Don't build on it without first checking whether it's still
-meant to be there — it may be safe to delete, but that wasn't confirmed
-as part of this doc pass.
-
 ## Depends on
 
 `core_sysdb` (state/schema), `audio_core` (`AudioOrchestrator` output),

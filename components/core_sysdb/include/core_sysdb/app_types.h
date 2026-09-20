@@ -40,7 +40,7 @@ enum class AssistantVisualState : int {
     Connecting,     ///< Network handshake in progress
     Speaking,       ///< Assistant audio playing
     Thinking,       ///< Waiting for first server response
-    Offline,        ///< No WiFi / MQTT
+    Offline,        ///< No WiFi / Gemini WebSocket connection
     Recovering,     ///< Attempting reconnection
     RateLimited,    ///< 429 back-off period
     Error,          ///< Hard error state

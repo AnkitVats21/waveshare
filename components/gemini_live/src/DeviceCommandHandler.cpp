@@ -113,24 +113,6 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             return true;
         }
             
-        case SkillType::MQTT_FORWARD: {
-            auto args = skill_call.args.mqtt_forward;
-            if (args == nullptr) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Null MQTT forwarding arguments";
-                return true;
-            }
-            if (!s_delegate) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "MQTT service unavailable";
-                return true;
-            }
-            bool ok = s_delegate->publishMqtt(args->topic.c_str(), args->message.c_str());
-            response_doc["status"] = ok ? "success" : "error";
-            response_doc["message"] = ok ? "MQTT forward message published" : "Failed to publish forward message";
-            return true;
-        }
-            
         case SkillType::SET_ALARM: {
             auto args = skill_call.args.set_alarm;
             if (args == nullptr) {

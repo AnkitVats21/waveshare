@@ -20,7 +20,6 @@ namespace COMP {
     static constexpr ComponentMask PIPELINE     = 0x00040000u;
     static constexpr ComponentMask ASSISTANT    = 0x00080000u;
     static constexpr ComponentMask LED          = 0x00100000u;
-    static constexpr ComponentMask MQTT         = 0x00200000u;
     static constexpr ComponentMask ALARM        = 0x00400000u;
     static constexpr ComponentMask BLUETOOTH    = 0x00800000u;
     static constexpr ComponentMask MEDIA        = 0x01000000u;
@@ -82,10 +81,6 @@ namespace BIT_LED {
     static constexpr ComponentMask MODE             = (1u << 0);
     static constexpr ComponentMask COLOR            = (1u << 1);
     static constexpr ComponentMask SPEED            = (1u << 2);
-}
-
-namespace BIT_MQTT {
-    static constexpr ComponentMask CONNECTED        = (1u << 0);
 }
 
 namespace BIT_ALARM {
@@ -165,9 +160,6 @@ namespace BIT_MEDIA {
     X(uint32_t, speed_ms, 500, BIT_LED::SPEED, FieldAccess::Writable) \
     X(uint8_t, repeat, 0, 0, FieldAccess::Writable)
 
-#define MQTT_FIELDS \
-    X(bool, connected, false, BIT_MQTT::CONNECTED, FieldAccess::ReadOnly)
-
 #define ALARM_FIELDS \
     X(bool, playing, false, BIT_ALARM::PLAYING, FieldAccess::ReadOnly) \
     X(bool, stop_requested, false, BIT_ALARM::STOP_REQUESTED, FieldAccess::Writable) \
@@ -226,11 +218,6 @@ struct SystemState {
     struct {
         LED_FIELDS
     } led;
-
-    // ── COMP::MQTT ───────────────────────────────────────────
-    struct {
-        MQTT_FIELDS
-    } mqtt;
 
     // ── COMP::ALARM ───────────────────────────────────────────
     struct {
@@ -320,19 +307,6 @@ namespace TAG_LED {
     };
 }
 
-namespace TAG_MQTT {
-    enum : uint8_t {
-        #define X(type, name, def, bit, access) name,
-        #define X_STR(name, size, def, bit, access) name,
-        #define X_COLOR(name, def, bit, access) name,
-        MQTT_FIELDS
-        #undef X
-        #undef X_STR
-        #undef X_COLOR
-        _COUNT
-    };
-}
-
 namespace TAG_ALARM {
     enum : uint8_t {
         #define X(type, name, def, bit, access) name,
@@ -386,7 +360,6 @@ inline constexpr ComponentId getComponentId(ComponentMask comp) {
         case COMP::PIPELINE: return ComponentId::PIPELINE;
         case COMP::ASSISTANT: return ComponentId::ASSISTANT;
         case COMP::LED: return ComponentId::LED;
-        case COMP::MQTT: return ComponentId::MQTT;
         case COMP::ALARM: return ComponentId::ALARM;
         case COMP::BLUETOOTH: return ComponentId::BLUETOOTH;
         case COMP::MEDIA: return ComponentId::MEDIA;
@@ -461,19 +434,6 @@ inline FieldAccess getFieldAccess(ComponentId comp, uint8_t field_tag) {
             if (field_tag < sizeof(s_access)/sizeof(s_access[0])) return s_access[field_tag];
             break;
         }
-        case ComponentId::MQTT: {
-            static constexpr FieldAccess s_access[] = {
-                #define X(type, name, def, bit, access) access,
-                #define X_STR(name, size, def, bit, access) access,
-                #define X_COLOR(name, def, bit, access) access,
-                MQTT_FIELDS
-                #undef X
-                #undef X_STR
-                #undef X_COLOR
-            };
-            if (field_tag < sizeof(s_access)/sizeof(s_access[0])) return s_access[field_tag];
-            break;
-        }
         case ComponentId::ALARM: {
             static constexpr FieldAccess s_access[] = {
                 #define X(type, name, def, bit, access) access,
@@ -525,7 +485,6 @@ inline uint8_t getFieldCount(ComponentId comp) {
         case ComponentId::PIPELINE: return TAG_PIPELINE::_COUNT;
         case ComponentId::ASSISTANT: return TAG_ASSISTANT::_COUNT;
         case ComponentId::LED: return TAG_LED::_COUNT;
-        case ComponentId::MQTT: return TAG_MQTT::_COUNT;
         case ComponentId::ALARM: return TAG_ALARM::_COUNT;
         case ComponentId::BLUETOOTH: return TAG_BLUETOOTH::_COUNT;
         case ComponentId::MEDIA: return TAG_MEDIA::_COUNT;
@@ -593,19 +552,6 @@ inline const char* getFieldName(ComponentId comp, uint8_t field_tag) {
                 #define X_STR(name, size, def, bit, access) #name,
                 #define X_COLOR(name, def, bit, access) #name,
                 LED_FIELDS
-                #undef X
-                #undef X_STR
-                #undef X_COLOR
-            };
-            if (field_tag < sizeof(s_names)/sizeof(s_names[0])) return s_names[field_tag];
-            break;
-        }
-        case ComponentId::MQTT: {
-            static const char* const s_names[] = {
-                #define X(type, name, def, bit, access) #name,
-                #define X_STR(name, size, def, bit, access) #name,
-                #define X_COLOR(name, def, bit, access) #name,
-                MQTT_FIELDS
                 #undef X
                 #undef X_STR
                 #undef X_COLOR

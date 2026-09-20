@@ -114,22 +114,43 @@ void CaptiveDnsServer::run() {
         // ID(2), Flags(2), QDCOUNT(2), ANCOUNT(2), NSCOUNT(2), ARCOUNT(2)
         std::memcpy(tx_buffer, rx_buffer, len);
 
+        // Find the true end of the Question section (after QNAME + QTYPE(2) + QCLASS(2))
+        size_t q_idx = 12;
+        while (q_idx < static_cast<size_t>(len) && rx_buffer[q_idx] != 0) {
+            uint8_t label_len = rx_buffer[q_idx];
+            q_idx += label_len + 1;
+        }
+        if (q_idx >= static_cast<size_t>(len)) continue;
+        q_idx++; // Skip null byte
+
+        if (q_idx + 4 > static_cast<size_t>(len)) continue;
+        uint16_t qtype = (static_cast<uint16_t>(rx_buffer[q_idx]) << 8) | rx_buffer[q_idx + 1];
+        q_idx += 4; // End of Question section
+
         // Set Flags: Standard query response, No error (0x8180)
         tx_buffer[2] = 0x81;
         tx_buffer[3] = 0x80;
 
-        // Set Answer Count: 1
-        tx_buffer[6] = 0x00;
-        tx_buffer[7] = 0x01;
-
-        // Set Authority and Additional records: 0
+        // Set Authority and Additional records: 0 (strips EDNS0 OPT records)
         tx_buffer[8] = 0x00;
         tx_buffer[9] = 0x00;
         tx_buffer[10] = 0x00;
         tx_buffer[11] = 0x00;
 
-        // Append 16-byte Answer record pointing to the question name
-        size_t resp_len = len;
+        // If IPv6 (AAAA = 28) or other non-A query, return NOERROR with 0 answers so client uses IPv4
+        if (qtype != 1) {
+            tx_buffer[6] = 0x00;
+            tx_buffer[7] = 0x00;
+            sendto(m_sock, tx_buffer, q_idx, 0, (struct sockaddr*)&client_addr, addr_len);
+            continue;
+        }
+
+        // Set Answer Count: 1 for IPv4 (A)
+        tx_buffer[6] = 0x00;
+        tx_buffer[7] = 0x01;
+
+        // Append 16-byte Answer record immediately after the Question
+        size_t resp_len = q_idx;
         if (resp_len + 16 <= sizeof(tx_buffer)) {
             // Name: Compressed pointer to question name at offset 12 (0xC00C)
             tx_buffer[resp_len++] = 0xC0;

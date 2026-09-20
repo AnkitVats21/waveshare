@@ -421,7 +421,7 @@ esp_err_t AudioHal::setRecordGain(float db_value) {
 
   // ? below I've verified its not working as written in comment below there for
   // changing the max gain
-  // ES7210 gain range: 0–24 dB. Clamp to prevent MQTT values like 100.0
+  // ES7210 gain range: 0–24 dB. Clamp to prevent caller values like 100.0
   // (sent as a 0-100 percentage) from causing extreme
   // clipping/distortion.
   static constexpr float MAX_GAIN_DB = 80.0f;

@@ -17,7 +17,7 @@ public:
     static IDeviceCommandDelegate* getDelegate();
 
     /**
-     * @brief Executes local device commands (Filesystem, LED, Volume, MQTT, Alarms).
+     * @brief Executes local device commands (Filesystem, LED, Volume, Alarms).
      * @param skill_call The decoded skill call details and arguments.
      * @param response_doc The output JSON response to return to Gemini.
      * @return true if handled (supported or safely rejected), false if it should be routed to Media handler.

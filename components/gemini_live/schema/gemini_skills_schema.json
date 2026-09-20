@@ -212,27 +212,6 @@
     }
   },
   {
-    "name": "mqtt_forward",
-    "description": "Forwards data/message payload to a custom MQTT topic.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {
-        "topic": {
-          "type": "STRING",
-          "description": "MQTT topic name to publish to."
-        },
-        "message": {
-          "type": "STRING",
-          "description": "Message payload string to send."
-        }
-      },
-      "required": [
-        "topic",
-        "message"
-      ]
-    }
-  },
-  {
     "name": "stop_active_alarm",
     "description": "Stops any active playing alarm tone on the device.",
     "parameters": {

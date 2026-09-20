@@ -58,7 +58,6 @@ Current tools (verify against `gemini_skills_generated.cpp`'s
 | `read_file(path)` / `write_file(path, content)` | SD card text file I/O (`/sdcard/...`) |
 | `save_to_memory(text)` | Append to a persistent long-term memory file |
 | `set_alarm(hour, minute, tone_file?, enabled?)` / `stop_active_alarm` | Real, backed by `Services::AlarmService` |
-| `mqtt_forward(topic, message)` | **Defined but not implemented.** `AppController::publishMqtt()` unconditionally returns `false`. No `MqttService`/`esp_mqtt` client exists in this codebase despite the Kconfig section and reserved SysDb component. |
 
 ## Depends on
 

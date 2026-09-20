@@ -19,7 +19,6 @@ public:
     std::string readFile(const char* path) override;
     bool fileExists(const char* path) override;
     bool appendFile(const char* path, const char* content) override;
-    bool publishMqtt(const char* topic, const char* message) override;
     bool setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) override;
     bool stopActiveAlarm() override;
 

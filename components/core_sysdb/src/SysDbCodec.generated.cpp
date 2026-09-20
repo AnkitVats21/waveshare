@@ -76,20 +76,6 @@ bool applyFieldWrite(SystemState& state, ComponentId comp, uint8_t field_tag, co
             #undef X_COLOR
             break;
         }
-        case ComponentId::MQTT: {
-            uint8_t tag = 0;
-            #define X(type, name, def, bit, access) \
-                if (tag++ == field_tag) return deserializeAny(state.mqtt.name, val, len);
-            #define X_STR(name, size, def, bit, access) \
-                if (tag++ == field_tag) return deserializeString(state.mqtt.name, size, val, len);
-            #define X_COLOR(name, def, bit, access) \
-                if (tag++ == field_tag) return deserializeRgbColor(state.mqtt.name, val, len);
-            MQTT_FIELDS
-            #undef X
-            #undef X_STR
-            #undef X_COLOR
-            break;
-        }
         case ComponentId::ALARM: {
             uint8_t tag = 0;
             #define X(type, name, def, bit, access) \
@@ -335,46 +321,6 @@ ComponentMask diffAndEmitWal(const SystemState& old_s, const SystemState& new_s,
             } \
             tag++;
         LED_FIELDS
-        #undef X
-        #undef X_STR
-        #undef X_COLOR
-    }
-
-    // ── MQTT_FIELDS ──────────────────────────────────────────
-    {
-        uint8_t tag = 0;
-        #define X(type, name, def, bit, access) \
-            if (old_s.mqtt.name != new_s.mqtt.name) { \
-                if (bit != 0) changed |= (COMP::MQTT | bit); \
-                else changed |= COMP::MQTT; \
-                uint8_t buf[sizeof(type) > 160 ? sizeof(type) : 160]; \
-                uint8_t len = serializeAny(new_s.mqtt.name, buf, sizeof(buf)); \
-                wal.push(static_cast<uint8_t>(ComponentId::MQTT), tag, buf, len); \
-            } \
-            tag++;
-
-        #define X_STR(name, size, def, bit, access) \
-            if (std::strncmp(old_s.mqtt.name, new_s.mqtt.name, size) != 0) { \
-                if (bit != 0) changed |= (COMP::MQTT | bit); \
-                else changed |= COMP::MQTT; \
-                uint8_t buf[size]; \
-                uint8_t len = serializeString(new_s.mqtt.name, size, buf, sizeof(buf)); \
-                wal.push(static_cast<uint8_t>(ComponentId::MQTT), tag, buf, len); \
-            } \
-            tag++;
-
-        #define X_COLOR(name, def, bit, access) \
-            if (old_s.mqtt.name.r != new_s.mqtt.name.r || \
-                old_s.mqtt.name.g != new_s.mqtt.name.g || \
-                old_s.mqtt.name.b != new_s.mqtt.name.b) { \
-                if (bit != 0) changed |= (COMP::MQTT | bit); \
-                else changed |= COMP::MQTT; \
-                uint8_t buf[3]; \
-                uint8_t len = serializeRgbColor(new_s.mqtt.name, buf, sizeof(buf)); \
-                wal.push(static_cast<uint8_t>(ComponentId::MQTT), tag, buf, len); \
-            } \
-            tag++;
-        MQTT_FIELDS
         #undef X
         #undef X_STR
         #undef X_COLOR
@@ -640,32 +586,6 @@ void serializeSnapshot(const SystemState& state, uint32_t head_seq, std::vector<
             add_entry(ComponentId::LED, tag++, buf, len); \
         }
         LED_FIELDS
-        #undef X
-        #undef X_STR
-        #undef X_COLOR
-    }
-
-    // ── Snapshot Component: MQTT ─────────────────────────────
-    {
-        uint8_t tag = 0;
-        #define X(type, name, def, bit, access) { \
-            uint8_t buf[sizeof(type) > 160 ? sizeof(type) : 160]; \
-            uint8_t len = serializeAny(state.mqtt.name, buf, sizeof(buf)); \
-            add_entry(ComponentId::MQTT, tag++, buf, len); \
-        }
-
-        #define X_STR(name, size, def, bit, access) { \
-            uint8_t buf[size]; \
-            uint8_t len = serializeString(state.mqtt.name, size, buf, sizeof(buf)); \
-            add_entry(ComponentId::MQTT, tag++, buf, len); \
-        }
-
-        #define X_COLOR(name, def, bit, access) { \
-            uint8_t buf[3]; \
-            uint8_t len = serializeRgbColor(state.mqtt.name, buf, sizeof(buf)); \
-            add_entry(ComponentId::MQTT, tag++, buf, len); \
-        }
-        MQTT_FIELDS
         #undef X
         #undef X_STR
         #undef X_COLOR

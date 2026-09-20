@@ -54,7 +54,7 @@ void LedService::applyVisualState(AssistantVisualState state, const SystemState&
     if (m_cmd_mutex && xSemaphoreTake(m_cmd_mutex, portMAX_DELAY) == pdTRUE) {
         switch (state) {
             case AssistantVisualState::Idle:
-                // Retain/restore the custom color set by tool calling or MQTT when Idle
+                // Retain/restore the custom color set by tool calling when Idle
                 m_current_command = {snap.led.mode, snap.led.color, snap.led.speed_ms, snap.led.repeat};
                 ESP_LOGI(TAG, "LED State: Idle (restoring color: R=%d, G=%d, B=%d, Mode=%d)", 
                          snap.led.color.r, snap.led.color.g, snap.led.color.b, (int)snap.led.mode);

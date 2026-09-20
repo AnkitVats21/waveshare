@@ -249,7 +249,7 @@ audio { outline: none; height: 36px; width: 340px; max-width: 60%; }
       <div class="card">
         <h2>⚡ Core 0 (Network / System)</h2>
         <div style="font-size:1.4rem; font-weight:700;" id="metric-cpu0">0%</div>
-        <div style="font-size:0.8rem; color:var(--text-muted);" id="metric-cpu0-detail">Wi-Fi, HTTP Server, MQTT, SysDb</div>
+        <div style="font-size:0.8rem; color:var(--text-muted);" id="metric-cpu0-detail">Wi-Fi, HTTP Server, SysDb</div>
         <div class="progress-bar-bg"><div id="metric-cpu0-bar" class="progress-bar-fill" style="width:0%;"></div></div>
       </div>
       <div class="card">

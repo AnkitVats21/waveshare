@@ -64,9 +64,6 @@ public:
 
     const Config& getConfig() const { return m_config; }
 
-protected:
-    void run() override;
-
 private:
     WifiService(const WifiService&) = delete;
     WifiService& operator=(const WifiService&) = delete;

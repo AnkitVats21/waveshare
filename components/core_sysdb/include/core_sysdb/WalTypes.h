@@ -27,7 +27,10 @@ enum class ComponentId : uint8_t {
     PIPELINE  = 2,
     ASSISTANT = 3,
     LED       = 4,
-    MQTT      = 5,
+    // 5 was MQTT; retired (no live component ever used it). Left unassigned
+    // rather than renumbering ALARM..MEDIA, since this byte value is also
+    // the wire-protocol id shared with the starhub daemon's vendored copy
+    // of this header.
     ALARM     = 6,
     BLUETOOTH = 7,
     MEDIA     = 8,

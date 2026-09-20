@@ -23,7 +23,6 @@ void init_sysdb(nb::module_& m) {
         .value("PIPELINE", ComponentId::PIPELINE)
         .value("ASSISTANT", ComponentId::ASSISTANT)
         .value("LED", ComponentId::LED)
-        .value("MQTT", ComponentId::MQTT)
         .value("ALARM", ComponentId::ALARM)
         .value("BLUETOOTH", ComponentId::BLUETOOTH)
         .value("MEDIA", ComponentId::MEDIA)
@@ -121,7 +120,6 @@ void init_sysdb(nb::module_& m) {
     comp.attr("PIPELINE") = COMP::PIPELINE;
     comp.attr("ASSISTANT") = COMP::ASSISTANT;
     comp.attr("LED") = COMP::LED;
-    comp.attr("MQTT") = COMP::MQTT;
     comp.attr("ALARM") = COMP::ALARM;
     comp.attr("BLUETOOTH") = COMP::BLUETOOTH;
     comp.attr("BT_COMPANION") = COMP::BT_COMPANION;

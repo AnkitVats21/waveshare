@@ -253,35 +253,6 @@ config WAVESHARE_HTTP_FILE_SERVER_BASE_PATH
     help
         Base mount path on the local filesystem exposed via HTTP.
 
-config WAVESHARE_MQTT_ENABLE
-    bool "Enable MQTT runtime"
-    default y
-
-config WAVESHARE_MQTT_BROKER_URI
-    string "MQTT broker URI"
-    depends on WAVESHARE_MQTT_ENABLE
-    default "mqtt://broker.emqx.io"
-
-config WAVESHARE_MQTT_USERNAME
-    string "MQTT username"
-    depends on WAVESHARE_MQTT_ENABLE
-    default ""
-
-config WAVESHARE_MQTT_PASSWORD
-    string "MQTT password"
-    depends on WAVESHARE_MQTT_ENABLE
-    default ""
-
-config WAVESHARE_MQTT_CLIENT_ID
-    string "MQTT client ID"
-    depends on WAVESHARE_MQTT_ENABLE
-    default "advanced-ota-runtime"
-
-config WAVESHARE_MQTT_LWT_TOPIC
-    string "MQTT last will topic"
-    depends on WAVESHARE_MQTT_ENABLE
-    default "runtime/status"
-
 menu "Wake Word Detection"
 
 config WAVESHARE_WAKEWORD_ENABLE

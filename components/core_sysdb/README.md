@@ -44,12 +44,11 @@ replication, and the reactive task base class (`ReactorTask`).
 
 ## Schema model
 
-`schema/sysdb.star` currently defines 9 components (`System`, `Audio`,
-`Pipeline`, `Assistant`, `Led`, `Mqtt`, `Alarm`, `Bluetooth`, `Media`),
-each with its own bit in a 32-bit `ComponentMask` and its own field set.
-`Mqtt`'s fields exist in the schema and Kconfig but have no live writer
-in this codebase today (`AppController::publishMqtt()` is a permanent
-stub) — don't assume a schema component implies a working feature.
+`schema/sysdb.star` currently defines 8 components (`System`, `Audio`,
+`Pipeline`, `Assistant`, `Led`, `Alarm`, `Bluetooth`, `Media`), each with
+its own bit in a 32-bit `ComponentMask` and its own field set. Component
+ids aren't contiguous (`id=5` is retired, formerly `Mqtt`) — `starc`
+doesn't require contiguity, so don't assume a gap means a bug.
 
 ## Mutation example
 

@@ -174,7 +174,6 @@ Lives in `components/gemini_live`:
   - Device: `set_device_volume(level)`, `set_led_strip(r,g,b)`, `restart_websocket_client`
   - Storage/memory: `read_file(path)`, `write_file(path, content)`, `save_to_memory(text)`
   - Alarms: `set_alarm(hour, minute, tone_file?, enabled?)`, `stop_active_alarm` — both real, backed by `Services::AlarmService`
-  - **`mqtt_forward(topic, message)` is defined but not implemented**: `AppController::publishMqtt()` is a permanent stub that always returns `false`. MQTT has a Kconfig section (`WAVESHARE_MQTT_*`) and a reserved SysDb component slot, but no `MqttService` class or `esp_mqtt` client exists in this codebase — treat any MQTT references elsewhere in this doc set as aspirational, not shipped.
 - **Linear Resampler**: Converts incoming 24kHz audio from Gemini into 32kHz native I2S output on-the-fly with fixed-point arithmetic.
 
 ### 4. Wake Word Engine & AFE DSP
@@ -194,7 +193,7 @@ Lives in `components/core_sysdb` (not `main/common/sysdb` — that path doesn't 
       s.audio.autoplay_enabled = true;
   });
   ```
-- Subsystems subscribe to specific component bitmasks (`COMP::AUDIO`, `COMP::LED`, `COMP::WIFI`, etc.) without cross-component polling. The schema (`schema/sysdb.star`) currently defines 9 components: `System`, `Audio`, `Pipeline`, `Assistant`, `Led`, `Mqtt`, `Alarm`, `Bluetooth`, `Media`. `Mqtt`'s fields exist in the schema but, per above, have no live writer.
+- Subsystems subscribe to specific component bitmasks (`COMP::AUDIO`, `COMP::LED`, `COMP::WIFI`, etc.) without cross-component polling. The schema (`schema/sysdb.star`) currently defines 8 components: `System`, `Audio`, `Pipeline`, `Assistant`, `Led`, `Alarm`, `Bluetooth`, `Media`.
 - `SysDbSyncReactor` (`main/services/storage`) persists relevant state to `/sdcard/state_sync.txt`; `StarWsClient` (`main/services/network`) WAL-replicates it over WebSocket to `starhub` at `ws://<server_ip>:8765/api/star/ws`.
 
 ### 6. On-Device Display & Touch UI

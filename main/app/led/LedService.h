@@ -14,7 +14,7 @@ class LedStripManager;
  *
  * Watches:
  *   COMP::ASSISTANT — visual_state changes drive animation
- *   COMP::LED       — direct LED command overrides (e.g. from MQTT)
+ *   COMP::LED       — direct LED command overrides (e.g. from a Gemini tool call)
  *
  * Injected:
  *   LedStripManager& — direct hardware driver (no Board pass-through)

@@ -19,7 +19,8 @@ WifiService::WifiService(const Config& cfg)
           ThreadConfig::StackSize::STACK_NORMAL,
           ThreadConfig::Priority::LOW,
           ThreadConfig::CORE_NETWORK,
-          COMP::SYSTEM
+          COMP::SYSTEM,
+          MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
       }),
       m_config(cfg) {}
 
@@ -176,11 +177,14 @@ bool WifiService::connectWithCredentials(const std::string& ssid, const std::str
                  ssid.c_str(), sizeof(wifi_config.sta.ssid));
     std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password),
                  password.c_str(), sizeof(wifi_config.sta.password));
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    wifi_config.sta.threshold.authmode = password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.pmf_cfg.capable = true;
+    wifi_config.sta.pmf_cfg.required = false;
 
     // Keep AP active (APSTA) while attempting to connect, so client can monitor progress
     esp_wifi_set_mode(WIFI_MODE_APSTA);
-    esp_wifi_disconnect();
     esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
     EmbeddedSysDb::getInstance().mutate([&ssid](SystemState& s) {
@@ -243,7 +247,11 @@ bool WifiService::begin() {
                      activeSsid.c_str(), sizeof(wifi_config.sta.ssid));
         std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password),
                      activePassword.c_str(), sizeof(wifi_config.sta.password));
-        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        wifi_config.sta.threshold.authmode = activePassword.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+        wifi_config.sta.pmf_cfg.capable = true;
+        wifi_config.sta.pmf_cfg.required = false;
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
@@ -269,31 +277,19 @@ bool WifiService::begin() {
 void WifiService::onStateChanged(ComponentMask changed, const SystemState& snap) {
     if (!(changed & COMP::SYSTEM)) return;
 
-    if (changed & BIT_SYSTEM::APPLY_CREDS) {
-        if (snap.system.wifi_apply_creds) {
-            std::string ssid = snap.system.wifi_ssid;
-            std::string pass = snap.system.wifi_password;
+    if (snap.system.wifi_apply_creds) {
+        std::string ssid = snap.system.wifi_ssid;
+        std::string pass = snap.system.wifi_password;
 
-            // Clear trigger latch in SysDb
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.system.wifi_apply_creds = false;
-            });
+        // Clear trigger latch in SysDb
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.system.wifi_apply_creds = false;
+        });
 
-            if (!ssid.empty()) {
-                LOGI_WIFI("SysDb triggered Wi-Fi connect request to SSID '%s'", ssid.c_str());
-                connectWithCredentials(ssid, pass);
-            }
+        if (!ssid.empty()) {
+            LOGI_WIFI("SysDb triggered Wi-Fi connect request to SSID '%s'", ssid.c_str());
+            connectWithCredentials(ssid, pass);
         }
-    }
-}
-
-void WifiService::run() {
-    while (m_running) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (!m_running) break;
-
-        SystemState snap = EmbeddedSysDb::getInstance().snapshot();
-        onStateChanged(COMP::SYSTEM, snap);
     }
 }
 
@@ -326,6 +322,9 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
         } else {
             LOGW_WIFI("Max retries reached (%d) — falling back to SoftAP captive portal",
                       self->m_config.max_retries);
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.system.network_state = NetworkState::Failed;
+            });
             self->startSoftAp();
         }
 
