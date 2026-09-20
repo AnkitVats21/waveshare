@@ -35,6 +35,7 @@ set(srcs
             # Services
             "services/network/WifiService.cpp"
             "services/network/HttpFileServerService.cpp"
+            "services/network/StarWsServer.cpp"
             "services/config_manager/config_manager.cpp"
             "services/config_manager/config_generated.cpp"
             "services/storage/StorageService.cpp"

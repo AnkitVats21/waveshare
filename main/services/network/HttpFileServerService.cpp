@@ -11,6 +11,7 @@
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/CatalogDB.h"
 #include "media_player/NexusPlayer.h"
+#include "services/network/StarWsServer.h"
 
 #include <ArduinoJson.h>
 #include <esp_log.h>
@@ -116,6 +117,7 @@ bool HttpFileServerService::startServer() {
     }
 
     registerUriHandlers();
+    StarWsServer::getInstance().registerHandler(m_server);
     ESP_LOGI(TAG, "Waveshare Control Hub & Web Dashboard listening on port %d", config.server_port);
     return true;
 }
@@ -123,6 +125,7 @@ bool HttpFileServerService::startServer() {
 void HttpFileServerService::stopServer() {
     if (m_server != nullptr) {
         ESP_LOGI(TAG, "Stopping HTTP Server...");
+        StarWsServer::getInstance().unregisterHandler();
         httpd_stop(m_server);
         m_server = nullptr;
     }

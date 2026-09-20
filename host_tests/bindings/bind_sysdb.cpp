@@ -1,6 +1,7 @@
 #include "bindings.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/WalTypes.h"
+#include "core_sysdb/StarProtocol.h"
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -289,4 +290,49 @@ void init_sysdb(nb::module_& m) {
         .def("hot_turn_complete_pending", &EmbeddedSysDb::hotTurnCompletePending)
         .def("hot_companion_connected", &EmbeddedSysDb::hotCompanionConnected)
         .def("hot_companion_settled", &EmbeddedSysDb::hotCompanionSettled);
+
+    // ── StarProtocol Wire Framing ──
+    nb::enum_<StarProtocol::MsgType>(m, "MsgType")
+        .value("WAL_BATCH", StarProtocol::MsgType::WAL_BATCH)
+        .value("REQ_CATCHUP", StarProtocol::MsgType::REQ_CATCHUP)
+        .value("SNAPSHOT_START", StarProtocol::MsgType::SNAPSHOT_START)
+        .value("SNAPSHOT_FIELD", StarProtocol::MsgType::SNAPSHOT_FIELD)
+        .value("SNAPSHOT_END", StarProtocol::MsgType::SNAPSHOT_END)
+        .value("CMD_SET_FIELD", StarProtocol::MsgType::CMD_SET_FIELD)
+        .value("CMD_EXEC_ACTION", StarProtocol::MsgType::CMD_EXEC_ACTION)
+        .value("CMD_ACK", StarProtocol::MsgType::CMD_ACK)
+        .export_values();
+
+    m.def("build_catchup_req", [](uint32_t since_seq) {
+        auto vec = StarProtocol::buildCatchupReqFrame(since_seq);
+        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
+    });
+
+    m.def("build_set_field_cmd", [](ComponentId comp, uint8_t field_tag, nb::bytes data) {
+        auto vec = StarProtocol::buildSetFieldCmdFrame(
+            static_cast<uint8_t>(comp), field_tag,
+            reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
+        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
+    });
+
+    m.def("build_exec_action_cmd", [](MediaCmdId cmd, uint32_t nonce, uint32_t param, const std::string& data) {
+        auto vec = StarProtocol::buildExecActionCmdFrame(
+            static_cast<uint8_t>(cmd), nonce, param, data.c_str());
+        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
+    });
+
+    m.def("parse_frame_header", [](nb::bytes data) {
+        if (data.size() < StarProtocol::HEADER_SIZE) {
+            throw std::runtime_error("Buffer too small for StarProtocol header");
+        }
+        const auto* p = reinterpret_cast<const uint8_t*>(data.c_str());
+        StarProtocol::MsgType type = static_cast<StarProtocol::MsgType>(p[0]);
+        uint16_t length = StarProtocol::readU16BE(&p[1]);
+        return std::make_pair(type, length);
+    });
+
+    m.def("build_ack_frame", [](WriteResult status, uint32_t seq) {
+        auto vec = StarProtocol::buildAckFrame(status, seq);
+        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
+    });
 }
