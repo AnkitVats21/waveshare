@@ -44,10 +44,8 @@ void SpeakerPlaybackTask::stop() {
 //
 // Mixes Voice (Gemini 24kHz upsampled to 44.1kHz), Alert (44.1kHz chimes/tones),
 // and Media (44.1kHz music) with smooth ducking gain interpolation, all in a
-// 44.1kHz mixer domain shared with the companion I2S write. The onboard codec
-// output is additionally downsampled to the local hardware rate (32kHz) right
-// before each esp_codec_dev_write(), since the companion/A2DP link must stay
-// at 44.1kHz while the local speaker runs at 32kHz.
+// 44.1kHz mixer domain. The mixed track is then downsampled to the local
+// hardware rate (32kHz) right before each esp_codec_dev_write().
 // ─────────────────────────────────────────────────────────────────────────────
 void SpeakerPlaybackTask::run() {
   esp_codec_dev_handle_t device = m_device;
@@ -69,7 +67,7 @@ void SpeakerPlaybackTask::run() {
   };
 
   LOGI_HAL("Speaker Audio Multi-Track Mixer Active (mixer=%u Hz, onboard=%u Hz) — Voice/Alert/Media.",
-           (unsigned)COMPANION_SAMPLE_RATE, (unsigned)LOCAL_SAMPLE_RATE);
+           (unsigned)MIXER_SAMPLE_RATE, (unsigned)LOCAL_SAMPLE_RATE);
 
   LinearResampler resampler;
 
@@ -84,22 +82,19 @@ void SpeakerPlaybackTask::run() {
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   int16_t *media_pcm = (int16_t *)heap_caps_malloc(
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  int16_t *bt_stereo_buffer = (int16_t *)heap_caps_malloc(
-      MAX_AUDIO_CHUNK_SAMPLES * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   int16_t *local_mono_44k = (int16_t *)heap_caps_malloc(
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   int16_t *local_mono_32k = (int16_t *)heap_caps_malloc(
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
   if (!expanded_buffer || !silence_buffer || !voice_pcm || !alert_pcm || !media_pcm ||
-      !bt_stereo_buffer || !local_mono_44k || !local_mono_32k) {
+      !local_mono_44k || !local_mono_32k) {
     LOGE_HAL("Failed to allocate Multi-Track Mixer buffers!");
     if (expanded_buffer)   heap_caps_free(expanded_buffer);
     if (silence_buffer)    heap_caps_free(silence_buffer);
     if (voice_pcm)         heap_caps_free(voice_pcm);
     if (alert_pcm)         heap_caps_free(alert_pcm);
     if (media_pcm)         heap_caps_free(media_pcm);
-    if (bt_stereo_buffer)  heap_caps_free(bt_stereo_buffer);
     if (local_mono_44k)    heap_caps_free(local_mono_44k);
     if (local_mono_32k)    heap_caps_free(local_mono_32k);
     m_running = false;
@@ -111,7 +106,7 @@ void SpeakerPlaybackTask::run() {
 
   uint32_t sustained_empty = 0;
 
-  constexpr uint32_t NATIVE_RATE = COMPANION_SAMPLE_RATE;
+  constexpr uint32_t NATIVE_RATE = MIXER_SAMPLE_RATE;
   constexpr uint32_t LOCAL_RATE = LOCAL_SAMPLE_RATE;
   constexpr uint32_t VOICE_SRC_RATE = 24000;
   const size_t target_samples = samplesForDurationMs(NATIVE_RATE, TARGET_FRAME_MS);
@@ -236,14 +231,11 @@ void SpeakerPlaybackTask::run() {
         else if (mix < -32768) mix = -32768;
 
         int16_t s16 = static_cast<int16_t>(mix);
-        bt_stereo_buffer[2 * i + 0] = s16;
-        bt_stereo_buffer[2 * i + 1] = s16;
         local_mono_44k[i] = s16;
       }
 
       // Downsample the mixed mono track to the local hardware rate, then
-      // expand to 32-bit stereo DMA frames for the onboard codec only.
-      // The companion I2S write below stays on the 44.1kHz mix untouched.
+      // expand to 32-bit stereo DMA frames for the onboard codec.
       size_t local_frames = computeResampledFrames(frames_to_write, NATIVE_RATE, LOCAL_RATE);
       if (local_frames == 0) local_frames = 1;
       if (local_frames > MAX_AUDIO_CHUNK_SAMPLES) local_frames = MAX_AUDIO_CHUNK_SAMPLES;
@@ -254,106 +246,20 @@ void SpeakerPlaybackTask::run() {
         expanded_buffer[2 * i + 1] = sample32; // R
       }
 
-#if CONFIG_BT_COMPANION_ENABLE
-      bool companion_active = m_companion_sink && m_companion_sink->isInitialized();
-
-      // 1. Always feed real audio to companion I2S master if initialized.
-      // Companion firmware handles disconnected state internally by discarding frames (PcmSource::mute).
-      if (m_companion_sink && m_companion_sink->isInitialized()) {
-        size_t written = m_companion_sink->writeSamples(bt_stereo_buffer, frames_to_write, 1000);
-        if (written < frames_to_write) {
-          ESP_LOGW("SpeakerPlayback", "Companion sink write deficit: wrote %u of %u frames",
-                   (unsigned)written, (unsigned)frames_to_write);
-        }
-      }
-
-      // 2. Route onboard speaker based on policy and companion status
-#if defined(CONFIG_BT_COMPANION_ROUTING_DUAL_OUTPUT)
-      int ret = writeAudio(expanded_buffer, local_frames * 2 * sizeof(int32_t));
-      if (ret != ESP_CODEC_DEV_OK) {
-        vTaskDelay(pdMS_TO_TICKS(5));
-      }
-#else
-      // Companion Only mode: Only feed onboard DAC when companion is NOT active (fallback mode).
-      // Decoupling the two hardware I2S writes prevents dual-DMA clock skew and eliminates write deficits!
-      if (!companion_active) {
-        int ret = writeAudio(expanded_buffer, local_frames * 2 * sizeof(int32_t));
-        if (ret != ESP_CODEC_DEV_OK) {
-          vTaskDelay(pdMS_TO_TICKS(5));
-        }
-      }
-#endif
-
-      // Verification log: Every 2s of active audio
-      static int64_t last_active_log_ms = 0;
-      int64_t now_ms = esp_timer_get_time() / 1000;
-      if (now_ms - last_active_log_ms > 2000) {
-        int16_t peak = 0;
-        for (size_t k = 0; k < frames_to_write; ++k) {
-          int16_t v = std::abs(bt_stereo_buffer[2 * k]);
-          if (v > peak) peak = v;
-        }
-        ESP_LOGD("SpeakerPlayback",
-                 "[PLAYBACK_STATUS] Active audio -> Companion I2S: %u frames (peak_amp=%d), onboard_spk=%s",
-                 (unsigned)frames_to_write, (int)peak, companion_active ? "MUTED" : "ACTIVE");
-        last_active_log_ms = now_ms;
-      }
-#else
       int ret = writeAudio(expanded_buffer, local_frames * 2 * sizeof(int32_t));
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(10));
       }
-#endif
 
     } else {
       // All tracks starved/idle — output silence to keep I2S DMA alive.
-      // Companion silence cadence stays in the 44.1kHz mixer domain;
-      // onboard silence is sized separately for the local hardware rate so
-      // idle-loop pacing doesn't drift once the onboard bus clocks down.
       size_t local_silence_samples = samplesForDurationMs(LOCAL_RATE, EMPTY_FILL_MS);
       if (local_silence_samples > MAX_SILENCE_SAMPLES) local_silence_samples = MAX_SILENCE_SAMPLES;
 
-#if CONFIG_BT_COMPANION_ENABLE
-      bool companion_active = m_companion_sink && m_companion_sink->isInitialized();
-
-      // Feed the companion a full-size zero chunk every iteration — same cadence
-      // and granularity as the active path — so its I2S RX and SPSC ring stay
-      // primed and it holds PLAYING at the buffer setpoint. Short intermittent
-      // bursts let the companion starve between them → repeated
-      // "Sustained starvation - re-arming prebuffer" on its side.
-      if (m_companion_sink && m_companion_sink->isInitialized()) {
-        std::memset(bt_stereo_buffer, 0, target_samples * 2 * sizeof(int16_t));
-        m_companion_sink->writeSamples(bt_stereo_buffer, target_samples, 1000);
-      }
-      static int64_t last_idle_log_ms = 0;
-      int64_t idle_now_ms = esp_timer_get_time() / 1000;
-      if (idle_now_ms - last_idle_log_ms > 5000) {
-        ESP_LOGD("SpeakerPlayback",
-                 "[PLAYBACK_STATUS] Idle -> continuous silence to companion (%u frames), onboard_spk=%s",
-                 (unsigned)target_samples, companion_active ? "MUTED" : "ACTIVE");
-        last_idle_log_ms = idle_now_ms;
-      }
-
-#if !defined(CONFIG_BT_COMPANION_ROUTING_DUAL_OUTPUT)
-      // In Companion-only mode, don't write to onboard codec during idle if companion is active
-      if (!companion_active) {
-        int ret = writeAudio(silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
-        if (ret != ESP_CODEC_DEV_OK) {
-          vTaskDelay(pdMS_TO_TICKS(10));
-        }
-      }
-#else
       int ret = writeAudio(silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(10));
       }
-#endif
-#else
-      int ret = writeAudio(silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
-      if (ret != ESP_CODEC_DEV_OK) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-      }
-#endif
       sustained_empty++;
 
       if (asst_speaking && sustained_empty >= 2 && !turn_pending) {
@@ -382,7 +288,6 @@ void SpeakerPlaybackTask::run() {
   heap_caps_free(voice_pcm);
   heap_caps_free(alert_pcm);
   heap_caps_free(media_pcm);
-  heap_caps_free(bt_stereo_buffer);
   heap_caps_free(local_mono_44k);
   heap_caps_free(local_mono_32k);
 }

@@ -14,9 +14,9 @@
 namespace HotAudioBit {
     static constexpr uint32_t ASST_SPEAKING      = (1u << 0);
     static constexpr uint32_t TURN_COMPLETE_PEND = (1u << 1);
-    static constexpr uint32_t COMPANION_CONN     = (1u << 2);
-    static constexpr uint32_t COMPANION_SETTLED  = (1u << 3);
-    static constexpr uint32_t BT_CONNECTED       = COMPANION_CONN | COMPANION_SETTLED;
+    static constexpr uint32_t BLUETOOTH_CONN     = (1u << 2);
+    static constexpr uint32_t BLUETOOTH_SETTLED  = (1u << 3);
+    static constexpr uint32_t BT_CONNECTED       = BLUETOOTH_CONN | BLUETOOTH_SETTLED;
 }
 
 /**
@@ -77,11 +77,11 @@ public:
     bool hotTurnCompletePending() const {
         return (hotAudioFlags() & HotAudioBit::TURN_COMPLETE_PEND) != 0;
     }
-    bool hotCompanionConnected() const {
-        return (hotAudioFlags() & HotAudioBit::COMPANION_CONN) != 0;
+    bool hotBluetoothConnected() const {
+        return (hotAudioFlags() & HotAudioBit::BLUETOOTH_CONN) != 0;
     }
-    bool hotCompanionSettled() const {
-        return (hotAudioFlags() & HotAudioBit::COMPANION_SETTLED) != 0;
+    bool hotBluetoothSettled() const {
+        return (hotAudioFlags() & HotAudioBit::BLUETOOTH_SETTLED) != 0;
     }
 
     // Hot-path single-field getters
@@ -104,10 +104,6 @@ public:
     bool                bluetoothConnected()   const;
     MediaOutputTarget   mediaOutputTarget()    const;
     MediaPendingCommand mediaPendingCommand()  const;
-
-    // Backward-compatibility aliases
-    bool btCompanionConnected()   const { return bluetoothConnected(); }
-    bool btCompanionLinkSettled() const { return bluetoothConnected(); }
 
     // ── STAR Replication API ──────────────────────────────────────────────────
 

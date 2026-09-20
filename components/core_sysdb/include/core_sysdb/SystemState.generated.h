@@ -24,7 +24,6 @@ namespace COMP {
     static constexpr ComponentMask ALARM        = 0x00400000u;
     static constexpr ComponentMask BLUETOOTH    = 0x00800000u;
     static constexpr ComponentMask MEDIA        = 0x01000000u;
-    static constexpr ComponentMask BT_COMPANION = BLUETOOTH;
     static constexpr ComponentMask ALL          = 0xFFFF0000u;
 }
 
@@ -101,7 +100,6 @@ namespace BIT_BLUETOOTH {
     static constexpr ComponentMask STATUS           = (1u << 3);
     static constexpr ComponentMask READY            = CONNECTED;
 }
-namespace BIT_BT_COMPANION = BIT_BLUETOOTH;
 
 namespace BIT_MEDIA {
     static constexpr ComponentMask STATE            = (1u << 0);

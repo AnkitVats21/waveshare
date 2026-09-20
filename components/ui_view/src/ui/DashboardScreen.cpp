@@ -42,25 +42,14 @@ DashboardScreen::DashboardScreen(ui_view::IUiDataSource& data_source)
     lv_obj_set_flex_align(status_group, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status_group, metrics.spacing_md, 0);
 
-    // Tappable status icons replace the dedicated Network page -- Wi-Fi
-    // and companion-board link state are now visible on every page
-    // instead of needing a swipe to check; tap either icon for detail.
+    // Tappable status icon replaces the dedicated Network page -- Wi-Fi
+    // state is now visible on every page instead of needing a swipe to
+    // check; tap the icon for detail.
     m_wifi_icon = lv_label_create(status_group);
     lv_obj_set_style_text_font(m_wifi_icon, metrics.font_lg, 0);
     lv_label_set_text(m_wifi_icon, LV_SYMBOL_WIFI);
     lv_obj_add_flag(m_wifi_icon, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(m_wifi_icon, onWifiIconClicked, LV_EVENT_CLICKED, this);
-
-    m_companion_icon = lv_label_create(status_group);
-    lv_obj_set_style_text_font(m_companion_icon, metrics.font_lg, 0);
-    lv_label_set_text(m_companion_icon, LV_SYMBOL_BLUETOOTH);
-    lv_obj_add_flag(m_companion_icon, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(m_companion_icon, onCompanionIconClicked, LV_EVENT_CLICKED, this);
-    // Placeholder -- no live link-status field, see PlaceholderData.h.
-    lv_obj_set_style_text_color(m_companion_icon,
-        ph::kCompanionBoardLinked ? theme::kGood : theme::kBad, 0);
-    m_companion_detail_text = std::string(ph::kCompanionBoardLabel) + ": " +
-        (ph::kCompanionBoardLinked ? "Linked" : "Offline");
 
     lv_obj_t* temp_label = lv_label_create(topbar);
     lv_obj_set_style_text_color(temp_label, theme::kTextMuted, 0);
@@ -250,11 +239,6 @@ void DashboardScreen::onLedRowClicked(lv_event_t* e) {
 void DashboardScreen::onWifiIconClicked(lv_event_t* e) {
     auto* self = static_cast<DashboardScreen*>(lv_event_get_user_data(e));
     self->m_status_sheet.show("Wi-Fi", self->m_wifi_detail_text);
-}
-
-void DashboardScreen::onCompanionIconClicked(lv_event_t* e) {
-    auto* self = static_cast<DashboardScreen*>(lv_event_get_user_data(e));
-    self->m_status_sheet.show("Companion board", self->m_companion_detail_text);
 }
 
 } // namespace lvgl_sim::ui

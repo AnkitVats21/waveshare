@@ -14,16 +14,6 @@
 
 namespace lvgl_sim::ui::placeholder {
 
-// ---- Network page ----
-
-// The real device is a two-board system: this ESP32-S3 host talks to a
-// companion ESP32-WROOM (Bluetooth A2DP source) over a control UART.
-// There's no live link-status field surfaced in UiSnapshot yet -- a real
-// value needs the UART link layer to expose a "last heartbeat ok" bit
-// through EmbeddedSysDb -> UiSnapshot.
-constexpr bool kCompanionBoardLinked = true;
-constexpr const char* kCompanionBoardLabel = "ESP32-WROOM (A2DP)";
-
 // ---- Ambient page ----
 
 // No weather integration exists yet; would need a backend HTTP fetch

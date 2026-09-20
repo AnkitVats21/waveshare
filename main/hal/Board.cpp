@@ -90,9 +90,6 @@ bool Board::begin() {
   m_leds.clear();
   ESP_LOGI(TAG, "LED self-test complete (GPIO %d).", (int)LED_STRIP_GPIO_PIN);
 
-  // Companion (ESP32-WROOM) audio transport is no longer wired here — it moves to
-  // a Wi-Fi/WebSocket bridge (DB A, opusBridge). See .agent/opus-bridge-part1-host-design.md.
-
   m_initialized = true;
   ESP_LOGI(TAG, "Board hardware ready.");
   return true;

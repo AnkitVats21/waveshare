@@ -8,8 +8,6 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "hal/audio/AudioHal.h"
-#include "audio_core/ICompanionAudioSink.h"
-#include "audio_core/ICompanionControl.h"
 #include "services/BufferManager.h"
 
 static auto &sysdb = EmbeddedSysDb::getInstance();
@@ -18,9 +16,7 @@ static auto &sysdb = EmbeddedSysDb::getInstance();
 // Construction
 // ─────────────────────────────────────────────────────────────────────────────
 
-AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles,
-                           ICompanionAudioSink* companion_sink,
-                           ICompanionControl* companion_ctrl)
+AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles)
     : ReactorTask({
           "audio_svc",
           ThreadConfig::StackSize::STACK_NORMAL,
@@ -30,8 +26,6 @@ AudioService::AudioService(AudioHal& hal, const HardwareAudioHandles& handles,
       })
     , m_hal(hal)
     , m_handles(handles)
-    , m_companion_sink(companion_sink)
-    , m_companion_ctrl(companion_ctrl)
 {}
 
 AudioService::~AudioService() {
@@ -59,12 +53,6 @@ bool AudioService::begin() {
     }
 
     m_speaker_task = std::make_unique<SpeakerPlaybackTask>();
-    if (m_companion_sink) {
-        m_speaker_task->setCompanionSink(m_companion_sink);
-    }
-    if (m_companion_ctrl) {
-        AudioOrchestrator::getInstance().setCompanionControl(m_companion_ctrl);
-    }
     m_speaker_task->start(m_handles.play_dev);
     AudioOrchestrator::getInstance().setSpeakerPlayback(m_speaker_task.get());
 
@@ -89,8 +77,8 @@ bool AudioService::begin() {
     m_hal.setRecordGain(snap.audio.mic_gain_db);
     m_last_applied_mic_enabled = snap.audio.mic_enabled;
 
-    LOGI_AUDIO("AudioService operational — local codec %lu Hz, companion %lu Hz.",
-               (unsigned long)snap.audio.sample_rate, (unsigned long)COMPANION_SAMPLE_RATE);
+    LOGI_AUDIO("AudioService operational — local codec %lu Hz, mixer %lu Hz.",
+               (unsigned long)snap.audio.sample_rate, (unsigned long)MIXER_SAMPLE_RATE);
     return true;
 }
 

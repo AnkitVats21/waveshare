@@ -18,10 +18,10 @@
 
 namespace lvgl_sim::ui {
 
-// Home screen: a topbar (Wi-Fi/companion status icons + temperature,
+// Home screen: a topbar (Wi-Fi status icon + temperature,
 // tappable for detail) above a 4-page Music/System/Ambient/Controls
 // GroupCarousel + the LedColorSheet popup. There's no dedicated Network
-// page -- Wi-Fi/companion status live in the always-visible topbar
+// page -- Wi-Fi status lives in the always-visible topbar
 // instead, so a value that used to need a swipe-to-check page is visible
 // on every page. Music is one carousel page (title/artist, transport,
 // volume) rather than a docked mini-player bar repeated on every page
@@ -50,10 +50,8 @@ private:
 
     // Topbar status icons + their shared detail popup
     lv_obj_t* m_wifi_icon = nullptr;
-    lv_obj_t* m_companion_icon = nullptr;
     widgets::DetailSheet m_status_sheet;
     std::string m_wifi_detail_text;
-    std::string m_companion_detail_text;
 
     // System page
     widgets::StatRow m_cpu_row;
@@ -78,7 +76,6 @@ private:
     static void onAssistantRowClicked(lv_event_t* e);
     static void onLedRowClicked(lv_event_t* e);
     static void onWifiIconClicked(lv_event_t* e);
-    static void onCompanionIconClicked(lv_event_t* e);
 };
 
 } // namespace lvgl_sim::ui

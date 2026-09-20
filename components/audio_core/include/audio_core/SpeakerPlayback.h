@@ -22,8 +22,6 @@ DECLARE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 #include "common/TaskBase.h"
 #include "common/thread_config.h"
 
-#include "audio_core/ICompanionAudioSink.h"
-
 /**
  * @brief Output interface for mixed audio PCM samples.
  * Used for DMA output on hardware, or mock buffer output for host Python tests.
@@ -54,11 +52,6 @@ public:
   void start(esp_codec_dev_handle_t device, IAudioSink* customSink = nullptr);
 
   /**
-   * @brief Set optional companion audio sink (e.g. BtPlayerI2s)
-   */
-  void setCompanionSink(ICompanionAudioSink* sink) { m_companion_sink = sink; }
-
-  /**
    * @brief Cleanly stop the task
    */
   void stop() override;
@@ -76,7 +69,7 @@ public:
           m_media_gain = targetGain;
           m_media_ramp_step = 0.0f;
       } else {
-          uint32_t ramp_samples = (COMPANION_SAMPLE_RATE * rampMs) / 1000;
+          uint32_t ramp_samples = (MIXER_SAMPLE_RATE * rampMs) / 1000;
           if (ramp_samples == 0) ramp_samples = 1;
           m_media_ramp_step = (m_target_media_gain - m_media_gain) / (float)ramp_samples;
       }
@@ -107,7 +100,6 @@ private:
   bool                      m_buffering         = true;
   esp_codec_dev_handle_t    m_device            = nullptr;
   IAudioSink*               m_custom_sink       = nullptr;
-  ICompanionAudioSink*      m_companion_sink    = nullptr;
 
   // ── Mixer Gains ───────────────────────────────────────────────────────────
   volatile float            m_media_gain        = 1.0f;

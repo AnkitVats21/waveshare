@@ -7,8 +7,6 @@
 
 class AudioHal;
 class SpeakerPlaybackTask;
-class ICompanionAudioSink;
-class ICompanionControl;
 
 /**
  * @brief Unified Audio Service — ReactorTask + IWakeWordListener.
@@ -25,14 +23,10 @@ class ICompanionControl;
  *
  * Injected:
  *   AudioHal& — hardware driver (I2S + codecs)
- *   ICompanionAudioSink* — optional external Bluetooth companion audio sink
- *   ICompanionControl*   — optional external Bluetooth companion transport control
  */
 class AudioService : public ReactorTask, public IWakeWordListener {
 public:
-    explicit AudioService(AudioHal& hal, const HardwareAudioHandles& handles,
-                          ICompanionAudioSink* companion_sink = nullptr,
-                          ICompanionControl* companion_ctrl = nullptr);
+    explicit AudioService(AudioHal& hal, const HardwareAudioHandles& handles);
     ~AudioService() override;
 
     bool begin();
@@ -62,8 +56,6 @@ private:
     void returnToWakeMode();
 
     std::unique_ptr<SpeakerPlaybackTask> m_speaker_task;
-    ICompanionAudioSink*                 m_companion_sink = nullptr;
-    ICompanionControl*                   m_companion_ctrl = nullptr;
 
     static constexpr const char* TAG = "AudioSvc";
 };

@@ -12,8 +12,6 @@ enum MediaPlaybackState : uint8_t {
     ERROR_STATE = 5
 }
 
-alias COMP::BT_COMPANION = BLUETOOTH
-
 component System id=0 mask=0x00010000 {
     field wifi_connected: bool = false [readonly, bit=0:WIFI_CONNECTED]
     field network_state: NetworkState = NetworkState::Disconnected [readonly, bit=2:NETWORK_STATE]
@@ -79,7 +77,6 @@ component Alarm id=6 mask=0x00400000 {
 
 component Bluetooth id=7 mask=0x00800000 {
     alias READY = CONNECTED
-    alias BIT_BT_COMPANION = BIT_BLUETOOTH
     field connected: bool = false [piorigin, bit=0:CONNECTED]
     field device_name: string[32] = "" [piorigin, bit=1:DEVICE_NAME]
     field mac_address: string[18] = "" [piorigin, bit=2:MAC_ADDRESS]

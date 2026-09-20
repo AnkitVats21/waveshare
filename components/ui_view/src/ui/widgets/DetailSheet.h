@@ -7,10 +7,10 @@
 namespace lvgl_sim::ui::widgets {
 
 // Generic modal popup: title + a body text line + a single Close button.
-// One shared instance is reused for every topbar status icon (Wi-Fi,
-// companion board, ...) since only one can be open at a time -- show()
-// just replaces the title/body text and opens it. Mirrors LedColorSheet's
-// overlay/sheet mechanics, minus the swatch grid.
+// One shared instance is reused for every topbar status icon (Wi-Fi, ...)
+// since only one can be open at a time -- show() just replaces the
+// title/body text and opens it. Mirrors LedColorSheet's overlay/sheet
+// mechanics, minus the swatch grid.
 class DetailSheet {
 public:
     void create(lv_obj_t* screen_parent);

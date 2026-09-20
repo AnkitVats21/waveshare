@@ -185,7 +185,7 @@ bool EmbeddedSysDb::cacheDownloads() const {
 }
 
 bool EmbeddedSysDb::bluetoothConnected() const {
-    return hotCompanionConnected();
+    return hotBluetoothConnected();
 }
 
 MediaOutputTarget EmbeddedSysDb::mediaOutputTarget() const {

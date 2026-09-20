@@ -103,8 +103,6 @@ extern "C" void app_main(void) {
     };
 
     // 5. Construct ReactorTask services
-    // Companion (ESP32-WROOM) audio transport is no longer wired over UART/I2S here —
-    // it moves to a Wi-Fi/WebSocket bridge (DB A, opusBridge). See .agent/opus-bridge-part1-host-design.md.
     static AudioService         audio_svc(audio_hal, handles);
     static LedService           led_svc(led_strip);
     static AssistantService     assistant_svc;

@@ -102,3 +102,4 @@ web-app/dist/
 web-app/.vite/
 
 .agent/
+.cache/

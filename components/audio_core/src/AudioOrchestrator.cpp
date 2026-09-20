@@ -25,22 +25,6 @@ bool AudioOrchestrator::begin() {
     return true;
 }
 
-void AudioOrchestrator::updateCompanionPlaybackState() {
-#if CONFIG_BT_COMPANION_ENABLE
-    bool any_active = m_voice_active || m_alert_active || m_media_active || m_alarm_active;
-    if (any_active != m_last_companion_playing) {
-        m_last_companion_playing = any_active;
-        if (m_companion_ctrl && m_companion_ctrl->isInitialized()) {
-            if (any_active) {
-                m_companion_ctrl->sendPlay();
-            } else {
-                m_companion_ctrl->sendPause();
-            }
-        }
-    }
-#endif
-}
-
 void AudioOrchestrator::addObserver(IAudioFocusObserver* observer) {
     if (!observer) return;
     if (xSemaphoreTake(m_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
@@ -83,7 +67,6 @@ void AudioOrchestrator::notifyWakeWordDetected() {
 void AudioOrchestrator::notifyVoiceStarted() {
     ESP_LOGI(TAG, "notifyVoiceStarted: Assistant voice starting");
     m_voice_active = true;
-    updateCompanionPlaybackState();
     if (m_media_active) {
         m_media_paused_by_voice = true;
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::LOSS_PAUSE);
@@ -93,7 +76,6 @@ void AudioOrchestrator::notifyVoiceStarted() {
 void AudioOrchestrator::notifyVoiceEnded() {
     ESP_LOGI(TAG, "notifyVoiceEnded: Assistant voice finished");
     m_voice_active = false;
-    updateCompanionPlaybackState();
     if (m_media_paused_by_voice) {
         m_media_paused_by_voice = false;
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::GAIN);
@@ -105,7 +87,6 @@ void AudioOrchestrator::notifyVoiceEnded() {
 void AudioOrchestrator::notifyAlertStarted() {
     ESP_LOGI(TAG, "notifyAlertStarted: Alert chime starting");
     m_alert_active = true;
-    updateCompanionPlaybackState();
     if (m_media_active && !m_voice_active) {
         duckMedia(0.20f, 50);
         m_media_ducked = true;
@@ -115,7 +96,6 @@ void AudioOrchestrator::notifyAlertStarted() {
 void AudioOrchestrator::notifyAlertEnded() {
     ESP_LOGI(TAG, "notifyAlertEnded: Alert chime finished");
     m_alert_active = false;
-    updateCompanionPlaybackState();
     if (m_media_ducked && !m_voice_active && !m_media_paused_by_voice) {
         unduckMedia(100);
         m_media_ducked = false;
@@ -125,7 +105,6 @@ void AudioOrchestrator::notifyAlertEnded() {
 void AudioOrchestrator::notifyAlarmStarted() {
     ESP_LOGI(TAG, "notifyAlarmStarted: Alarm ringing");
     m_alarm_active = true;
-    updateCompanionPlaybackState();
     if (m_media_active) {
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::LOSS_PAUSE);
     }
@@ -134,7 +113,6 @@ void AudioOrchestrator::notifyAlarmStarted() {
 void AudioOrchestrator::notifyAlarmEnded() {
     ESP_LOGI(TAG, "notifyAlarmEnded: Alarm stopped");
     m_alarm_active = false;
-    updateCompanionPlaybackState();
     if (!m_voice_active) {
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::GAIN);
         unduckMedia(100);
@@ -144,7 +122,6 @@ void AudioOrchestrator::notifyAlarmEnded() {
 void AudioOrchestrator::notifyMediaStarted() {
     ESP_LOGI(TAG, "notifyMediaStarted: Media playback active");
     m_media_active = true;
-    updateCompanionPlaybackState();
     if (m_voice_active) {
         // Voice is running; immediately pause media
         m_media_paused_by_voice = true;
@@ -167,7 +144,6 @@ void AudioOrchestrator::notifyMediaStopped() {
     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
         s.media.is_ducked = false;
     });
-    updateCompanionPlaybackState();
 }
 
 void AudioOrchestrator::duckMedia(float targetGain, uint32_t rampMs) {
