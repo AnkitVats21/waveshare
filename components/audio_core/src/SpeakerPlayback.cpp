@@ -255,6 +255,8 @@ void SpeakerPlaybackTask::run() {
       }
 
 #if CONFIG_BT_COMPANION_ENABLE
+      bool companion_active = m_companion_sink && m_companion_sink->isInitialized();
+
       // 1. Always feed real audio to companion I2S master if initialized.
       // Companion firmware handles disconnected state internally by discarding frames (PcmSource::mute).
       if (m_companion_sink && m_companion_sink->isInitialized()) {
@@ -312,6 +314,8 @@ void SpeakerPlaybackTask::run() {
       if (local_silence_samples > MAX_SILENCE_SAMPLES) local_silence_samples = MAX_SILENCE_SAMPLES;
 
 #if CONFIG_BT_COMPANION_ENABLE
+      bool companion_active = m_companion_sink && m_companion_sink->isInitialized();
+
       // Feed the companion a full-size zero chunk every iteration — same cadence
       // and granularity as the active path — so its I2S RX and SPSC ring stay
       // primed and it holds PLAYING at the buffer setpoint. Short intermittent
