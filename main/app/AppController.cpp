@@ -9,6 +9,7 @@
 #include "services/time/TimeSyncHelper.h"
 #include "services/storage/StorageService.h"
 #include "services/alarm/AlarmService.h"
+#include "services/network/StarWsClient.h"
 #include "app/mqtt/MqttService.h"
 
 #include "common/AppLogger.h"
@@ -46,6 +47,9 @@ bool AppController::begin() {
     GeminiProtocol::getInstance().setToolCallHandler(handleGeminiToolCall, this);
 
     m_wifi_connected = EmbeddedSysDb::getInstance().snapshot().system.wifi_connected;
+
+    // Start STAR WebSocket replication client
+    Services::StarWsClient::getInstance().begin();
 
     LOGI_SYSTEM("AppController initialized.");
     return true;
