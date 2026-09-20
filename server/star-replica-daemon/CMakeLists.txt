@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(
     include
-    ../../components/core_sysdb/include
+    vendor
 )
 
 find_package(Threads REQUIRED)
