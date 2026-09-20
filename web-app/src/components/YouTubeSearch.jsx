@@ -1,35 +1,40 @@
 import React, { useState } from 'react';
-import { Search, Play, Music, Radio, Loader2 } from 'lucide-react';
-import { searchYouTube, resolveStreamUrl, playDirectOnEsp } from '../api';
+import { Search, Play, Loader2 } from 'lucide-react';
+import { searchYouTube, resolveStreamUrl } from '../lib/api';
 
 const QUICK_VIBES = [
-  { label: '🎧 Lofi Chill', query: 'Lofi hip hop beats to relax' },
-  { label: '🌆 Synthwave', query: 'Synthwave retrowave radio' },
-  { label: '🎸 Coldplay', query: 'Coldplay top hits' },
-  { label: '🎬 Hans Zimmer', query: 'Hans Zimmer cinematic sound' },
-  { label: '🎵 A.R. Rahman', query: 'A.R. Rahman all time hits' },
-  { label: '⚡ Electro House', query: 'Electro house workout mix' },
+  { label: 'Lofi chill', query: 'Lofi hip hop beats to relax' },
+  { label: 'Synthwave', query: 'Synthwave retrowave radio' },
+  { label: 'Coldplay', query: 'Coldplay top hits' },
+  { label: 'Hans Zimmer', query: 'Hans Zimmer cinematic sound' },
+  { label: 'A.R. Rahman', query: 'A.R. Rahman all time hits' },
+  { label: 'Electro house', query: 'Electro house workout mix' },
 ];
 
-export default function YouTubeSearch({ onTrackStarted }) {
+function formatDuration(seconds) {
+  if (!seconds) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+export default function YouTubeSearch({ onPlay, disabled }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [resolvingId, setResolvingId] = useState(null);
   const [statusMsg, setStatusMsg] = useState('');
 
-  const handleSearch = async (searchTerm) => {
-    const q = (searchTerm !== undefined ? searchTerm : query).trim();
+  const handleSearch = async (term) => {
+    const q = (term !== undefined ? term : query).trim();
     if (!q) return;
-
     setIsSearching(true);
-    setStatusMsg('Searching via stream.ankitm.xyz...');
+    setStatusMsg('Searching...');
     try {
       const data = await searchYouTube(q);
       setResults(Array.isArray(data) ? data : []);
       setStatusMsg('');
     } catch (err) {
-      console.error(err);
       setStatusMsg(`Search failed: ${err.message}`);
     } finally {
       setIsSearching(false);
@@ -38,122 +43,80 @@ export default function YouTubeSearch({ onTrackStarted }) {
 
   const handlePlay = async (track) => {
     setResolvingId(track.videoId);
-    setStatusMsg(`Resolving Opus stream for "${track.title}"...`);
+    setStatusMsg(`Resolving stream for "${track.title}"...`);
     try {
       const streamUrl = await resolveStreamUrl(track.videoId);
-      setStatusMsg(`Dispatching Opus stream to ESP32...`);
-      await playDirectOnEsp(track, streamUrl);
+      onPlay(
+        { id: track.videoId, title: track.title, artist: track.author, duration: track.lengthSeconds },
+        streamUrl,
+      );
       setStatusMsg('');
-      if (onTrackStarted) onTrackStarted(track);
     } catch (err) {
-      console.error(err);
       setStatusMsg(`Playback error: ${err.message}`);
     } finally {
       setResolvingId(null);
     }
   };
 
-  const formatDuration = (seconds) => {
-    if (!seconds) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
-
   return (
-    <div className="search-tab-view">
-      <div className="search-header-container">
-        <form
-          className="search-bar-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSearch();
-          }}
-        >
-          <span className="search-prefix">⚡</span>
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search songs, artists, albums, or paste YouTube link..."
-          />
-          <button type="submit" className="btn-primary" disabled={isSearching}>
-            {isSearching ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
-            <span>Search</span>
-          </button>
-        </form>
+    <div className="search-view">
+      <form className="search-bar" onSubmit={(e) => { e.preventDefault(); handleSearch(); }}>
+        <Search size={16} className="search-icon" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search songs, artists, or paste a YouTube link..."
+        />
+        <button type="submit" className="btn-primary" disabled={isSearching}>
+          {isSearching ? <Loader2 size={16} className="spin" /> : <Search size={16} />}
+          Search
+        </button>
+      </form>
 
-        <div className="quick-tags">
-          <span className="tag-title">Quick Vibes:</span>
-          {QUICK_VIBES.map((v) => (
-            <button
-              key={v.query}
-              className="vibe-tag"
-              onClick={() => {
-                setQuery(v.query);
-                handleSearch(v.query);
-              }}
-            >
-              {v.label}
-            </button>
-          ))}
-        </div>
+      <div className="quick-tags">
+        {QUICK_VIBES.map((v) => (
+          <button key={v.query} className="tag-btn" onClick={() => { setQuery(v.query); handleSearch(v.query); }}>
+            {v.label}
+          </button>
+        ))}
       </div>
 
-      {statusMsg && (
-        <div className="status-banner">
-          <span className="spinner" />
-          <span>{statusMsg}</span>
-        </div>
-      )}
+      {statusMsg && <div className="status-banner">{statusMsg}</div>}
 
       <div className="results-grid">
         {results.length > 0 ? (
           results.map((track) => (
             <div key={track.videoId} className="song-card">
-              <div className="card-thumb-wrap">
-                <img
-                  src={`https://i.ytimg.com/vi/${track.videoId}/mqdefault.jpg`}
-                  alt={track.title}
-                  loading="lazy"
-                  onError={(e) => {
-                    e.target.src = `https://img.youtube.com/vi/${track.videoId}/0.jpg`;
-                  }}
-                />
-                <span className="card-duration">{formatDuration(track.lengthSeconds)}</span>
-              </div>
-              <div className="card-body">
-                <h4 className="card-title" title={track.title}>{track.title}</h4>
-                <p className="card-artist">{track.author}</p>
-                <div className="card-actions">
-                  <button
-                    className="btn-card-play"
-                    onClick={() => handlePlay(track)}
-                    disabled={resolvingId === track.videoId}
-                  >
-                    {resolvingId === track.videoId ? (
-                      <>
-                        <span className="spinner" /> Resolving...
-                      </>
-                    ) : (
-                      <>
-                        <Play size={16} fill="currentColor" /> Play on Waveshare
-                      </>
-                    )}
-                  </button>
-                </div>
+              <img
+                className="song-thumb"
+                src={`https://i.ytimg.com/vi/${track.videoId}/mqdefault.jpg`}
+                alt=""
+                loading="lazy"
+                onError={(e) => { e.target.src = `https://img.youtube.com/vi/${track.videoId}/0.jpg`; }}
+              />
+              <span className="song-duration">{formatDuration(track.lengthSeconds)}</span>
+              <div className="song-body">
+                <h4 className="song-title" title={track.title}>{track.title}</h4>
+                <p className="song-artist">{track.author}</p>
+                <button
+                  className="btn-play"
+                  onClick={() => handlePlay(track)}
+                  disabled={disabled || resolvingId === track.videoId}
+                >
+                  {resolvingId === track.videoId ? (
+                    <><Loader2 size={14} className="spin" /> Resolving...</>
+                  ) : (
+                    <><Play size={14} fill="currentColor" /> Play</>
+                  )}
+                </button>
               </div>
             </div>
           ))
         ) : (
           <div className="empty-state">
-            <div className="empty-icon">🎵</div>
-            <h3>Stream Any Music Directly to Waveshare ESP32-S3</h3>
-            <p>
-              Opus stream URLs are resolved directly by your browser via{' '}
-              <code className="code-pill">stream.ankitm.xyz</code>, leaving Core 0 and Core 1 free for zero-jitter
-              DMA playback.
-            </p>
+            <h3>Search to stream music to the Waveshare</h3>
+            <p>Stream URLs are resolved directly in your browser and sent to the device.</p>
           </div>
         )}
       </div>
