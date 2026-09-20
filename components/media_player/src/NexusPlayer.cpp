@@ -1,5 +1,6 @@
 #include "NexusPlayer.h"
 #include "media_player/CatalogDB.h"
+#include "media_player/MusicPlaybackService.h"
 #include "esp_log.h"
 #include <cstring>
 #include <algorithm>
@@ -41,7 +42,7 @@ NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::Buff
           ThreadConfig::StackSize::STACK_PLAYER,
           ThreadConfig::Priority::GEMINI_PROTOCOL,
           ThreadConfig::CORE_NETWORK,
-          COMP::ASSISTANT
+          COMP::ASSISTANT | COMP::BLUETOOTH
       }),
       _playbackId(playbackId),
       _storageId(storageId),
@@ -141,9 +142,13 @@ void NexusPlayer::onAudioFocusChange(AudioTrack track, FocusEvent event) {
 }
 
 void NexusPlayer::play(const char* songId, const char* downloadUrl) {
+    playAt(songId, downloadUrl, 0);
+}
+
+void NexusPlayer::playAt(const char* songId, const char* downloadUrl, uint32_t startPosMs) {
     PlayerLock lock(_mutex);
 
-    if (!songId || !downloadUrl) {
+    if (!songId || (!downloadUrl && !_storageManager.fileExists(songId))) {
         ESP_LOGE(TAG, "Invalid play arguments");
         return;
     }
@@ -160,21 +165,24 @@ void NexusPlayer::play(const char* songId, const char* downloadUrl) {
         } else {
             ESP_LOGI(TAG, "Play requested during active session. Deferring songId: %s until session ends.", songId);
             _pendingSongId = songId;
-            _pendingDownloadUrl = downloadUrl;
+            _pendingDownloadUrl = downloadUrl ? downloadUrl : "";
+            _pendingStartPosMs = startPosMs;
             _should_play_after_session = true;
             _should_resume_after_session = false;
             return;
         }
     }
 
-    play_internal(songId, downloadUrl);
+    play_internal(songId, downloadUrl, startPosMs);
 }
 
-void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
-    ESP_LOGI(TAG, "Play requested for songId: %s, url: %s", songId, downloadUrl);
+void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uint32_t startPosMs) {
+    ESP_LOGI(TAG, "Play requested for songId: %s, url: %s, startPos: %u ms",
+             songId, downloadUrl ? downloadUrl : "(local)", (unsigned int)startPosMs);
 
     _should_resume_after_session = false;
     _should_play_after_session = false;
+    _pendingStartPosMs = 0;
 
     if (_state != STATE_IDLE) {
         stop();
@@ -196,12 +204,6 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
     if (_storageManager.fileExists(songId)) {
         ESP_LOGI(TAG, "Cache Hit! Playing local file for songId: %s", songId);
         _state = STATE_LOCAL_PLAYBACK;
-        _audioEngine.start();
-        EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
-            s.media.state = MediaPlaybackState::PLAYING;
-            strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
-            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-        });
 
         if (!_storageManager.openFileForReading(songId)) {
             ESP_LOGE(TAG, "Failed to open local file for reading");
@@ -214,20 +216,36 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
             notifyPlaybackError(songId, -1);
             return;
         }
+
+        if (startPosMs > 0) {
+            uint32_t nearestTime = 0;
+            uint32_t nearestOffset = 0;
+            bool hasOffset = CatalogDB::getInstance().lookupSeekEntry(songId, startPosMs, nearestTime, nearestOffset);
+            if (!hasOffset) {
+                nearestOffset = (startPosMs / 1000) * 16000;
+            }
+            _audioEngine.resetDecoder();
+            _audioEngine.setStreamByteOffset(nearestOffset);
+            _storageManager.seekTo(nearestOffset);
+            BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
+        }
+
+        _audioEngine.start();
+        EmbeddedSysDb::getInstance().mutate([songId, startPosMs](SystemState& s) {
+            s.media.state = MediaPlaybackState::PLAYING;
+            s.media.output_target = MediaOutputTarget::LOCAL;
+            strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
+            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+            s.media.position_ms = startPosMs;
+        });
     } else {
         auto snap = EmbeddedSysDb::getInstance().snapshot();
-        bool doCache = snap.media.cache_downloads;
+        bool doCache = snap.media.cache_downloads && (startPosMs == 0);
+
+        _state = STATE_STREAMING_AND_CACHING;
 
         if (doCache) {
             ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);
-            _state = STATE_STREAMING_AND_CACHING;
-            _audioEngine.start();
-            EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
-                s.media.state = MediaPlaybackState::PLAYING;
-                strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
-                s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-            });
-
             if (!_storageManager.openFileForCaching(songId)) {
                 ESP_LOGE(TAG, "Failed to open file for caching");
                 stopActivePipelines();
@@ -239,6 +257,15 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
                 notifyPlaybackError(songId, -2);
                 return;
             }
+
+            _audioEngine.start();
+            EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
+                s.media.state = MediaPlaybackState::PLAYING;
+                s.media.output_target = MediaOutputTarget::LOCAL;
+                strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
+                s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+                s.media.position_ms = 0;
+            });
 
             if (!_streamManager.beginStreaming(downloadUrl, true)) {
                 ESP_LOGE(TAG, "Failed to start streaming");
@@ -252,17 +279,33 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl) {
                 return;
             }
         } else {
-            ESP_LOGI(TAG, "Cache Miss! Pure live streaming (no SD cache) songId: %s", songId);
-            _state = STATE_STREAMING_AND_CACHING;
+            ESP_LOGI(TAG, "Streaming songId: %s (startPos: %u ms)", songId, (unsigned int)startPosMs);
             _audioEngine.start();
-            EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
+            EmbeddedSysDb::getInstance().mutate([songId, startPosMs](SystemState& s) {
                 s.media.state = MediaPlaybackState::PLAYING;
+                s.media.output_target = MediaOutputTarget::LOCAL;
                 strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
                 s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+                s.media.position_ms = startPosMs;
             });
 
-            if (!_streamManager.beginStreaming(downloadUrl, false)) {
-                ESP_LOGE(TAG, "Failed to start live streaming");
+            bool streamOk = false;
+            if (startPosMs > 0) {
+                uint32_t nearestTime = 0;
+                uint32_t nearestOffset = 0;
+                bool hasOffset = CatalogDB::getInstance().lookupSeekEntry(songId, startPosMs, nearestTime, nearestOffset);
+                if (!hasOffset) {
+                    nearestOffset = (startPosMs / 1000) * 16000;
+                }
+                _audioEngine.resetDecoder();
+                _audioEngine.setStreamByteOffset(nearestOffset);
+                streamOk = _streamManager.beginStreamingFrom(downloadUrl, nearestOffset, false);
+            } else {
+                streamOk = _streamManager.beginStreaming(downloadUrl, false);
+            }
+
+            if (!streamOk) {
+                ESP_LOGE(TAG, "Failed to start streaming");
                 stopActivePipelines();
                 _state = STATE_IDLE;
                 EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
@@ -387,17 +430,23 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
             ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
             _session_active = false;
             if (_should_play_after_session && (!_pendingDownloadUrl.empty() || _storageManager.fileExists(_pendingSongId.c_str()))) {
-                play_internal(_pendingSongId.c_str(), _pendingDownloadUrl.c_str());
+                play_internal(_pendingSongId.c_str(), _pendingDownloadUrl.c_str(), _pendingStartPosMs);
                 _pendingSongId.clear();
                 _pendingDownloadUrl.clear();
+                _pendingStartPosMs = 0;
                 _should_play_after_session = false;
             }
         }
+    }
+
+    if ((changed & COMP::BLUETOOTH) && (changed & BIT_BLUETOOTH::CONNECTED)) {
+        MusicPlaybackService::getInstance().onBluetoothConnectionChanged(snap.bluetooth.connected);
     }
 }
 
 void NexusPlayer::run() {
     ESP_LOGI(TAG, "NexusPlayer background task started");
+    uint32_t tick_count = 0;
     while (m_running) {
         uint32_t changed_bits = 0;
         BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(100));
@@ -410,6 +459,19 @@ void NexusPlayer::run() {
         }
 
         checkPlaybackFinished();
+
+        // Periodically update position_ms in SysDb (~every 1 second) during local playback
+        if (++tick_count >= 10) {
+            tick_count = 0;
+            if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
+                uint32_t currentPos = _audioEngine.getPositionMs();
+                EmbeddedSysDb::getInstance().mutate([currentPos](SystemState& s) {
+                    if (s.media.output_target == MediaOutputTarget::LOCAL) {
+                        s.media.position_ms = currentPos;
+                    }
+                });
+            }
+        }
     }
 }
 

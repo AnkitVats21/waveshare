@@ -1,4 +1,5 @@
 #include "services/network/StarWsClient.h"
+#include "media_player/MusicPlaybackService.h"
 #include "common/thread_config.h"
 #include "esp_log.h"
 #include <cstring>
@@ -239,27 +240,21 @@ void StarWsClient::handleWsData(const uint8_t* data, size_t len) {
             if (payload_len < 10) return;
             uint8_t cmd_id = payload[0];
             uint32_t nonce = StarProtocol::readU32LE(&payload[1]);
+            (void)nonce;
             uint32_t param = StarProtocol::readU32LE(&payload[5]);
             uint8_t data_len = payload[9];
             if (payload_len < 10 + data_len) return;
 
             const uint8_t* data_ptr = payload + 10;
-            MediaPendingCommand cmd{};
-            cmd.cmd = static_cast<MediaCmdId>(cmd_id);
-            cmd.nonce = nonce;
-            cmd.param = param;
+            char data_buf[128] = {0};
             if (data_len > 0) {
-                size_t copy_len = std::min<size_t>(data_len, sizeof(cmd.data) - 1);
-                std::memcpy(cmd.data, data_ptr, copy_len);
-                cmd.data[copy_len] = '\0';
+                size_t copy_len = std::min<size_t>(data_len, sizeof(data_buf) - 1);
+                std::memcpy(data_buf, data_ptr, copy_len);
+                data_buf[copy_len] = '\0';
             }
 
-            WriteResult wres = sysdb.processRemoteWrite(
-                ComponentId::MEDIA,
-                TAG_MEDIA::pending_command,
-                reinterpret_cast<const uint8_t*>(&cmd),
-                sizeof(cmd));
-
+            bool ok = MusicPlaybackService::getInstance().executeAction(cmd_id, param, data_buf);
+            WriteResult wres = ok ? WriteResult::OK : WriteResult::DECODE_ERROR;
             sendFrame(StarProtocol::buildAckFrame(wres, sysdb.walHeadSeq()));
             break;
         }

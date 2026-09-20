@@ -74,6 +74,13 @@ public:
     bool seekTo(uint32_t positionMs);
     uint32_t getPositionMs() const;
 
+    // Bluetooth connection and handoff
+    void onBluetoothConnectionChanged(bool connected);
+    void handoffToLocal(const std::string& songId, uint32_t posMs);
+
+    // Direct action execution from STAR replication protocol
+    bool executeAction(uint8_t cmd_id, uint32_t param, const char* data);
+
     // Playlist / Queue Management
     void clearQueue();
     void shuffleQueue();

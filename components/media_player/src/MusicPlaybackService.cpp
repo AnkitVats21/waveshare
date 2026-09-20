@@ -117,26 +117,66 @@ void MusicPlaybackService::auxWorkerTask(void* arg) {
 bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
     if (!_initialized) return false;
 
+    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    bool isPiBt = (snap.bluetooth.connected || snap.media.output_target == MediaOutputTarget::PI_BT);
+
     // Fast-path low-latency controls execute directly without queue delay
     if (type == MediaCmdType::PAUSE) {
-        NexusPlayer::getInstance().pause();
-        return true;
-    }
-    if (type == MediaCmdType::RESUME) {
-        NexusPlayer::getInstance().resume();
-        return true;
-    }
-    if (type == MediaCmdType::TOGGLE_PLAY_PAUSE) {
-        auto st = NexusPlayer::getInstance().getState();
-        if (st == STATE_PAUSED) {
-            NexusPlayer::getInstance().resume();
-        } else if (st == STATE_STREAMING_AND_CACHING || st == STATE_LOCAL_PLAYBACK) {
+        if (isPiBt) {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.state = MediaPlaybackState::PAUSED;
+                s.media.pending_command.cmd = MediaCmdId::PAUSE;
+                s.media.pending_command.nonce++;
+            });
+        } else {
             NexusPlayer::getInstance().pause();
         }
         return true;
     }
+    if (type == MediaCmdType::RESUME) {
+        if (isPiBt) {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.state = MediaPlaybackState::PLAYING;
+                s.media.pending_command.cmd = MediaCmdId::RESUME;
+                s.media.pending_command.nonce++;
+            });
+        } else {
+            NexusPlayer::getInstance().resume();
+        }
+        return true;
+    }
+    if (type == MediaCmdType::TOGGLE_PLAY_PAUSE) {
+        if (isPiBt) {
+            if (snap.media.state == MediaPlaybackState::PAUSED) {
+                return postCommand(MediaCmdType::RESUME);
+            } else {
+                return postCommand(MediaCmdType::PAUSE);
+            }
+        } else {
+            auto st = NexusPlayer::getInstance().getState();
+            if (st == STATE_PAUSED) {
+                NexusPlayer::getInstance().resume();
+            } else if (st == STATE_STREAMING_AND_CACHING || st == STATE_LOCAL_PLAYBACK) {
+                NexusPlayer::getInstance().pause();
+            }
+        }
+        return true;
+    }
     if (type == MediaCmdType::STOP) {
-        NexusPlayer::getInstance().stop();
+        if (isPiBt) {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.state = MediaPlaybackState::IDLE;
+                s.media.active_song_id[0] = '\0';
+                s.media.title[0] = '\0';
+                s.media.artist[0] = '\0';
+                s.media.position_ms = 0;
+                s.media.duration_ms = 0;
+                s.media.pending_command.cmd = MediaCmdId::STOP;
+                s.media.pending_command.nonce++;
+            });
+        } else {
+            NexusPlayer::getInstance().stop();
+        }
         invalidateBackgroundWork();
         clearQueue();
         {
@@ -147,19 +187,31 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
             MediaCommand dummy;
             while (xQueueReceive(m_cmd_queue, &dummy, 0) == pdTRUE) {}
         }
-        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-            s.media.state = MediaPlaybackState::IDLE;
-            s.media.active_song_id[0] = '\0';
-            s.media.title[0] = '\0';
-            s.media.artist[0] = '\0';
-            s.media.position_ms = 0;
-            s.media.duration_ms = 0;
-            s.media.seekable = false;
-        });
+        if (!isPiBt) {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.state = MediaPlaybackState::IDLE;
+                s.media.active_song_id[0] = '\0';
+                s.media.title[0] = '\0';
+                s.media.artist[0] = '\0';
+                s.media.position_ms = 0;
+                s.media.duration_ms = 0;
+                s.media.seekable = false;
+            });
+        }
         return true;
     }
 
     if (type == MediaCmdType::SEEK) {
+        if (isPiBt) {
+            uint32_t ms = query ? static_cast<uint32_t>(strtoul(query, nullptr, 10)) : 0;
+            EmbeddedSysDb::getInstance().mutate([ms](SystemState& s) {
+                s.media.position_ms = ms;
+                s.media.pending_command.cmd = MediaCmdId::SEEK;
+                s.media.pending_command.nonce++;
+                s.media.pending_command.param = ms;
+            });
+            return true;
+        }
         MediaCommand cmd{};
         cmd.type = type;
         {
@@ -398,15 +450,22 @@ bool MusicPlaybackService::playTrack(const InvidiousTrack& track) {
 esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
     if (track.videoId.empty()) return ESP_ERR_INVALID_ARG;
 
-    // Check if the track is already cached locally on the SD card
-    if (NexusPlayer::getInstance().getStorageManager().fileExists(track.videoId.c_str())) {
-        ESP_LOGI(TAG, "Track '%s' [%s] found in local cache! Playing immediately (0ms network delay)",
+    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    MediaOutputTarget target = snap.bluetooth.connected ? MediaOutputTarget::PI_BT : MediaOutputTarget::LOCAL;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        _currentTrack = track;
+    }
+
+    if (target == MediaOutputTarget::PI_BT) {
+        ESP_LOGI(TAG, "Routing playback to Pi Bluetooth (Tribit speaker) for '%s' [%s]",
                  track.title.c_str(), track.videoId.c_str());
-        {
-            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-            _currentTrack = track;
-        }
+
+        NexusPlayer::getInstance().stop();
+
         EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+            s.media.output_target = MediaOutputTarget::PI_BT;
             s.media.state = MediaPlaybackState::PLAYING;
             strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
             s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
@@ -414,6 +473,33 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
             s.media.title[sizeof(s.media.title) - 1] = '\0';
             strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
             s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+            s.media.duration_ms = track.durationSeconds * 1000;
+            s.media.position_ms = 0;
+            s.media.pending_command.cmd = MediaCmdId::PLAY;
+            s.media.pending_command.nonce++;
+            s.media.pending_command.param = 0;
+            strncpy(s.media.pending_command.data, track.videoId.c_str(), sizeof(s.media.pending_command.data) - 1);
+            s.media.pending_command.data[sizeof(s.media.pending_command.data) - 1] = '\0';
+        });
+
+        checkAndReplenishQueue();
+        return ESP_OK;
+    }
+
+    // Check if the track is already cached locally on the SD card
+    if (NexusPlayer::getInstance().getStorageManager().fileExists(track.videoId.c_str())) {
+        ESP_LOGI(TAG, "Track '%s' [%s] found in local cache! Playing immediately (0ms network delay)",
+                 track.title.c_str(), track.videoId.c_str());
+        EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+            s.media.state = MediaPlaybackState::PLAYING;
+            s.media.output_target = MediaOutputTarget::LOCAL;
+            strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+            strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
+            s.media.title[sizeof(s.media.title) - 1] = '\0';
+            strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+            s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+            s.media.duration_ms = track.durationSeconds * 1000;
         });
         NexusPlayer::getInstance().play(track.videoId.c_str(), "");
         return ESP_OK;
@@ -479,12 +565,14 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
     }
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
         s.media.state = MediaPlaybackState::PLAYING;
+        s.media.output_target = MediaOutputTarget::LOCAL;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
         strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
         s.media.title[sizeof(s.media.title) - 1] = '\0';
         strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
         s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        s.media.duration_ms = track.durationSeconds * 1000;
     });
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
 
@@ -508,6 +596,11 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
 bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
     if (track.videoId.empty()) return false;
 
+    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    if (snap.bluetooth.connected || snap.media.output_target == MediaOutputTarget::PI_BT) {
+        return playTrackInternal(track) == ESP_OK;
+    }
+
     std::string streamUrl;
     esp_err_t err = _invidious.resolveWebMOpusStreamUrl(track.videoId, streamUrl);
     if (err != ESP_OK || streamUrl.empty()) {
@@ -524,12 +617,14 @@ bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
     }
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
         s.media.state = MediaPlaybackState::PLAYING;
+        s.media.output_target = MediaOutputTarget::LOCAL;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
         strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
         s.media.title[sizeof(s.media.title) - 1] = '\0';
         strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
         s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        s.media.duration_ms = track.durationSeconds * 1000;
     });
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
     return true;
@@ -1105,6 +1200,138 @@ bool MusicPlaybackService::seekTo(uint32_t positionMs) {
 }
 
 uint32_t MusicPlaybackService::getPositionMs() const {
+    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    if (snap.media.output_target == MediaOutputTarget::PI_BT) {
+        return snap.media.position_ms;
+    }
     return NexusPlayer::getInstance().getPositionMs();
+}
+
+void MusicPlaybackService::onBluetoothConnectionChanged(bool connected) {
+    std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+    auto snap = EmbeddedSysDb::getInstance().snapshot();
+
+    ESP_LOGI(TAG, "Bluetooth connection event: connected=%s (current output=%s, state=%d)",
+             connected ? "true" : "false",
+             snap.media.output_target == MediaOutputTarget::PI_BT ? "PI_BT" : "LOCAL",
+             static_cast<int>(snap.media.state));
+
+    if (connected) {
+        // BT connected: if locally playing, hand off to Pi MPD
+        if (snap.media.state == MediaPlaybackState::PLAYING &&
+            snap.media.output_target == MediaOutputTarget::LOCAL) {
+            std::string songId = snap.media.active_song_id;
+            uint32_t posMs = NexusPlayer::getInstance().getPositionMs();
+
+            ESP_LOGI(TAG, "Handoff to Pi MPD: '%s' at %u ms", songId.c_str(), (unsigned int)posMs);
+            NexusPlayer::getInstance().stop();
+
+            EmbeddedSysDb::getInstance().mutate([&songId, posMs](SystemState& s) {
+                s.media.output_target = MediaOutputTarget::PI_BT;
+                s.media.state = MediaPlaybackState::PLAYING;
+                s.media.position_ms = posMs;
+                s.media.pending_command.cmd = MediaCmdId::PLAY;
+                s.media.pending_command.nonce++;
+                s.media.pending_command.param = posMs;
+                strncpy(s.media.pending_command.data, songId.c_str(), sizeof(s.media.pending_command.data) - 1);
+                s.media.pending_command.data[sizeof(s.media.pending_command.data) - 1] = '\0';
+            });
+        } else {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.output_target = MediaOutputTarget::PI_BT;
+            });
+        }
+    } else {
+        // BT disconnected: if playing on Pi, hand off to local speaker
+        if ((snap.media.state == MediaPlaybackState::PLAYING || snap.media.state == MediaPlaybackState::PAUSED) &&
+            snap.media.output_target == MediaOutputTarget::PI_BT) {
+            std::string songId = snap.media.active_song_id;
+            uint32_t posMs = snap.media.position_ms;
+
+            ESP_LOGI(TAG, "Handoff to Local Speaker: '%s' at %u ms", songId.c_str(), (unsigned int)posMs);
+
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.output_target = MediaOutputTarget::LOCAL;
+            });
+
+            if (!songId.empty()) {
+                handoffToLocal(songId, posMs);
+            }
+        } else {
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.output_target = MediaOutputTarget::LOCAL;
+            });
+        }
+    }
+}
+
+void MusicPlaybackService::handoffToLocal(const std::string& songId, uint32_t posMs) {
+    if (NexusPlayer::getInstance().getStorageManager().fileExists(songId.c_str())) {
+        ESP_LOGI(TAG, "Handoff local cache hit: playing '%s' from %u ms", songId.c_str(), (unsigned int)posMs);
+        EmbeddedSysDb::getInstance().mutate([&songId, posMs](SystemState& s) {
+            s.media.state = MediaPlaybackState::PLAYING;
+            s.media.output_target = MediaOutputTarget::LOCAL;
+            strncpy(s.media.active_song_id, songId.c_str(), sizeof(s.media.active_song_id) - 1);
+            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+            s.media.position_ms = posMs;
+        });
+        NexusPlayer::getInstance().playAt(songId.c_str(), "", posMs);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Handoff re-resolving stream URL for '%s' from %u ms...", songId.c_str(), (unsigned int)posMs);
+    std::string streamUrl;
+    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(songId, streamUrl);
+    if (err == ESP_OK && !streamUrl.empty()) {
+        EmbeddedSysDb::getInstance().mutate([&songId, posMs](SystemState& s) {
+            s.media.state = MediaPlaybackState::PLAYING;
+            s.media.output_target = MediaOutputTarget::LOCAL;
+            strncpy(s.media.active_song_id, songId.c_str(), sizeof(s.media.active_song_id) - 1);
+            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+            s.media.position_ms = posMs;
+        });
+        NexusPlayer::getInstance().playAt(songId.c_str(), streamUrl.c_str(), posMs);
+    } else {
+        ESP_LOGE(TAG, "Failed to re-resolve stream for '%s' during handoff (%s)", songId.c_str(), esp_err_to_name(err));
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::ERROR_STATE;
+        });
+    }
+}
+
+bool MusicPlaybackService::executeAction(uint8_t cmd_id, uint32_t param, const char* data) {
+    auto cmd = static_cast<MediaCmdId>(cmd_id);
+    switch (cmd) {
+        case MediaCmdId::PLAY:
+            return postCommand(MediaCmdType::PLAY, data);
+        case MediaCmdId::PAUSE:
+            return postCommand(MediaCmdType::PAUSE);
+        case MediaCmdId::RESUME:
+            return postCommand(MediaCmdType::RESUME);
+        case MediaCmdId::STOP:
+            return postCommand(MediaCmdType::STOP);
+        case MediaCmdId::NEXT:
+            return postCommand(MediaCmdType::NEXT);
+        case MediaCmdId::PREVIOUS:
+            return postCommand(MediaCmdType::PREVIOUS);
+        case MediaCmdId::SEEK: {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%u", (unsigned int)param);
+            return postCommand(MediaCmdType::SEEK, buf);
+        }
+        case MediaCmdId::AUTOPLAY:
+            setAutoplay(param != 0);
+            return true;
+        case MediaCmdId::CACHING:
+            setCaching(param != 0);
+            return true;
+        case MediaCmdId::VOLUME:
+            EmbeddedSysDb::getInstance().mutate([param](SystemState& s) {
+                s.audio.speaker_volume = std::min<int>(100, std::max<int>(0, param));
+            });
+            return true;
+        default:
+            return false;
+    }
 }
 

@@ -32,6 +32,7 @@ public:
     bool begin();
     
     void play(const char* songId, const char* downloadUrl);
+    void playAt(const char* songId, const char* downloadUrl, uint32_t startPosMs);
     void pause();
     void resume();
     void stop();
@@ -75,6 +76,7 @@ private:
     bool _should_play_after_session = false;
     std::string _pendingSongId;
     std::string _pendingDownloadUrl;
+    uint32_t _pendingStartPosMs = 0;
 
     // Registered playback lifecycle observers
     std::vector<IPlaybackObserver*> _observers;
@@ -86,7 +88,7 @@ private:
 
     void pause_internal();
     void resume_internal();
-    void play_internal(const char* songId, const char* downloadUrl);
+    void play_internal(const char* songId, const char* downloadUrl, uint32_t startPosMs = 0);
     void checkPlaybackFinished();
     void notifyTrackStarted(const char* songId);
     void notifyTrackFinished(const char* songId);
