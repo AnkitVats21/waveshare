@@ -21,6 +21,7 @@ StarWsClient::StarWsClient()
         .interest   = COMP::ALL
     }) {
     m_client_mutex = xSemaphoreCreateMutex();
+    m_outbound_queue = xQueueCreate(OUTBOUND_QUEUE_LEN, sizeof(std::vector<uint8_t>*));
 }
 
 StarWsClient::~StarWsClient() {
@@ -28,6 +29,14 @@ StarWsClient::~StarWsClient() {
     if (m_client_mutex) {
         vSemaphoreDelete(m_client_mutex);
         m_client_mutex = nullptr;
+    }
+    if (m_outbound_queue) {
+        std::vector<uint8_t>* leftover = nullptr;
+        while (xQueueReceive(m_outbound_queue, &leftover, 0) == pdTRUE) {
+            delete leftover;
+        }
+        vQueueDelete(m_outbound_queue);
+        m_outbound_queue = nullptr;
     }
 }
 
@@ -142,6 +151,24 @@ void StarWsClient::sendFrame(const std::vector<uint8_t>& frame) {
     xSemaphoreGive(m_client_mutex);
 }
 
+void StarWsClient::enqueueFrame(std::vector<uint8_t> frame) {
+    if (!m_outbound_queue) return;
+    auto* heap_frame = new std::vector<uint8_t>(std::move(frame));
+    if (xQueueSend(m_outbound_queue, &heap_frame, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Outbound queue full, dropping frame (%u bytes)", (unsigned)heap_frame->size());
+        delete heap_frame;
+    }
+}
+
+void StarWsClient::drainOutboundQueue() {
+    if (!m_outbound_queue) return;
+    std::vector<uint8_t>* frame = nullptr;
+    while (xQueueReceive(m_outbound_queue, &frame, 0) == pdTRUE) {
+        sendFrame(*frame);
+        delete frame;
+    }
+}
+
 void StarWsClient::websocketEventHandler(void* handler_args, esp_event_base_t base, int32_t event_id, void* event_data) {
     auto* self = static_cast<StarWsClient*>(handler_args);
     auto* data = static_cast<esp_websocket_event_data_t*>(event_data);
@@ -195,14 +222,14 @@ void StarWsClient::handleWsData(const uint8_t* data, size_t len) {
                 m_last_sent_seq = since_seq;
                 m_synced = true;
                 std::vector<WalRecordEntry> empty_recs;
-                sendFrame(StarProtocol::buildWalBatchFrame(empty_recs));
+                enqueueFrame(StarProtocol::buildWalBatchFrame(empty_recs));
                 return;
             }
 
             if (qres == WalQueryResult::SUCCESS) {
                 m_last_sent_seq = records.empty() ? since_seq : records.back().seq;
                 m_synced = true;
-                sendFrame(StarProtocol::buildWalBatchFrame(records));
+                enqueueFrame(StarProtocol::buildWalBatchFrame(records));
                 return;
             }
 
@@ -216,16 +243,16 @@ void StarWsClient::handleWsData(const uint8_t* data, size_t len) {
             m_synced = true;
 
             // 1. SNAPSHOT_START
-            sendFrame(StarProtocol::buildSnapshotStartFrame(head_seq, static_cast<uint16_t>(snapshot.size())));
+            enqueueFrame(StarProtocol::buildSnapshotStartFrame(head_seq, static_cast<uint16_t>(snapshot.size())));
 
             // 2. Stream individual fields
             for (const auto& r : snapshot) {
-                sendFrame(StarProtocol::buildSnapshotFieldFrame(
+                enqueueFrame(StarProtocol::buildSnapshotFieldFrame(
                     r.component_id, r.field_tag, r.value.data(), static_cast<uint8_t>(r.value.size())));
             }
 
             // 3. SNAPSHOT_END
-            sendFrame(StarProtocol::buildSnapshotEndFrame(head_seq));
+            enqueueFrame(StarProtocol::buildSnapshotEndFrame(head_seq));
             break;
         }
 
@@ -240,7 +267,7 @@ void StarWsClient::handleWsData(const uint8_t* data, size_t len) {
             WriteResult wres = sysdb.processRemoteWrite(
                 static_cast<ComponentId>(comp_id), field_tag, val_ptr, val_len);
 
-            sendFrame(StarProtocol::buildAckFrame(wres, sysdb.walHeadSeq()));
+            enqueueFrame(StarProtocol::buildAckFrame(wres, sysdb.walHeadSeq()));
             break;
         }
 
@@ -263,7 +290,7 @@ void StarWsClient::handleWsData(const uint8_t* data, size_t len) {
 
             bool ok = MusicPlaybackService::getInstance().executeAction(cmd_id, param, data_buf);
             WriteResult wres = ok ? WriteResult::OK : WriteResult::DECODE_ERROR;
-            sendFrame(StarProtocol::buildAckFrame(wres, sysdb.walHeadSeq()));
+            enqueueFrame(StarProtocol::buildAckFrame(wres, sysdb.walHeadSeq()));
             break;
         }
 
@@ -284,6 +311,11 @@ void StarWsClient::run() {
             SystemState snap = EmbeddedSysDb::getInstance().snapshot();
             onStateChanged(m_last_changed, snap);
         }
+
+        // Drain frames queued by handleWsData() (runs on the websocket
+        // library's own internal task) — this is the only place
+        // esp_websocket_client_send_bin() is ever called from.
+        drainOutboundQueue();
 
         if (!m_client || !m_connected || !m_synced) {
             continue;

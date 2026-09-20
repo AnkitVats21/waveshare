@@ -5,6 +5,7 @@
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "esp_websocket_client.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include <string>
 #include <vector>
 
@@ -48,9 +49,19 @@ private:
     uint32_t m_last_sent_seq = 0;
     SemaphoreHandle_t m_client_mutex = nullptr;
 
+    // Frames produced on the esp_websocket_client library's own internal task
+    // (via handleWsData(), called synchronously from its event dispatch —
+    // never our ReactorTask context) must never block that task on a network
+    // write. They're queued here and drained/sent only from run(), so
+    // esp_websocket_client_send_bin() is called from exactly one task.
+    QueueHandle_t m_outbound_queue = nullptr;
+    static constexpr size_t OUTBOUND_QUEUE_LEN = 16;
+
     void connectToServer(const char* server_ip);
     void disconnectFromServer();
     void sendFrame(const std::vector<uint8_t>& frame);
+    void enqueueFrame(std::vector<uint8_t> frame);
+    void drainOutboundQueue();
 
     static void websocketEventHandler(void* handler_args, esp_event_base_t base, int32_t event_id, void* event_data);
     void handleWsData(const uint8_t* data, size_t len);
