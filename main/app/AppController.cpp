@@ -10,7 +10,6 @@
 #include "services/storage/StorageService.h"
 #include "services/alarm/AlarmService.h"
 #include "services/network/StarWsClient.h"
-#include "app/mqtt/MqttService.h"
 
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
@@ -155,12 +154,8 @@ bool AppController::appendFile(const char* path, const char* content) {
     return Services::StorageService::getInstance().appendFile(path, content);
 }
 
-bool AppController::publishMqtt(const char* topic, const char* message) {
-#if CONFIG_WAVESHARE_MQTT_ENABLE
-    return MqttService::getInstance().publish(topic, message);
-#else
+bool AppController::publishMqtt(const char* /*topic*/, const char* /*message*/) {
     return false;
-#endif
 }
 
 bool AppController::setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) {

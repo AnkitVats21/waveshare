@@ -26,7 +26,6 @@ set(srcs
             "app/audio/AudioService.cpp"
             "app/audio/recording/WavPcmEncoder.cpp"
             "app/audio/recording/AudioRecorder.cpp"
-            "app/mqtt/MqttService.cpp"
             "app/input/KeyService.cpp"
 
             # Event and LED Services
@@ -72,7 +71,6 @@ idf_component_register(
             # App layers
             "app"
             "app/audio"
-            "app/mqtt"
             "app/led"
             # Services / common
             "services"
@@ -89,7 +87,6 @@ idf_component_register(
             esp_netif
             esp_http_server
             fatfs
-            mqtt
             esp_driver_sdmmc
             esp_driver_gpio
             esp_driver_spi

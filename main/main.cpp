@@ -4,7 +4,6 @@
 #include "app/audio/AlertPlayer.h"
 #include "app/led/LedService.h"
 #include "gemini_live/AssistantService.h"
-#include "app/mqtt/MqttService.h"
 #include "app/input/KeyService.h"
 #include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/GeminiAudioPump.h"
@@ -109,9 +108,6 @@ extern "C" void app_main(void) {
     static AudioService         audio_svc(audio_hal, handles);
     static LedService           led_svc(led_strip);
     static AssistantService     assistant_svc;
-#if CONFIG_WAVESHARE_MQTT_ENABLE
-    static MqttService&         mqtt_svc = MqttService::getInstance();
-#endif
     static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
     (void)gemini_proto; // Suppress unused warning since task auto-spawns on instantiation
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
@@ -127,9 +123,6 @@ extern "C" void app_main(void) {
     AlertPlayer::getInstance().setFileDecoder(&AlertFileDecoder::getInstance());
     AlertPlayer::getInstance().begin();
     assistant_svc.begin();
-#if CONFIG_WAVESHARE_MQTT_ENABLE
-    mqtt_svc.begin();
-#endif
     GeminiProtocol::getInstance().setStorageService(&Services::StorageService::getInstance());
     NexusPlayer::getInstance().setStorageService(&Services::StorageService::getInstance());
     NexusPlayer::getInstance().begin();
@@ -151,9 +144,6 @@ extern "C" void app_main(void) {
     AlertPlayer::getInstance().start();
     led_svc.start();
     assistant_svc.start();
-#if CONFIG_WAVESHARE_MQTT_ENABLE
-    mqtt_svc.start();
-#endif
     gemini_proto.start();
     app_ctrl.start();
     key_svc.start();
