@@ -170,7 +170,7 @@ config WAVESHARE_WIFI_CONNECT_TIMEOUT_MS
 config WAVESHARE_SERVER_IP
     string "Audio relay server IP address"
     depends on WAVESHARE_WIFI_ENABLE
-    default "192.168.1.18"
+    default "192.168.1.24"
     help
         IP address of the Go relay / AI server.
         Used for RTP audio streaming and UDP logging.

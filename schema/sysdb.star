@@ -17,7 +17,7 @@ alias COMP::BT_COMPANION = BLUETOOTH
 component System id=0 mask=0x00010000 {
     field wifi_connected: bool = false [readonly, bit=0:WIFI_CONNECTED]
     field network_state: NetworkState = NetworkState::Disconnected [readonly, bit=2:NETWORK_STATE]
-    field server_ip: string[32] = "192.168.1.18" [writable, bit=1:SERVER_IP]
+    field server_ip: string[32] = "192.168.1.24" [writable, bit=1:SERVER_IP]
     field wifi_max_retries: int = 5 [writable]
     field ap_active: bool = false [readonly, bit=3:AP_ACTIVE]
     field wifi_ssid: string[33] = "" [writable, bit=4:WIFI_CONFIG]

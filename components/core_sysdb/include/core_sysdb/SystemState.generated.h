@@ -122,7 +122,7 @@ namespace BIT_MEDIA {
 #define SYSTEM_FIELDS \
     X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED, FieldAccess::ReadOnly) \
     X(NetworkState, network_state, NetworkState::Disconnected, BIT_SYSTEM::NETWORK_STATE, FieldAccess::ReadOnly) \
-    X_STR(server_ip, 32, "192.168.1.18", BIT_SYSTEM::SERVER_IP, FieldAccess::Writable) \
+    X_STR(server_ip, 32, "192.168.1.24", BIT_SYSTEM::SERVER_IP, FieldAccess::Writable) \
     X(int, wifi_max_retries, 5, 0, FieldAccess::Writable) \
     X(bool, ap_active, false, BIT_SYSTEM::AP_ACTIVE, FieldAccess::ReadOnly) \
     X_STR(wifi_ssid, 33, "", BIT_SYSTEM::WIFI_CONFIG, FieldAccess::Writable) \

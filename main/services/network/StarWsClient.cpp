@@ -32,6 +32,7 @@ StarWsClient::~StarWsClient() {
 }
 
 bool StarWsClient::begin() {
+    start();
     auto snap = EmbeddedSysDb::getInstance().snapshot();
     if (snap.system.wifi_connected) {
         connectToServer(snap.system.server_ip);
@@ -45,15 +46,22 @@ void StarWsClient::stop() {
 
 void StarWsClient::onStateChanged(ComponentMask changed, const SystemState& snap) {
     if (changed & COMP::SYSTEM) {
-        if (snap.system.wifi_connected && !m_client) {
-            connectToServer(snap.system.server_ip);
+        if (snap.system.wifi_connected) {
+            if (!m_client) {
+                connectToServer(snap.system.server_ip);
+            } else {
+                std::string target_uri = (strncmp(snap.system.server_ip, "ws://", 5) == 0 || strncmp(snap.system.server_ip, "wss://", 6) == 0)
+                    ? snap.system.server_ip
+                    : ("ws://" + std::string(snap.system.server_ip) + ":8765/api/star/ws");
+                if (m_server_uri != target_uri) {
+                    ESP_LOGI(TAG, "Server IP updated to %s. Reconnecting...", target_uri.c_str());
+                    disconnectFromServer();
+                    connectToServer(snap.system.server_ip);
+                }
+            }
         } else if (!snap.system.wifi_connected && m_client) {
             disconnectFromServer();
         }
-    }
-
-    if (m_task_handle) {
-        xTaskNotifyGive(m_task_handle);
     }
 }
 
@@ -66,7 +74,7 @@ void StarWsClient::connectToServer(const char* server_ip) {
     }
 
     if (!server_ip || server_ip[0] == '\0') {
-        server_ip = "192.168.1.18";
+        server_ip = "192.168.1.24";
     }
 
     if (strncmp(server_ip, "ws://", 5) == 0 || strncmp(server_ip, "wss://", 6) == 0) {
@@ -267,8 +275,15 @@ void StarWsClient::handleWsData(const uint8_t* data, size_t len) {
 
 void StarWsClient::run() {
     while (m_running) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        uint32_t changed_bits = 0;
+        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, pdMS_TO_TICKS(100));
         if (!m_running) break;
+
+        if (notified == pdTRUE && changed_bits > 0) {
+            m_last_changed = changed_bits;
+            SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+            onStateChanged(m_last_changed, snap);
+        }
 
         if (!m_client || !m_connected || !m_synced) {
             continue;
