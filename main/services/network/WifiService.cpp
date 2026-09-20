@@ -1,16 +1,31 @@
 #include "hal/network/WifiService.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/AppLogger.h"
+#include "common/thread_config.h"
 #include "services/storage/StorageService.h"
+#include "services/network/CaptiveDnsServer.h"
 #include "ArduinoJson.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "esp_mac.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <cstring>
 
-WifiService::WifiService(const Config& cfg) : m_config(cfg) {}
+WifiService::WifiService(const Config& cfg)
+    : ReactorTask(ReactorTask::Config{
+          "WifiSvc",
+          ThreadConfig::StackSize::STACK_NORMAL,
+          ThreadConfig::Priority::LOW,
+          ThreadConfig::CORE_NETWORK,
+          COMP::SYSTEM
+      }),
+      m_config(cfg) {}
+
+WifiService::~WifiService() {
+    stopSoftAp();
+}
 
 bool WifiService::saveCredentials(const std::string& ssid, const std::string& password) {
     if (ssid.empty()) return false;
@@ -82,7 +97,7 @@ bool WifiService::loadCredentials(std::string& outSsid, std::string& outPassword
         nvs_close(handle);
     }
 
-    // 3. Tier 3: Compile-time Kconfig defaults
+    // 3. Tier 3: Optional compile-time Kconfig defaults (if defined)
     if (!m_config.ssid.empty()) {
         outSsid = m_config.ssid;
         outPassword = m_config.password;
@@ -94,10 +109,62 @@ bool WifiService::loadCredentials(std::string& outSsid, std::string& outPassword
     return false;
 }
 
+bool WifiService::startSoftAp() {
+    if (m_ap_active) return true;
+
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    char ap_ssid[32];
+    std::snprintf(ap_ssid, sizeof(ap_ssid), "Waveshare-Setup-%02X%02X", mac[4], mac[5]);
+
+    wifi_config_t ap_config = {};
+    std::strncpy(reinterpret_cast<char*>(ap_config.ap.ssid), ap_ssid, sizeof(ap_config.ap.ssid));
+    ap_config.ap.ssid_len = strlen(ap_ssid);
+    ap_config.ap.channel = 1;
+    ap_config.ap.max_connection = 4;
+    ap_config.ap.authmode = WIFI_AUTH_OPEN;
+
+    // Use APSTA mode so station scanning and background attempts can function
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    esp_err_t err = esp_wifi_start();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STOPPED) {
+        LOGE_WIFI("Failed to start SoftAP: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    m_ap_active = true;
+    CaptiveDnsServer::getInstance().start();
+
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.system.network_state = NetworkState::PortalActive;
+        s.system.wifi_connected = false;
+        s.system.ap_active = true;
+    });
+
+    LOGI_WIFI("SoftAP active: SSID '%s' (IP: 192.168.4.1, open auth)", ap_ssid);
+    return true;
+}
+
+void WifiService::stopSoftAp() {
+    if (!m_ap_active) return;
+
+    CaptiveDnsServer::getInstance().stop();
+    m_ap_active = false;
+
+    esp_wifi_set_mode(WIFI_MODE_STA);
+
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.system.ap_active = false;
+    });
+
+    LOGI_WIFI("SoftAP stopped, returned to pure STA mode");
+}
+
 bool WifiService::connectWithCredentials(const std::string& ssid, const std::string& password) {
     if (ssid.empty()) return false;
 
-    // Persist to NVS
+    // Persist to NVS so credentials survive subsequent reboots
     saveCredentials(ssid, password);
 
     m_config.ssid = ssid;
@@ -111,12 +178,16 @@ bool WifiService::connectWithCredentials(const std::string& ssid, const std::str
                  password.c_str(), sizeof(wifi_config.sta.password));
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
+    // Keep AP active (APSTA) while attempting to connect, so client can monitor progress
+    esp_wifi_set_mode(WIFI_MODE_APSTA);
     esp_wifi_disconnect();
     esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
-    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+    EmbeddedSysDb::getInstance().mutate([&ssid](SystemState& s) {
         s.system.network_state = NetworkState::Connecting;
         s.system.wifi_connected = false;
+        std::strncpy(s.system.wifi_ssid, ssid.c_str(), sizeof(s.system.wifi_ssid) - 1);
+        s.system.wifi_ssid[sizeof(s.system.wifi_ssid) - 1] = '\0';
     });
 
     LOGI_WIFI("Reconnecting with new Wi-Fi credentials: SSID '%s'", ssid.c_str());
@@ -133,8 +204,9 @@ bool WifiService::begin() {
     }
     if (ret != ESP_OK) return false;
 
-    // 2. Network interface + default wifi station
-    esp_netif_create_default_wifi_sta();
+    // 2. Network interfaces: Create default STA and AP netifs
+    m_sta_netif = esp_netif_create_default_wifi_sta();
+    m_ap_netif  = esp_netif_create_default_wifi_ap();
 
     // 3. Configure and init WiFi driver
     ESP_LOGI(TAG, "Free internal heap before Wi-Fi init: %u bytes, largest DMA block: %u bytes",
@@ -147,36 +219,82 @@ bool WifiService::begin() {
     init_cfg.mgmt_sbuf_num = 16;
     ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
 
-    // 4. Register ESP system event handlers (runs in system event loop task)
+    // 4. Register ESP system event handlers
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &WifiService::sysEventHandler, this, nullptr));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         IP_EVENT, IP_EVENT_STA_GOT_IP, &WifiService::sysEventHandler, this, nullptr));
 
-    // 5. Resolve active credentials (SD -> NVS -> Kconfig)
-    std::string activeSsid;
-    std::string activePassword;
-    loadCredentials(activeSsid, activePassword);
-    m_config.ssid = activeSsid;
-    m_config.password = activePassword;
-
-    // 6. Build station config and start
-    wifi_config_t wifi_config = {};
-    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid),
-                 activeSsid.c_str(), sizeof(wifi_config.sta.ssid));
-    std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password),
-                 activePassword.c_str(), sizeof(wifi_config.sta.password));
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
     // Disable power-save for low-latency real-time audio streaming
     esp_wifi_set_ps(WIFI_PS_NONE);
 
-    LOGI_WIFI("WiFi Station Driver initialised (SSID: '%s').", activeSsid.c_str());
+    // 5. Resolve active credentials (SD -> NVS -> Kconfig)
+    std::string activeSsid;
+    std::string activePassword;
+    bool hasCreds = loadCredentials(activeSsid, activePassword);
+
+    if (hasCreds && !activeSsid.empty()) {
+        m_config.ssid = activeSsid;
+        m_config.password = activePassword;
+        m_retry_cnt = 0;
+
+        wifi_config_t wifi_config = {};
+        std::strncpy(reinterpret_cast<char*>(wifi_config.sta.ssid),
+                     activeSsid.c_str(), sizeof(wifi_config.sta.ssid));
+        std::strncpy(reinterpret_cast<char*>(wifi_config.sta.password),
+                     activePassword.c_str(), sizeof(wifi_config.sta.password));
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+        ESP_ERROR_CHECK(esp_wifi_start());
+
+        EmbeddedSysDb::getInstance().mutate([&activeSsid](SystemState& s) {
+            s.system.network_state = NetworkState::Connecting;
+            s.system.wifi_connected = false;
+            s.system.ap_active = false;
+            std::strncpy(s.system.wifi_ssid, activeSsid.c_str(), sizeof(s.system.wifi_ssid) - 1);
+            s.system.wifi_ssid[sizeof(s.system.wifi_ssid) - 1] = '\0';
+        });
+
+        LOGI_WIFI("WiFi Station Driver initialised (SSID: '%s').", activeSsid.c_str());
+    } else {
+        LOGW_WIFI("No Wi-Fi credentials found across storage tiers. Starting SoftAP captive portal directly...");
+        startSoftAp();
+    }
+
     return true;
+}
+
+void WifiService::onStateChanged(ComponentMask changed, const SystemState& snap) {
+    if (!(changed & COMP::SYSTEM)) return;
+
+    if (changed & BIT_SYSTEM::APPLY_CREDS) {
+        if (snap.system.wifi_apply_creds) {
+            std::string ssid = snap.system.wifi_ssid;
+            std::string pass = snap.system.wifi_password;
+
+            // Clear trigger latch in SysDb
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.system.wifi_apply_creds = false;
+            });
+
+            if (!ssid.empty()) {
+                LOGI_WIFI("SysDb triggered Wi-Fi connect request to SSID '%s'", ssid.c_str());
+                connectWithCredentials(ssid, pass);
+            }
+        }
+    }
+}
+
+void WifiService::run() {
+    while (m_running) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (!m_running) break;
+
+        SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+        onStateChanged(COMP::SYSTEM, snap);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,11 +324,9 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
             LOGI_WIFI("Retrying WiFi connection (%d/%d)...",
                       self->m_retry_cnt, self->m_config.max_retries);
         } else {
-            LOGW_WIFI("Max retries reached — marking network_state = Failed");
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.system.network_state = NetworkState::Failed;
-                s.system.wifi_connected = false;
-            });
+            LOGW_WIFI("Max retries reached (%d) — falling back to SoftAP captive portal",
+                      self->m_config.max_retries);
+            self->startSoftAp();
         }
 
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -218,9 +334,23 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
         LOGI_WIFI("Connected! IP: " IPSTR, IP2STR(&event->ip_info.ip));
         self->m_retry_cnt = 0;
 
+        // Disarm and close SoftAP now that STA connection is established
+        self->stopSoftAp();
+
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.system.network_state = NetworkState::Connected;
             s.system.wifi_connected = true;
+            s.system.ap_active = false;
         });
+
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t* evt = static_cast<wifi_event_ap_staconnected_t*>(event_data);
+        LOGI_WIFI("Client connected to SoftAP: MAC " MACSTR " (AID: %d)",
+                  MAC2STR(evt->mac), evt->aid);
+
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        wifi_event_ap_stadisconnected_t* evt = static_cast<wifi_event_ap_stadisconnected_t*>(event_data);
+        LOGI_WIFI("Client disconnected from SoftAP: MAC " MACSTR " (AID: %d)",
+                  MAC2STR(evt->mac), evt->aid);
     }
 }

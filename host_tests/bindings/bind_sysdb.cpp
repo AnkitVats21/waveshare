@@ -134,6 +134,10 @@ void init_sysdb(nb::module_& m) {
     tag_system.attr("network_state") = static_cast<uint8_t>(TAG_SYSTEM::network_state);
     tag_system.attr("server_ip") = static_cast<uint8_t>(TAG_SYSTEM::server_ip);
     tag_system.attr("wifi_max_retries") = static_cast<uint8_t>(TAG_SYSTEM::wifi_max_retries);
+    tag_system.attr("ap_active") = static_cast<uint8_t>(TAG_SYSTEM::ap_active);
+    tag_system.attr("wifi_ssid") = static_cast<uint8_t>(TAG_SYSTEM::wifi_ssid);
+    tag_system.attr("wifi_password") = static_cast<uint8_t>(TAG_SYSTEM::wifi_password);
+    tag_system.attr("wifi_apply_creds") = static_cast<uint8_t>(TAG_SYSTEM::wifi_apply_creds);
 
     auto tag_audio = m.def_submodule("TAG_AUDIO");
     tag_audio.attr("mic_gain_db") = static_cast<uint8_t>(TAG_AUDIO::mic_gain_db);
@@ -168,6 +172,24 @@ void init_sysdb(nb::module_& m) {
         .def_prop_rw("wifi_connected",
             [](const SystemState& s) { return s.system.wifi_connected; },
             [](SystemState& s, bool v) { s.system.wifi_connected = v; })
+        .def_prop_rw("ap_active",
+            [](const SystemState& s) { return s.system.ap_active; },
+            [](SystemState& s, bool v) { s.system.ap_active = v; })
+        .def_prop_rw("wifi_ssid",
+            [](const SystemState& s) { return std::string(s.system.wifi_ssid); },
+            [](SystemState& s, const std::string& v) {
+                strncpy(s.system.wifi_ssid, v.c_str(), sizeof(s.system.wifi_ssid) - 1);
+                s.system.wifi_ssid[sizeof(s.system.wifi_ssid) - 1] = '\0';
+            })
+        .def_prop_rw("wifi_password",
+            [](const SystemState& s) { return std::string(s.system.wifi_password); },
+            [](SystemState& s, const std::string& v) {
+                strncpy(s.system.wifi_password, v.c_str(), sizeof(s.system.wifi_password) - 1);
+                s.system.wifi_password[sizeof(s.system.wifi_password) - 1] = '\0';
+            })
+        .def_prop_rw("wifi_apply_creds",
+            [](const SystemState& s) { return s.system.wifi_apply_creds; },
+            [](SystemState& s, bool v) { s.system.wifi_apply_creds = v; })
         .def_prop_rw("speaker_volume",
             [](const SystemState& s) { return s.audio.speaker_volume; },
             [](SystemState& s, int v) { s.audio.speaker_volume = v; })

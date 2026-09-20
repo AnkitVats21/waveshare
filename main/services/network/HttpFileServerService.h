@@ -81,6 +81,12 @@ private:
     static esp_err_t otaUploadHandler(httpd_req_t* req);
     static esp_err_t systemRebootHandler(httpd_req_t* req);
 
+    // Static URI Handlers — Captive Portal & Wi-Fi Provisioning
+    static esp_err_t captiveRedirectHandler(httpd_req_t* req);
+    static esp_err_t wifiScanHandler(httpd_req_t* req);
+    static esp_err_t wifiConfigureHandler(httpd_req_t* req);
+    static esp_err_t wifiStatusHandler(httpd_req_t* req);
+
     // Helpers
     static bool getQueryParam(httpd_req_t* req, const char* param_name, std::string& out_val);
     static void urlDecode(const std::string& in, std::string& out);

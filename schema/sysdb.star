@@ -19,6 +19,10 @@ component System id=0 mask=0x00010000 {
     field network_state: NetworkState = NetworkState::Disconnected [readonly, bit=2:NETWORK_STATE]
     field server_ip: string[32] = "192.168.1.18" [writable, bit=1:SERVER_IP]
     field wifi_max_retries: int = 5 [writable]
+    field ap_active: bool = false [readonly, bit=3:AP_ACTIVE]
+    field wifi_ssid: string[33] = "" [writable, bit=4:WIFI_CONFIG]
+    field wifi_password: string[65] = "" [writable, bit=4:WIFI_CONFIG]
+    field wifi_apply_creds: bool = false [writable, bit=5:APPLY_CREDS]
 }
 
 component Audio id=1 mask=0x00020000 {

@@ -33,6 +33,7 @@ set(srcs
 
             # Services
             "services/network/WifiService.cpp"
+            "services/network/CaptiveDnsServer.cpp"
             "services/network/HttpFileServerService.cpp"
             "services/network/StarWsClient.cpp"
             "services/config_manager/config_manager.cpp"

@@ -140,6 +140,7 @@ extern "C" void app_main(void) {
     key_svc.begin();
 
     // 6.5 Spawn ReactorTask background threads
+    wifi.start();
     audio_svc.start();
     AlertPlayer::getInstance().start();
     led_svc.start();

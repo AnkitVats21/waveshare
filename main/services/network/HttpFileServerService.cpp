@@ -1,5 +1,6 @@
 #include "HttpFileServerService.h"
 #include "WebDashboardHtml.h"
+#include "CaptivePortalHtml.h"
 #include "services/storage/StorageService.h"
 #include "common/AppLogger.h"
 #include "common/thread_config.h"
@@ -66,14 +67,16 @@ void HttpFileServerService::onStateChanged(ComponentMask changed, const SystemSt
         return;
     }
 
-    bool wifi_connected = snap.system.wifi_connected;
-    if (wifi_connected && !m_wifi_was_connected) {
+    bool should_run = snap.system.wifi_connected || snap.system.ap_active;
+    if (should_run && !m_wifi_was_connected) {
         m_wifi_was_connected = true;
-        ESP_LOGI(TAG, "Wi-Fi connected — starting Control Hub & HTTP server on port %d...", CONFIG_WAVESHARE_HTTP_FILE_SERVER_PORT);
+        ESP_LOGI(TAG, "Network active (%s) — starting Control Hub & HTTP server on port %d...",
+                 snap.system.ap_active ? "SoftAP" : "STA",
+                 CONFIG_WAVESHARE_HTTP_FILE_SERVER_PORT);
         startServer();
-    } else if (!wifi_connected && m_wifi_was_connected) {
+    } else if (!should_run && m_wifi_was_connected) {
         m_wifi_was_connected = false;
-        ESP_LOGI(TAG, "Wi-Fi disconnected — stopping Control Hub server...");
+        ESP_LOGI(TAG, "Network down — stopping Control Hub server...");
         stopServer();
     }
 }
@@ -145,9 +148,23 @@ void HttpFileServerService::registerUriHandlers() {
         httpd_register_uri_handler(m_server, &u);
     };
 
-    // 1. Dashboard Web UI
+    // 1. Dashboard Web UI & Captive Portal
     reg("/", HTTP_GET, indexHandler);
     reg("/index.html", HTTP_GET, indexHandler);
+    reg("/setup", HTTP_GET, indexHandler);
+
+    // Captive Portal Detection Redirects
+    reg("/generate_204", HTTP_GET, captiveRedirectHandler);
+    reg("/gen_204", HTTP_GET, captiveRedirectHandler);
+    reg("/hotspot-detect.html", HTTP_GET, captiveRedirectHandler);
+    reg("/connecttest.txt", HTTP_GET, captiveRedirectHandler);
+    reg("/ncsi.txt", HTTP_GET, captiveRedirectHandler);
+    reg("/canonical.html", HTTP_GET, captiveRedirectHandler);
+
+    // Wi-Fi Setup & Provisioning APIs
+    reg("/api/wifi/scan", HTTP_GET, wifiScanHandler);
+    reg("/api/wifi/configure", HTTP_POST, wifiConfigureHandler);
+    reg("/api/wifi/status", HTTP_GET, wifiStatusHandler);
 
     // 2. File Manager APIs
     reg("/api/storage/info", HTTP_GET, storageInfoHandler);
@@ -293,8 +310,120 @@ const char* HttpFileServerService::getMimeType(const std::string& path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 esp_err_t HttpFileServerService::indexHandler(httpd_req_t* req) {
+    SystemState snap = EmbeddedSysDb::getInstance().snapshot();
     httpd_resp_set_type(req, "text/html");
+    if (snap.system.ap_active || std::strstr(req->uri, "/setup") != nullptr) {
+        return httpd_resp_send(req, CAPTIVE_PORTAL_HTML, HTTPD_RESP_USE_STRLEN);
+    }
     return httpd_resp_send(req, WEB_DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+esp_err_t HttpFileServerService::captiveRedirectHandler(httpd_req_t* req) {
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_send(req, nullptr, 0);
+    return ESP_OK;
+}
+
+esp_err_t HttpFileServerService::wifiScanHandler(httpd_req_t* req) {
+    wifi_scan_config_t scan_config = {};
+    scan_config.show_hidden = true;
+
+    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_scan_start failed: %s", esp_err_to_name(err));
+        return sendJsonError(req, 500, "Wi-Fi scan failed");
+    }
+
+    uint16_t ap_num = 0;
+    esp_wifi_scan_get_ap_num(&ap_num);
+    if (ap_num > 25) ap_num = 25;
+
+    std::vector<wifi_ap_record_t> ap_records(ap_num);
+    if (ap_num > 0) {
+        esp_wifi_scan_get_ap_records(&ap_num, ap_records.data());
+    }
+
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+    for (uint16_t i = 0; i < ap_num; ++i) {
+        if (ap_records[i].ssid[0] == '\0') continue;
+        JsonObject ap = arr.add<JsonObject>();
+        ap["ssid"] = reinterpret_cast<char*>(ap_records[i].ssid);
+        ap["rssi"] = ap_records[i].rssi;
+        ap["auth"] = (ap_records[i].authmode == WIFI_AUTH_OPEN) ? "OPEN" : "SECURED";
+    }
+
+    std::string out;
+    serializeJson(doc, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::wifiConfigureHandler(httpd_req_t* req) {
+    char buf[256];
+    int total_len = req->content_len;
+    if (total_len >= sizeof(buf) || total_len <= 0) {
+        return sendJsonError(req, 400, "Invalid payload length");
+    }
+
+    int cur_len = 0;
+    while (cur_len < total_len) {
+        int received = httpd_req_recv(req, buf + cur_len, total_len - cur_len);
+        if (received <= 0) return sendJsonError(req, 500, "Failed to read request body");
+        cur_len += received;
+    }
+    buf[total_len] = '\0';
+
+    JsonDocument doc;
+    DeserializationError derr = deserializeJson(doc, buf);
+    if (derr || !doc["ssid"].is<const char*>()) {
+        return sendJsonError(req, 400, "JSON must contain 'ssid'");
+    }
+
+    std::string ssid = doc["ssid"].as<std::string>();
+    std::string pass = doc["password"] | "";
+
+    if (ssid.empty()) {
+        return sendJsonError(req, 400, "SSID cannot be empty");
+    }
+
+    EmbeddedSysDb::getInstance().mutate([&ssid, &pass](SystemState& s) {
+        std::strncpy(s.system.wifi_ssid, ssid.c_str(), sizeof(s.system.wifi_ssid) - 1);
+        s.system.wifi_ssid[sizeof(s.system.wifi_ssid) - 1] = '\0';
+        std::strncpy(s.system.wifi_password, pass.c_str(), sizeof(s.system.wifi_password) - 1);
+        s.system.wifi_password[sizeof(s.system.wifi_password) - 1] = '\0';
+        s.system.wifi_apply_creds = true;
+    });
+
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["message"] = "Credentials received. Connecting to Wi-Fi...";
+    std::string out;
+    serializeJson(resp, out);
+    return sendJsonResponse(req, 200, out);
+}
+
+esp_err_t HttpFileServerService::wifiStatusHandler(httpd_req_t* req) {
+    SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+
+    JsonDocument doc;
+    const char* state_str = "Disconnected";
+    switch (snap.system.network_state) {
+        case NetworkState::Connecting:   state_str = "Connecting"; break;
+        case NetworkState::Connected:    state_str = "Connected"; break;
+        case NetworkState::PortalActive: state_str = "PortalActive"; break;
+        case NetworkState::Failed:       state_str = "Failed"; break;
+        default: break;
+    }
+
+    doc["network_state"] = state_str;
+    doc["wifi_connected"] = snap.system.wifi_connected;
+    doc["ap_active"] = snap.system.ap_active;
+    doc["ssid"] = snap.system.wifi_ssid;
+
+    std::string out;
+    serializeJson(doc, out);
+    return sendJsonResponse(req, 200, out);
 }
 
 esp_err_t HttpFileServerService::optionsHandler(httpd_req_t* req) {

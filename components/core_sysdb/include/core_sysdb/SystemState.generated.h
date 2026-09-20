@@ -47,6 +47,9 @@ namespace BIT_SYSTEM {
     static constexpr ComponentMask WIFI_CONNECTED   = (1u << 0);
     static constexpr ComponentMask NETWORK_STATE    = (1u << 2);
     static constexpr ComponentMask SERVER_IP        = (1u << 1);
+    static constexpr ComponentMask AP_ACTIVE        = (1u << 3);
+    static constexpr ComponentMask WIFI_CONFIG      = (1u << 4);
+    static constexpr ComponentMask APPLY_CREDS      = (1u << 5);
 }
 
 namespace BIT_AUDIO {
@@ -120,7 +123,11 @@ namespace BIT_MEDIA {
     X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED, FieldAccess::ReadOnly) \
     X(NetworkState, network_state, NetworkState::Disconnected, BIT_SYSTEM::NETWORK_STATE, FieldAccess::ReadOnly) \
     X_STR(server_ip, 32, "192.168.1.18", BIT_SYSTEM::SERVER_IP, FieldAccess::Writable) \
-    X(int, wifi_max_retries, 5, 0, FieldAccess::Writable)
+    X(int, wifi_max_retries, 5, 0, FieldAccess::Writable) \
+    X(bool, ap_active, false, BIT_SYSTEM::AP_ACTIVE, FieldAccess::ReadOnly) \
+    X_STR(wifi_ssid, 33, "", BIT_SYSTEM::WIFI_CONFIG, FieldAccess::Writable) \
+    X_STR(wifi_password, 65, "", BIT_SYSTEM::WIFI_CONFIG, FieldAccess::Writable) \
+    X(bool, wifi_apply_creds, false, BIT_SYSTEM::APPLY_CREDS, FieldAccess::Writable)
 
 #define AUDIO_FIELDS \
     X(uint32_t, sample_rate, LOCAL_SAMPLE_RATE, BIT_AUDIO::SAMPLE_RATE, FieldAccess::ReadOnly) \

@@ -145,3 +145,27 @@ def test_sysdb_multithreaded_concurrency_stress(sysdb):
         assert not r.is_alive(), "Reader thread hung or deadlocked!"
 
     assert len(errors) == 0, f"Concurrency stress errors: {errors}"
+
+
+def test_sysdb_wifi_provisioning_fields(sysdb):
+    """Verify AP active and Wi-Fi credential provisioning latch fields."""
+    snap = sysdb.snapshot()
+    assert snap.ap_active is False
+    assert snap.wifi_ssid == ""
+    assert snap.wifi_password == ""
+    assert snap.wifi_apply_creds is False
+
+    # Mutate credentials and trigger latch
+    def set_creds(s):
+        s.ap_active = True
+        s.wifi_ssid = "MyHomeNetwork"
+        s.wifi_password = "SecretPassword123"
+        s.wifi_apply_creds = True
+
+    sysdb.mutate(set_creds)
+
+    snap2 = sysdb.snapshot()
+    assert snap2.ap_active is True
+    assert snap2.wifi_ssid == "MyHomeNetwork"
+    assert snap2.wifi_password == "SecretPassword123"
+    assert snap2.wifi_apply_creds is True
