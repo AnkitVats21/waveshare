@@ -26,6 +26,8 @@ nanobind_add_module(waveshare_host
     bindings/bind_buffers.cpp
     bindings/bind_resampler.cpp
     ../components/core_sysdb/src/EmbeddedSysDb.cpp
+    ../components/core_sysdb/src/WalRingBuffer.cpp
+    ../components/core_sysdb/src/SysDbCodec.cpp
     ../components/core_sysdb/src/BufferManager.cpp
     ../components/core_sysdb/src/ReactorTask.cpp
     ../components/audio_core/src/Resampler.cpp

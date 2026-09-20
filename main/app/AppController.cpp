@@ -29,7 +29,7 @@ AppController::AppController()
           ThreadConfig::StackSize::STACK_NORMAL,
           ThreadConfig::Priority::LOW,
           ThreadConfig::CORE_NETWORK,
-          COMP::SYSTEM | COMP::AUDIO | COMP::BT_COMPANION
+          COMP::SYSTEM | COMP::AUDIO | COMP::BLUETOOTH
       })
 {}
 

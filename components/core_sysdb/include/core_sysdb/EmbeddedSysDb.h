@@ -1,54 +1,32 @@
 #pragma once
 
 #include "core_sysdb/SystemState.h"
+#include "core_sysdb/WalTypes.h"
+#include "core_sysdb/WalRingBuffer.h"
+#include "core_sysdb/SysDbCodec.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <cstddef>
 #include <atomic>
+#include <vector>
 
 namespace HotAudioBit {
     static constexpr uint32_t ASST_SPEAKING      = (1u << 0);
     static constexpr uint32_t TURN_COMPLETE_PEND = (1u << 1);
     static constexpr uint32_t COMPANION_CONN     = (1u << 2);
     static constexpr uint32_t COMPANION_SETTLED  = (1u << 3);
+    static constexpr uint32_t BT_CONNECTED       = COMPANION_CONN | COMPANION_SETTLED;
 }
 
 /**
- * @brief Thread-safe singleton state database for the entire application.
+ * @brief Authoritative singleton state database for the entire device.
  *
- * Replaces EventBus + GlobalSystemSettings + scattered service member vars.
- *
- * ## Concurrency model
- *   - **Multiple concurrent readers** via a counting semaphore
- *     (up to MAX_READERS simultaneous snapshots).
- *   - **Single exclusive writer** via a mutex; also holds all reader slots.
- *   - Writer calls notifyReactors_locked() inside the write lock, issuing
- *     xTaskNotifyGive() to every ReactorTask that registered interest in
- *     the mutated component(s).
- *
- * ## Usage — writers
- * ```cpp
- * EmbeddedSysDb::getInstance().mutate(COMP::AUDIO, [](SystemState& s) {
- *     s.audio.speaker_volume = 70;
- * });
- * ```
- *
- * ## Usage — readers (snapshot)
- * ```cpp
- * auto snap = EmbeddedSysDb::getInstance().snapshot();
- * int vol = snap.audio.speaker_volume;
- * ```
- *
- * ## Usage — hot-path single-field getters
- * ```cpp
- * bool speaking = EmbeddedSysDb::getInstance().assistantSpeaking();
- * ```
- *
- * ## Usage — ReactorTask registration (called from ReactorTask constructor)
- * ```cpp
- * EmbeddedSysDb::getInstance().registerReactor(COMP::AUDIO | COMP::ASSISTANT, handle);
- * ```
+ * Implements STAR (Single-writer, Tagged-field, Asynchronous Replication):
+ *   - The device holds the authoritative state.
+ *   - All mutations pass through mutate() under write lock.
+ *   - Automatic per-field change detection emits records into a PSRAM WAL ring buffer.
+ *   - External writes are validated at a single choke point against compile-time FieldAccess.
  */
 class EmbeddedSysDb {
 public:
@@ -57,10 +35,10 @@ public:
     // ── Writer API ────────────────────────────────────────────────────────────
 
     /**
-     * @brief Atomically mutate state, automatically diff it, and notify interested reactors.
+     * @brief Atomically mutate state, emit WAL records for changed fields, and notify reactors.
      *
-     * @param fn    Lambda / function pointer that receives a writable SystemState&.
-     *              Must return quickly — runs inside the write lock.
+     * @param fn Lambda / function pointer that receives a writable SystemState&.
+     *           Must return quickly — runs inside the write lock.
      */
     template <typename Fn>
     void mutate(Fn&& fn) {
@@ -68,20 +46,24 @@ public:
         SystemState old_state = m_state;
         fn(m_state);
         updateHotAudioFlags_locked();
-        ComponentMask changed = diffState(old_state, m_state);
+        ComponentMask changed = diffAndEmitWal_locked(old_state, m_state);
         if (changed > 0) {
             notifyReactors_locked(changed);
         }
         releaseWrite();
     }
 
+    /**
+     * @brief Validate and execute a remote write request from WebSocket/REST through the write-gate.
+     *
+     * Rejects ReadOnly fields structurally without taking the write lock.
+     */
+    WriteResult processRemoteWrite(ComponentId comp, uint8_t field_tag, const uint8_t* val, uint8_t val_len);
+
     // ── Reader API ────────────────────────────────────────────────────────────
 
     /**
      * @brief Return a value-copy of the full state under a shared read lock.
-     *
-     * Safe to call from any task or ISR-adjacent context.
-     * For hot paths prefer the typed single-field getters below.
      */
     SystemState snapshot() const;
 
@@ -102,36 +84,63 @@ public:
         return (hotAudioFlags() & HotAudioBit::COMPANION_SETTLED) != 0;
     }
 
-    // Hot-path single-field getters (shorter lock window than full snapshot)
-    bool               wifiConnected()       const;
-    NetworkState       networkState()        const;
-    int                speakerVolume()       const;
-    float              micGain()             const;
-    bool               assistantSpeaking()   const;
-    bool               micEnabled()          const;
-    AssistantState     sessionState()        const;
-    PipelineMode       pipelineMode()        const;
-    WsState            wsState()             const;
-    bool               turnCompletePending() const;
-    bool               alarmPlaying()        const;
-    bool               alarmStopRequested()  const;
-    MediaPlaybackState mediaState()          const;
-    bool               isMediaDucked()       const;
-    bool               autoplayEnabled()     const;
-    bool               cacheDownloads()      const;
-    bool               btCompanionConnected() const;
-    bool               btCompanionLinkSettled() const;
+    // Hot-path single-field getters
+    bool                wifiConnected()        const;
+    NetworkState        networkState()         const;
+    int                 speakerVolume()        const;
+    float               micGain()              const;
+    bool                assistantSpeaking()    const;
+    bool                micEnabled()           const;
+    AssistantState      sessionState()         const;
+    PipelineMode        pipelineMode()         const;
+    WsState             wsState()              const;
+    bool                turnCompletePending()  const;
+    bool                alarmPlaying()         const;
+    bool                alarmStopRequested()   const;
+    MediaPlaybackState  mediaState()           const;
+    bool                isMediaDucked()        const;
+    bool                autoplayEnabled()      const;
+    bool                cacheDownloads()       const;
+    bool                bluetoothConnected()   const;
+    MediaOutputTarget   mediaOutputTarget()    const;
+    MediaPendingCommand mediaPendingCommand()  const;
+
+    // Backward-compatibility aliases
+    bool btCompanionConnected()   const { return bluetoothConnected(); }
+    bool btCompanionLinkSettled() const { return bluetoothConnected(); }
+
+    // ── STAR Replication API ──────────────────────────────────────────────────
+
+    /**
+     * @brief Access the WAL ring buffer directly.
+     */
+    WalRingBuffer& getWal() { return m_wal; }
+    const WalRingBuffer& getWal() const { return m_wal; }
+
+    uint32_t walHeadSeq() const { return m_wal.getHeadSeq(); }
+
+    /**
+     * @brief Catch-up query for STAR clients.
+     */
+    WalQueryResult getWalRecordsSince(uint32_t since_seq,
+                                      std::vector<WalRecordEntry>& out_records,
+                                      uint32_t max_records = 256) const {
+        return m_wal.getRecordsSince(since_seq, out_records, max_records);
+    }
+
+    /**
+     * @brief Export full state as serialized WAL records with current head_seq.
+     */
+    uint32_t exportSnapshot(std::vector<WalRecordEntry>& out_snapshot) const;
 
     // ── Reactor registration ──────────────────────────────────────────────────
 
     /**
      * @brief Register a ReactorTask's FreeRTOS handle to receive notifications.
-     *
-     * Call from the ReactorTask constructor at boot time only.
-     * @param interest  OR'd COMP:: bitmask of components this reactor cares about.
-     * @param handle    FreeRTOS task handle to notify via xTaskNotifyGive().
      */
     void registerReactor(ComponentMask interest, TaskHandle_t handle);
+
+    static ComponentMask diffState(const SystemState& old_s, const SystemState& new_s);
 
 private:
     EmbeddedSysDb();
@@ -140,12 +149,9 @@ private:
     EmbeddedSysDb& operator=(const EmbeddedSysDb&) = delete;
 
     // ── FreeRTOS R/W lock ─────────────────────────────────────────────────────
-    // Pattern: counting semaphore gives MAX_READERS "read tokens".
-    // Reader: takes 1 token  / releases 1 token.
-    // Writer: takes ALL tokens (exclusive) / releases all.
     static constexpr int MAX_READERS = 8;
-    SemaphoreHandle_t m_read_sem;   ///< Counting semaphore (initial count = MAX_READERS)
-    SemaphoreHandle_t m_write_mutex;///< Protects the "take all slots" writer sequence
+    SemaphoreHandle_t m_read_sem;
+    SemaphoreHandle_t m_write_mutex;
 
     void acquireRead()  const;
     void releaseRead()  const;
@@ -153,7 +159,8 @@ private:
     void releaseWrite();
 
     // ── State ─────────────────────────────────────────────────────────────────
-    SystemState m_state;
+    SystemState   m_state;
+    WalRingBuffer m_wal;
 
     // ── Reactor registry ──────────────────────────────────────────────────────
     static constexpr size_t MAX_REACTORS = 12;
@@ -164,17 +171,13 @@ private:
     ReactorEntry m_reactors[MAX_REACTORS]{};
     size_t       m_reactor_count = 0;
 
-    /**
-     * @brief Called inside the write lock — issues xTaskNotifyGive() to all
-     *        registered reactors whose interest mask overlaps @p changed.
-     */
     void notifyReactors_locked(ComponentMask changed);
 
     // ── Hot-path atomic state cache ──────────────────────────────────────────
     std::atomic<uint32_t> m_hot_audio_flags{0};
     void updateHotAudioFlags_locked();
 
-    static ComponentMask diffState(const SystemState& old_s, const SystemState& new_s);
+    ComponentMask diffAndEmitWal_locked(const SystemState& old_s, const SystemState& new_s);
 
     static constexpr const char* TAG = "SysDb";
 };

@@ -122,9 +122,6 @@ void SpeakerPlaybackTask::run() {
     const uint32_t audio_flags = sysdb.hotAudioFlags();
     const bool asst_speaking   = (audio_flags & HotAudioBit::ASST_SPEAKING) != 0;
     const bool turn_pending    = (audio_flags & HotAudioBit::TURN_COMPLETE_PEND) != 0;
-    const bool companion_conn  = (audio_flags & HotAudioBit::COMPANION_CONN) != 0;
-    const bool companion_set   = (audio_flags & HotAudioBit::COMPANION_SETTLED) != 0;
-    const bool companion_active = companion_conn || !companion_set;
 
     bool has_voice = false;
     size_t num_voice = 0;

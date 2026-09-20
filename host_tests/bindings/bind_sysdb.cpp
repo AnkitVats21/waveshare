@@ -1,14 +1,64 @@
 #include "bindings.h"
 #include "core_sysdb/EmbeddedSysDb.h"
-#include "core_sysdb/SystemState.h"
-#include "core_sysdb/app_types.h"
-
+#include "core_sysdb/WalTypes.h"
+#include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
-#include <nanobind/stl/function.h>
-#include <cstring>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/pair.h>
+
+namespace nb = nanobind;
 
 void init_sysdb(nb::module_& m) {
-    // ── Enums ──
+    // ── STAR Enums ──
+    nb::enum_<FieldAccess>(m, "FieldAccess")
+        .value("ReadOnly", FieldAccess::ReadOnly)
+        .value("Writable", FieldAccess::Writable)
+        .value("PiOrigin", FieldAccess::PiOrigin)
+        .export_values();
+
+    nb::enum_<ComponentId>(m, "ComponentId")
+        .value("SYSTEM", ComponentId::SYSTEM)
+        .value("AUDIO", ComponentId::AUDIO)
+        .value("PIPELINE", ComponentId::PIPELINE)
+        .value("ASSISTANT", ComponentId::ASSISTANT)
+        .value("LED", ComponentId::LED)
+        .value("MQTT", ComponentId::MQTT)
+        .value("ALARM", ComponentId::ALARM)
+        .value("BLUETOOTH", ComponentId::BLUETOOTH)
+        .value("MEDIA", ComponentId::MEDIA)
+        .export_values();
+
+    nb::enum_<WriteResult>(m, "WriteResult")
+        .value("OK", WriteResult::OK)
+        .value("REJECTED_READONLY", WriteResult::REJECTED_READONLY)
+        .value("INVALID_COMPONENT", WriteResult::INVALID_COMPONENT)
+        .value("INVALID_TAG", WriteResult::INVALID_TAG)
+        .value("DECODE_ERROR", WriteResult::DECODE_ERROR)
+        .export_values();
+
+    nb::enum_<WalQueryResult>(m, "WalQueryResult")
+        .value("SUCCESS", WalQueryResult::SUCCESS)
+        .value("SNAPSHOT_REQUIRED", WalQueryResult::SNAPSHOT_REQUIRED)
+        .value("UP_TO_DATE", WalQueryResult::UP_TO_DATE)
+        .export_values();
+
+    nb::enum_<MediaOutputTarget>(m, "MediaOutputTarget")
+        .value("LOCAL", MediaOutputTarget::LOCAL)
+        .value("PI_BT", MediaOutputTarget::PI_BT)
+        .export_values();
+
+    nb::enum_<MediaCmdId>(m, "MediaCmdId")
+        .value("NONE", MediaCmdId::NONE)
+        .value("PLAY", MediaCmdId::PLAY)
+        .value("PAUSE", MediaCmdId::PAUSE)
+        .value("RESUME", MediaCmdId::RESUME)
+        .value("STOP", MediaCmdId::STOP)
+        .value("NEXT", MediaCmdId::NEXT)
+        .value("PREVIOUS", MediaCmdId::PREVIOUS)
+        .value("SEEK", MediaCmdId::SEEK)
+        .export_values();
+
+    // ── Existing Application Enums ──
     nb::enum_<AssistantState>(m, "AssistantState")
         .value("Idle", AssistantState::Idle)
         .value("StartingSession", AssistantState::StartingSession)
@@ -63,8 +113,8 @@ void init_sysdb(nb::module_& m) {
         .value("ERROR_STATE", WsState::ERROR_STATE)
         .export_values();
 
-    // ── COMP mask constants ──
-    auto comp = m.def_submodule("COMP", "Component bitmasks");
+    // ── ComponentMask Constants ──
+    auto comp = m.def_submodule("COMP", "Component change bitmasks");
     comp.attr("SYSTEM") = COMP::SYSTEM;
     comp.attr("AUDIO") = COMP::AUDIO;
     comp.attr("PIPELINE") = COMP::PIPELINE;
@@ -72,9 +122,44 @@ void init_sysdb(nb::module_& m) {
     comp.attr("LED") = COMP::LED;
     comp.attr("MQTT") = COMP::MQTT;
     comp.attr("ALARM") = COMP::ALARM;
+    comp.attr("BLUETOOTH") = COMP::BLUETOOTH;
     comp.attr("BT_COMPANION") = COMP::BT_COMPANION;
     comp.attr("MEDIA") = COMP::MEDIA;
     comp.attr("ALL") = COMP::ALL;
+
+    // ── Field Tag Namespaces ──
+    auto tag_system = m.def_submodule("TAG_SYSTEM");
+    tag_system.attr("wifi_connected") = static_cast<uint8_t>(TAG_SYSTEM::wifi_connected);
+    tag_system.attr("network_state") = static_cast<uint8_t>(TAG_SYSTEM::network_state);
+    tag_system.attr("server_ip") = static_cast<uint8_t>(TAG_SYSTEM::server_ip);
+    tag_system.attr("wifi_max_retries") = static_cast<uint8_t>(TAG_SYSTEM::wifi_max_retries);
+
+    auto tag_audio = m.def_submodule("TAG_AUDIO");
+    tag_audio.attr("mic_gain_db") = static_cast<uint8_t>(TAG_AUDIO::mic_gain_db);
+    tag_audio.attr("speaker_volume") = static_cast<uint8_t>(TAG_AUDIO::speaker_volume);
+    tag_audio.attr("mic_enabled") = static_cast<uint8_t>(TAG_AUDIO::mic_enabled);
+    tag_audio.attr("assistant_speaking") = static_cast<uint8_t>(TAG_AUDIO::assistant_speaking);
+
+    auto tag_media = m.def_submodule("TAG_MEDIA");
+    tag_media.attr("state") = static_cast<uint8_t>(TAG_MEDIA::state);
+    tag_media.attr("active_song_id") = static_cast<uint8_t>(TAG_MEDIA::active_song_id);
+    tag_media.attr("title") = static_cast<uint8_t>(TAG_MEDIA::title);
+    tag_media.attr("artist") = static_cast<uint8_t>(TAG_MEDIA::artist);
+    tag_media.attr("position_ms") = static_cast<uint8_t>(TAG_MEDIA::position_ms);
+    tag_media.attr("duration_ms") = static_cast<uint8_t>(TAG_MEDIA::duration_ms);
+    tag_media.attr("seekable") = static_cast<uint8_t>(TAG_MEDIA::seekable);
+    tag_media.attr("repeat_mode") = static_cast<uint8_t>(TAG_MEDIA::repeat_mode);
+    tag_media.attr("is_ducked") = static_cast<uint8_t>(TAG_MEDIA::is_ducked);
+    tag_media.attr("autoplay_enabled") = static_cast<uint8_t>(TAG_MEDIA::autoplay_enabled);
+    tag_media.attr("cache_downloads") = static_cast<uint8_t>(TAG_MEDIA::cache_downloads);
+    tag_media.attr("output_target") = static_cast<uint8_t>(TAG_MEDIA::output_target);
+    tag_media.attr("pending_command") = static_cast<uint8_t>(TAG_MEDIA::pending_command);
+
+    auto tag_bt = m.def_submodule("TAG_BLUETOOTH");
+    tag_bt.attr("connected") = static_cast<uint8_t>(TAG_BLUETOOTH::connected);
+    tag_bt.attr("device_name") = static_cast<uint8_t>(TAG_BLUETOOTH::device_name);
+    tag_bt.attr("mac_address") = static_cast<uint8_t>(TAG_BLUETOOTH::mac_address);
+    tag_bt.attr("rssi") = static_cast<uint8_t>(TAG_BLUETOOTH::rssi);
 
     // ── SystemState ──
     nb::class_<SystemState>(m, "SystemState")
@@ -115,12 +200,18 @@ void init_sysdb(nb::module_& m) {
         .def_prop_rw("autoplay_enabled",
             [](const SystemState& s) { return s.media.autoplay_enabled; },
             [](SystemState& s, bool v) { s.media.autoplay_enabled = v; })
+        .def_prop_rw("bluetooth_connected",
+            [](const SystemState& s) { return s.bluetooth.connected; },
+            [](SystemState& s, bool v) { s.bluetooth.connected = v; })
         .def_prop_rw("companion_connected",
-            [](const SystemState& s) { return s.bt_companion.connected; },
-            [](SystemState& s, bool v) { s.bt_companion.connected = v; })
+            [](const SystemState& s) { return s.bluetooth.connected; },
+            [](SystemState& s, bool v) { s.bluetooth.connected = v; })
         .def_prop_rw("companion_settled",
-            [](const SystemState& s) { return s.bt_companion.link_settled; },
-            [](SystemState& s, bool v) { s.bt_companion.link_settled = v; })
+            [](const SystemState& s) { return s.bluetooth.connected; },
+            [](SystemState& s, bool v) { s.bluetooth.connected = v; })
+        .def_prop_rw("output_target",
+            [](const SystemState& s) { return s.media.output_target; },
+            [](SystemState& s, MediaOutputTarget v) { s.media.output_target = v; })
         .def_prop_rw("active_song_id",
             [](const SystemState& s) { return std::string(s.media.active_song_id); },
             [](SystemState& s, const std::string& v) {
@@ -134,33 +225,65 @@ void init_sysdb(nb::module_& m) {
                 s.media.title[sizeof(s.media.title) - 1] = '\0';
             });
 
+    // ── WalRecordEntry ──
+    nb::class_<WalRecordEntry>(m, "WalRecordEntry")
+        .def_ro("seq", &WalRecordEntry::seq)
+        .def_prop_ro("component_id", [](const WalRecordEntry& e) {
+            return static_cast<ComponentId>(e.component_id);
+        })
+        .def_ro("field_tag", &WalRecordEntry::field_tag)
+        .def_prop_ro("value", [](const WalRecordEntry& e) {
+            return nb::bytes(reinterpret_cast<const char*>(e.value.data()), e.value.size());
+        });
+
     // ── EmbeddedSysDb ──
     nb::class_<EmbeddedSysDb>(m, "EmbeddedSysDb")
         .def_static("get_instance", &EmbeddedSysDb::getInstance, nb::rv_policy::reference)
-        .def("snapshot", &EmbeddedSysDb::snapshot)
+        .def("snapshot", &EmbeddedSysDb::snapshot, nb::call_guard<nb::gil_scoped_release>())
         .def("mutate", [](EmbeddedSysDb& self, nb::callable fn) {
+            nb::gil_scoped_release release_gil;
             self.mutate([&fn](SystemState& s) {
+                nb::gil_scoped_acquire acquire_gil;
                 fn(nb::cast(&s, nb::rv_policy::reference));
             });
         })
-        .def("wifi_connected", &EmbeddedSysDb::wifiConnected)
-        .def("network_state", &EmbeddedSysDb::networkState)
-        .def("speaker_volume", &EmbeddedSysDb::speakerVolume)
-        .def("mic_gain", &EmbeddedSysDb::micGain)
-        .def("assistant_speaking", &EmbeddedSysDb::assistantSpeaking)
-        .def("mic_enabled", &EmbeddedSysDb::micEnabled)
-        .def("session_state", &EmbeddedSysDb::sessionState)
-        .def("pipeline_mode", &EmbeddedSysDb::pipelineMode)
-        .def("ws_state", &EmbeddedSysDb::wsState)
-        .def("turn_complete_pending", &EmbeddedSysDb::turnCompletePending)
-        .def("alarm_playing", &EmbeddedSysDb::alarmPlaying)
-        .def("alarm_stop_requested", &EmbeddedSysDb::alarmStopRequested)
-        .def("media_state", &EmbeddedSysDb::mediaState)
-        .def("is_media_ducked", &EmbeddedSysDb::isMediaDucked)
-        .def("autoplay_enabled", &EmbeddedSysDb::autoplayEnabled)
-        .def("cache_downloads", &EmbeddedSysDb::cacheDownloads)
-        .def("bt_companion_connected", &EmbeddedSysDb::btCompanionConnected)
-        .def("bt_companion_link_settled", &EmbeddedSysDb::btCompanionLinkSettled)
+        .def("process_remote_write", [](EmbeddedSysDb& self, ComponentId comp, uint8_t tag, nb::bytes data) {
+            nb::gil_scoped_release release_gil;
+            return self.processRemoteWrite(comp, tag,
+                reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
+        })
+        .def("wal_head_seq", &EmbeddedSysDb::walHeadSeq, nb::call_guard<nb::gil_scoped_release>())
+        .def("get_wal_records_since", [](const EmbeddedSysDb& self, uint32_t since_seq, uint32_t max_records) {
+            nb::gil_scoped_release release_gil;
+            std::vector<WalRecordEntry> records;
+            WalQueryResult res = self.getWalRecordsSince(since_seq, records, max_records);
+            return std::make_pair(res, records);
+        })
+        .def("export_snapshot", [](const EmbeddedSysDb& self) {
+            nb::gil_scoped_release release_gil;
+            std::vector<WalRecordEntry> snapshot;
+            uint32_t head_seq = self.exportSnapshot(snapshot);
+            return std::make_pair(head_seq, snapshot);
+        })
+        .def("wifi_connected", &EmbeddedSysDb::wifiConnected, nb::call_guard<nb::gil_scoped_release>())
+        .def("network_state", &EmbeddedSysDb::networkState, nb::call_guard<nb::gil_scoped_release>())
+        .def("speaker_volume", &EmbeddedSysDb::speakerVolume, nb::call_guard<nb::gil_scoped_release>())
+        .def("mic_gain", &EmbeddedSysDb::micGain, nb::call_guard<nb::gil_scoped_release>())
+        .def("assistant_speaking", &EmbeddedSysDb::assistantSpeaking, nb::call_guard<nb::gil_scoped_release>())
+        .def("mic_enabled", &EmbeddedSysDb::micEnabled, nb::call_guard<nb::gil_scoped_release>())
+        .def("session_state", &EmbeddedSysDb::sessionState, nb::call_guard<nb::gil_scoped_release>())
+        .def("pipeline_mode", &EmbeddedSysDb::pipelineMode, nb::call_guard<nb::gil_scoped_release>())
+        .def("ws_state", &EmbeddedSysDb::wsState, nb::call_guard<nb::gil_scoped_release>())
+        .def("turn_complete_pending", &EmbeddedSysDb::turnCompletePending, nb::call_guard<nb::gil_scoped_release>())
+        .def("alarm_playing", &EmbeddedSysDb::alarmPlaying, nb::call_guard<nb::gil_scoped_release>())
+        .def("alarm_stop_requested", &EmbeddedSysDb::alarmStopRequested, nb::call_guard<nb::gil_scoped_release>())
+        .def("media_state", &EmbeddedSysDb::mediaState, nb::call_guard<nb::gil_scoped_release>())
+        .def("is_media_ducked", &EmbeddedSysDb::isMediaDucked, nb::call_guard<nb::gil_scoped_release>())
+        .def("autoplay_enabled", &EmbeddedSysDb::autoplayEnabled, nb::call_guard<nb::gil_scoped_release>())
+        .def("cache_downloads", &EmbeddedSysDb::cacheDownloads, nb::call_guard<nb::gil_scoped_release>())
+        .def("bluetooth_connected", &EmbeddedSysDb::bluetoothConnected, nb::call_guard<nb::gil_scoped_release>())
+        .def("bt_companion_connected", &EmbeddedSysDb::btCompanionConnected, nb::call_guard<nb::gil_scoped_release>())
+        .def("bt_companion_link_settled", &EmbeddedSysDb::btCompanionLinkSettled, nb::call_guard<nb::gil_scoped_release>())
         .def("hot_audio_flags", &EmbeddedSysDb::hotAudioFlags)
         .def("hot_assistant_speaking", &EmbeddedSysDb::hotAssistantSpeaking)
         .def("hot_turn_complete_pending", &EmbeddedSysDb::hotTurnCompletePending)

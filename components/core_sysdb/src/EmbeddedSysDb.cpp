@@ -23,8 +23,7 @@ void EmbeddedSysDb::updateHotAudioFlags_locked() {
     uint32_t hot = 0;
     if (m_state.audio.assistant_speaking)     hot |= HotAudioBit::ASST_SPEAKING;
     if (m_state.audio.turn_complete_pending)  hot |= HotAudioBit::TURN_COMPLETE_PEND;
-    if (m_state.bt_companion.connected)       hot |= HotAudioBit::COMPANION_CONN;
-    if (m_state.bt_companion.link_settled)    hot |= HotAudioBit::COMPANION_SETTLED;
+    if (m_state.bluetooth.connected)          hot |= HotAudioBit::BT_CONNECTED;
     m_hot_audio_flags.store(hot, std::memory_order_release);
 }
 
@@ -185,12 +184,66 @@ bool EmbeddedSysDb::cacheDownloads() const {
     return v;
 }
 
-bool EmbeddedSysDb::btCompanionConnected() const {
+bool EmbeddedSysDb::bluetoothConnected() const {
     return hotCompanionConnected();
 }
 
-bool EmbeddedSysDb::btCompanionLinkSettled() const {
-    return hotCompanionSettled();
+MediaOutputTarget EmbeddedSysDb::mediaOutputTarget() const {
+    acquireRead();
+    MediaOutputTarget v = m_state.media.output_target;
+    releaseRead();
+    return v;
+}
+
+MediaPendingCommand EmbeddedSysDb::mediaPendingCommand() const {
+    acquireRead();
+    MediaPendingCommand v = m_state.media.pending_command;
+    releaseRead();
+    return v;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAR Replication API
+// ─────────────────────────────────────────────────────────────────────────────
+
+WriteResult EmbeddedSysDb::processRemoteWrite(ComponentId comp, uint8_t field_tag, const uint8_t* val, uint8_t val_len) {
+    if (static_cast<uint8_t>(comp) >= static_cast<uint8_t>(ComponentId::COUNT)) {
+        return WriteResult::INVALID_COMPONENT;
+    }
+
+    if (field_tag >= getFieldCount(comp)) {
+        return WriteResult::INVALID_TAG;
+    }
+
+    FieldAccess access = getFieldAccess(comp, field_tag);
+    if (access == FieldAccess::ReadOnly) {
+        ESP_LOGW(TAG, "Write rejected: field (comp=%u, tag=%u) is ReadOnly",
+                 static_cast<unsigned>(comp), field_tag);
+        return WriteResult::REJECTED_READONLY;
+    }
+
+    bool success = false;
+    mutate([comp, field_tag, val, val_len, &success](SystemState& s) {
+        success = SysDbCodec::applyFieldWrite(s, comp, field_tag, val, val_len);
+    });
+
+    if (!success) {
+        ESP_LOGE(TAG, "Decode error applying write to (comp=%u, tag=%u, len=%u)",
+                 static_cast<unsigned>(comp), field_tag, val_len);
+        return WriteResult::DECODE_ERROR;
+    }
+
+    return WriteResult::OK;
+}
+
+uint32_t EmbeddedSysDb::exportSnapshot(std::vector<WalRecordEntry>& out_snapshot) const {
+    acquireRead();
+    SystemState copy = m_state;
+    uint32_t head_seq = m_wal.getHeadSeq();
+    releaseRead();
+
+    SysDbCodec::serializeSnapshot(copy, head_seq, out_snapshot);
+    return head_seq;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,109 +260,20 @@ void EmbeddedSysDb::registerReactor(ComponentMask interest, TaskHandle_t handle)
     ESP_LOGI(TAG, "Reactor registered (mask=0x%02lx, total=%zu)", (unsigned long)interest, m_reactor_count);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reactor notification (called inside the write lock)
-// ─────────────────────────────────────────────────────────────────────────────
-
 void EmbeddedSysDb::notifyReactors_locked(ComponentMask changed) {
     uint32_t changed_comp = changed & 0xFFFF0000;
     for (size_t i = 0; i < m_reactor_count; ++i) {
         if (m_reactors[i].mask & changed_comp) {
-            // xTaskNotify is safe from task context.
-            // Use eSetBits to combine changed masks so the reactor knows what changed.
             xTaskNotify(m_reactors[i].handle, changed, eSetBits);
         }
     }
 }
 
+ComponentMask EmbeddedSysDb::diffAndEmitWal_locked(const SystemState& old_s, const SystemState& new_s) {
+    return SysDbCodec::diffAndEmitWal(old_s, new_s, m_wal);
+}
+
 ComponentMask EmbeddedSysDb::diffState(const SystemState& old_s, const SystemState& new_s) {
-    ComponentMask changed = 0;
-
-    // SYSTEM_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.system.name != new_s.system.name) changed |= (COMP::SYSTEM | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.system.name, new_s.system.name) != 0) changed |= (COMP::SYSTEM | bit);
-    SYSTEM_FIELDS
-    #undef X
-    #undef X_STR
-
-    // AUDIO_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.audio.name != new_s.audio.name) changed |= (COMP::AUDIO | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.audio.name, new_s.audio.name) != 0) changed |= (COMP::AUDIO | bit);
-    AUDIO_FIELDS
-    #undef X
-    #undef X_STR
-
-    // PIPELINE_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.pipeline.name != new_s.pipeline.name) changed |= (COMP::PIPELINE | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.pipeline.name, new_s.pipeline.name) != 0) changed |= (COMP::PIPELINE | bit);
-    PIPELINE_FIELDS
-    #undef X
-    #undef X_STR
-
-    // ASSISTANT_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.assistant.name != new_s.assistant.name) changed |= (COMP::ASSISTANT | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.assistant.name, new_s.assistant.name) != 0) changed |= (COMP::ASSISTANT | bit);
-    ASSISTANT_FIELDS
-    #undef X
-    #undef X_STR
-
-    // LED_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.led.name != new_s.led.name) changed |= (COMP::LED | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.led.name, new_s.led.name) != 0) changed |= (COMP::LED | bit);
-    #define X_COLOR(name, def, bit) \
-        if (bit != 0 && (old_s.led.name.r != new_s.led.name.r || \
-                         old_s.led.name.g != new_s.led.name.g || \
-                         old_s.led.name.b != new_s.led.name.b)) changed |= (COMP::LED | bit);
-    LED_FIELDS
-    #undef X
-    #undef X_STR
-    #undef X_COLOR
-
-    // MQTT_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.mqtt.name != new_s.mqtt.name) changed |= (COMP::MQTT | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.mqtt.name, new_s.mqtt.name) != 0) changed |= (COMP::MQTT | bit);
-    MQTT_FIELDS
-    #undef X
-    #undef X_STR
-
-    // ALARM_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.alarm.name != new_s.alarm.name) changed |= (COMP::ALARM | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.alarm.name, new_s.alarm.name) != 0) changed |= (COMP::ALARM | bit);
-    ALARM_FIELDS
-    #undef X
-    #undef X_STR
-
-    // BT_COMPANION_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.bt_companion.name != new_s.bt_companion.name) changed |= (COMP::BT_COMPANION | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.bt_companion.name, new_s.bt_companion.name) != 0) changed |= (COMP::BT_COMPANION | bit);
-    BT_COMPANION_FIELDS
-    #undef X
-    #undef X_STR
-
-    // MEDIA_FIELDS
-    #define X(type, name, def, bit) \
-        if (bit != 0 && old_s.media.name != new_s.media.name) changed |= (COMP::MEDIA | bit);
-    #define X_STR(name, size, def, bit) \
-        if (bit != 0 && strcmp(old_s.media.name, new_s.media.name) != 0) changed |= (COMP::MEDIA | bit);
-    MEDIA_FIELDS
-    #undef X
-    #undef X_STR
-
-    return changed;
+    WalRingBuffer dummy_wal(1024);
+    return SysDbCodec::diffAndEmitWal(old_s, new_s, dummy_wal);
 }
