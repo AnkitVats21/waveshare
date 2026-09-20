@@ -89,6 +89,31 @@ graph TD
     SysDb <--> AssistantCore
 ```
 
+### System-of-systems view
+
+This repo is the **firmware side only**. In production the board talks to
+a small host-side stack over the STAR wire protocol (a schema-driven state
+replication protocol compiled from `schema/sysdb.star`); that stack lives
+in sibling repos, not here:
+
+```mermaid
+graph LR
+    FW["ESP32-S3 firmware (this repo)<br/>EmbeddedSysDb"]
+    Hub["starhub daemon<br/>(STAR replica host, WS gateway)"]
+    Dash["waveshare-dashboard<br/>(React/Vite web UI)"]
+    Inv["invidious-daemon<br/>(YouTube resolver, remote host)"]
+
+    FW <-- "binary WS, /api/star/ws<br/>WAL_BATCH / REQ_CATCHUP / CMD_SET_FIELD" --> Hub
+    Dash <-- "JSON WS, /api/dashboard/ws<br/>{cmd, ...} + full-state snapshots" --> Hub
+    Dash -- "REST: search, SD library, alert chime" --> FW
+    Dash -- "REST: search/resolve" --> Inv
+```
+
+`starhub` and `waveshare-dashboard` run as Docker containers (see
+[Companion repositories](#-repository-structure) below) — the firmware
+itself is still flashed the normal ESP-IDF way and has no Docker
+involvement.
+
 ---
 
 ## 🌟 Key Highlights
@@ -220,7 +245,27 @@ vendored copy of the STAR wire-protocol headers generated here from
   the React/Vite web dashboard (formerly `web-app/`).
 - [`invidious-daemon`](https://github.com/AnkitVats21/invidious-daemon) —
   the Invidious-backed YouTube audio resolver/cache daemon (formerly
-  `server/invidious-daemon`).
+  `server/invidious-daemon`), deployed separately and not part of the
+  local Docker stack below.
+
+**Schema changes propagate manually.** When `schema/sysdb.star` changes,
+regenerate `SystemState.generated.h` here via `tools/starc`, then copy the
+updated headers into `starhub`'s `vendor/core_sysdb/` — there's no
+automated sync between the two repos yet.
+
+**Running `starhub` + `waveshare-dashboard` locally** is done via Docker
+Compose from the sibling `~/ai-assistant` directory (one level up from
+this repo), not as bare background processes — a stale bare daemon binary
+silently drifting out of sync with the dashboard's expected snapshot shape
+has caused real bugs before:
+
+```bash
+cd ~/ai-assistant
+docker compose up -d --build
+```
+
+This starts `starhub` on `:8765` (WS + REST) and the dashboard on `:5173`.
+See `~/ai-assistant/AGENT.md` for the full system layout.
 
 ---
 
