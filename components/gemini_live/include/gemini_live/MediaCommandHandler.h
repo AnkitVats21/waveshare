@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/gemini_live/gemini_skills_generated.h"
+#include "gemini_skills_generated.h"
 #include <ArduinoJson.h>
 
 class MediaCommandHandler {

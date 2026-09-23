@@ -3,8 +3,42 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "esp_log.h"
 #include "freertos/task.h"
+#include <cerrno>
+#include <sys/stat.h>
 
 static const char* TAG = "DeviceCmd";
+
+namespace {
+
+// write_file/read_file are confined to one flat notes folder so the model
+// can't read secrets (gemini_config.json) or overwrite device config.
+constexpr const char* NOTES_DIR = "/sdcard/notes";
+constexpr size_t NOTE_NAME_MAX = 64;
+constexpr size_t NOTE_READ_MAX = 8192;  // keeps the tool response small
+
+// Maps a model-supplied name ("shopping.txt", or "/sdcard/notes/shopping.txt")
+// to a full path inside NOTES_DIR. False if it would leave the folder.
+bool resolveNotePath(const std::string& in, std::string& out) {
+    std::string name = in;
+    const std::string prefix = std::string(NOTES_DIR) + "/";
+    if (name.compare(0, prefix.size(), prefix) == 0) name.erase(0, prefix.size());
+    if (name.empty() || name.size() > NOTE_NAME_MAX || name[0] == '.') return false;
+    for (char c : name) {
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                  c == '-' || c == '_' || c == '.';
+        if (!ok) return false;
+    }
+    out = prefix + name;
+    return true;
+}
+
+void rejectPath(JsonDocument& response_doc) {
+    response_doc["status"] = "error";
+    response_doc["message"] = "Invalid note name. Use a plain file name like 'shopping.txt' "
+                              "(letters, digits, '-', '_', '.'; no folders).";
+}
+
+} // namespace
 
 IDeviceCommandDelegate* DeviceCommandHandler::s_delegate = nullptr;
 
@@ -32,9 +66,17 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Storage service unavailable";
                 return true;
             }
-            bool ok = s_delegate->writeFile(args->path.c_str(), args->content.c_str());
+            std::string path;
+            if (!resolveNotePath(args->path, path)) {
+                rejectPath(response_doc);
+                return true;
+            }
+            if (mkdir(NOTES_DIR, 0775) != 0 && errno != EEXIST) {
+                ESP_LOGW(TAG, "Could not create %s (errno %d)", NOTES_DIR, errno);
+            }
+            bool ok = s_delegate->writeFile(path.c_str(), args->content.c_str());
             response_doc["status"] = ok ? "success" : "error";
-            response_doc["message"] = ok ? "File written successfully" : "Failed to write file";
+            response_doc["message"] = ok ? "Note saved" : "Failed to save note";
             return true;
         }
             
@@ -50,47 +92,23 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Storage service unavailable";
                 return true;
             }
-            std::string content = s_delegate->readFile(args->path.c_str());
-            if (!content.empty() || s_delegate->fileExists(args->path.c_str())) {
-                response_doc["status"] = "success";
-                response_doc["content"] = content;
-            } else {
-                response_doc["status"] = "error";
-                response_doc["message"] = "File not found or empty";
-            }
-            return true;
-        }
-            
-        case SkillType::RESTART_WEBSOCKET_CLIENT: {
-            ESP_LOGI(TAG, "Tool request: Restarting WebSocket client...");
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.assistant.connect_requested = false;
-            });
-            // Yield task execution briefly to allow the connection to tear down
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.assistant.connect_requested = true;
-            });
-            response_doc["status"] = "success";
-            response_doc["message"] = "WebSocket client restart triggered";
-            return true;
-        }
-            
-        case SkillType::SET_DEVICE_VOLUME: {
-            auto args = skill_call.args.set_device_volume;
-            if (args == nullptr) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Null volume level arguments";
+            std::string path;
+            if (!resolveNotePath(args->path, path)) {
+                rejectPath(response_doc);
                 return true;
             }
-            int vol = (int)args->level;
-            if (vol < 0) vol = 0;
-            if (vol > 100) vol = 100;
-            EmbeddedSysDb::getInstance().mutate([vol](SystemState& s) {
-                s.audio.speaker_volume = vol;
-            });
+            if (!s_delegate->fileExists(path.c_str())) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Note not found";
+                return true;
+            }
+            std::string content = s_delegate->readFile(path.c_str());
+            if (content.size() > NOTE_READ_MAX) {
+                content.resize(NOTE_READ_MAX);
+                response_doc["truncated"] = true;
+            }
             response_doc["status"] = "success";
-            response_doc["message"] = "Volume level adjusted successfully";
+            response_doc["content"] = content;
             return true;
         }
             

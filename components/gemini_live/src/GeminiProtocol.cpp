@@ -153,9 +153,10 @@ bool GeminiProtocol::ensureClientInitialized() {
     ws_cfg.task_prio = ThreadConfig::Priority::GEMINI_PROTOCOL;
     ws_cfg.task_core_id = ThreadConfig::CORE_NETWORK;
     ws_cfg.task_core_id_set = true;
-    ws_cfg.cert_pem = nullptr;
-    ws_cfg.crt_bundle_attach = nullptr;
-    ws_cfg.skip_cert_common_name_check = true;
+    // The API key travels in the URL: always verify the server certificate and
+    // hostname (attaching the bundle overrides CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY).
+    ws_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    ws_cfg.skip_cert_common_name_check = false;
 
     if (!m_client.init(ws_cfg)) {
         LOGE_NET("Failed to initialize Gemini WebSocket client handle.");
@@ -515,21 +516,38 @@ void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {
     for (JsonObjectConst funcCall : functionCalls) {
         if (funcCall.isNull()) continue;
 
-        const char* name = funcCall["name"];
+        const char* name = funcCall["name"] | "";
         const char* id = funcCall["id"];
+        // Parameterless calls may arrive without an "args" object.
         JsonObjectConst argsObj = funcCall["args"];
-        
-        if (name && id && !argsObj.isNull()) {
-            std::memset(&m_static_skill_event_slot, 0, sizeof(m_static_skill_event_slot));
-            std::strncpy(m_static_skill_event_slot.call_id, id, sizeof(m_static_skill_event_slot.call_id) - 1);
-            
-            if (GeminiSkills::decode_incoming_arguments(name, argsObj, m_static_skill_event_slot)) {
-                LOGI_NET("Tool request: %s", name);
-                if (m_tool_handler) {
-                    m_tool_handler(m_static_skill_event_slot, m_tool_ctx);
-                }
-            }
+        if (!id) {
+            LOGW_NET("Tool call '%s' without an id; cannot reply", name);
+            continue;
         }
+
+        // Every call must get a toolResponse, or the model waits on it.
+        auto& slot = m_static_skill_event_slot;
+        slot.reset();
+        if (!GeminiSkills::decode_incoming_arguments(name, argsObj, slot)) {
+            LOGW_NET("Rejected tool call '%s': %s", name, slot.error);
+            JsonDocument err;
+            err["status"] = "error";
+            err["message"] = slot.error;
+            std::string out;
+            serializeJson(err, out);
+            transmitToolResponse(id, out.c_str());
+            slot.reset();
+            continue;
+        }
+        std::strncpy(slot.call_id, id, sizeof(slot.call_id) - 1);
+
+        LOGI_NET("Tool request: %s", name);
+        if (m_tool_handler) {
+            m_tool_handler(slot, m_tool_ctx);
+        } else {
+            transmitToolResponse(id, "{\"status\":\"error\",\"message\":\"No tool handler\"}");
+        }
+        slot.reset();
     }
 }
 

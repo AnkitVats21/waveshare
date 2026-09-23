@@ -41,7 +41,7 @@
   },
   {
     "name": "resume",
-    "description": "Resumes current media playback if paused. I user says only play not any song name then also you can execute this command.",
+    "description": "Resumes paused media playback. Use this when the user says just 'play' or 'resume' without naming a song.",
     "parameters": {
       "type": "OBJECT",
       "properties": {}
@@ -73,7 +73,7 @@
   },
   {
     "name": "volume",
-    "description": "Adjusts the volume level of the player.",
+    "description": "Sets the speaker volume level (0-100).",
     "parameters": {
       "type": "OBJECT",
       "properties": {
@@ -89,7 +89,7 @@
   },
   {
     "name": "mute",
-    "description": "Toggles the mute state on or off.",
+    "description": "Mutes the speaker by setting the volume to 0. To unmute, call volume with the level the user wants.",
     "parameters": {
       "type": "OBJECT",
       "properties": {}
@@ -126,13 +126,13 @@
   },
   {
     "name": "write_file",
-    "description": "Writes text content to a local file on the device SD Card storage.",
+    "description": "Saves a text note to the device's notes folder on the SD card, replacing the note if it already exists. Use a short file name such as 'shopping.txt'.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
         "path": {
           "type": "STRING",
-          "description": "Absolute file path on SD Card starting with /sdcard/ (e.g., /sdcard/notes.txt)."
+          "description": "Note file name, e.g. 'shopping.txt' (letters, digits, '-', '_' and '.' only; no folders)."
         },
         "content": {
           "type": "STRING",
@@ -147,41 +147,17 @@
   },
   {
     "name": "read_file",
-    "description": "Reads text content from a local file on the device SD Card storage.",
+    "description": "Reads a text note previously saved in the device's notes folder.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
         "path": {
           "type": "STRING",
-          "description": "Absolute file path on SD Card starting with /sdcard/ (e.g., /sdcard/notes.txt)."
+          "description": "Note file name, e.g. 'shopping.txt'."
         }
       },
       "required": [
         "path"
-      ]
-    }
-  },
-  {
-    "name": "restart_websocket_client",
-    "description": "Reinitializes and restarts the Gemini voice assistant WebSocket connection.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "set_device_volume",
-    "description": "Sets the physical hardware speaker volume level.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {
-        "level": {
-          "type": "NUMBER",
-          "description": "Target volume level percentage (0-100)."
-        }
-      },
-      "required": [
-        "level"
       ]
     }
   },

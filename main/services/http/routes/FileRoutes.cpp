@@ -43,6 +43,32 @@ bool sanitize(const std::string& raw, std::string& out) {
     return StorageService::sanitizePath(raw.c_str(), out, BASE_PATH);
 }
 
+// Files holding secrets (API key, Wi-Fi password). They are managed through
+// /api/config/gemini and /api/wifi/configure, never read or replaced here.
+// Also refuses "." segments and FAT 8.3 aliases (GEMINI~1.JSO) that would
+// otherwise reach the same file under a different name.
+bool isProtected(const std::string& path) {
+    if (path.find("/./") != std::string::npos ||
+        (path.size() >= 2 && path.compare(path.size() - 2, 2, "/.") == 0)) {
+        return true;
+    }
+    static const char* const PROTECTED[] = { "/sdcard/gemini_config.json", "/sdcard/wifi_config.json" };
+    static const char* const ALIAS_PREFIX[] = { "/sdcard/gemini", "/sdcard/wifi_c" };
+    for (const char* p : PROTECTED) {
+        if (strcasecmp(path.c_str(), p) == 0) return true;
+    }
+    if (path.find('~') != std::string::npos) {
+        for (const char* p : ALIAS_PREFIX) {
+            if (strncasecmp(path.c_str(), p, strlen(p)) == 0) return true;
+        }
+    }
+    return false;
+}
+
+esp_err_t sendProtected(httpd_req_t* req) {
+    return Http::sendError(req, 403, "This file holds credentials and is not accessible through the file API");
+}
+
 esp_err_t storageInfoHandler(httpd_req_t* req) {
     uint64_t total_bytes = 0, free_bytes = 0;
     bool mounted = StorageService::getInstance().isMounted();
@@ -89,6 +115,7 @@ esp_err_t downloadHandler(httpd_req_t* req) {
     if (!Http::queryParam(req, "path", raw_path) || raw_path.empty()) return Http::sendError(req, 400, "Missing path");
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
+    if (isProtected(path)) return sendProtected(req);
 
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return Http::sendError(req, 404, "File not found");
@@ -127,6 +154,7 @@ esp_err_t uploadHandler(httpd_req_t* req) {
     if (!Http::queryParam(req, "path", raw_path) || raw_path.empty()) return Http::sendError(req, 400, "Missing path");
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
+    if (isProtected(path)) return sendProtected(req);
 
     auto& storage = StorageService::getInstance();
     size_t last_slash = path.rfind('/');
@@ -208,6 +236,7 @@ esp_err_t renameHandler(httpd_req_t* req) {
     if (!sanitize(old_path, sanitized_old) || !sanitize(new_path, sanitized_new)) {
         return Http::sendError(req, 400, "Invalid path traversal");
     }
+    if (isProtected(sanitized_old) || isProtected(sanitized_new)) return sendProtected(req);
     if (!StorageService::getInstance().renamePath(sanitized_old.c_str(), sanitized_new.c_str())) {
         return Http::sendError(req, 500, "Failed to rename path");
     }
@@ -221,6 +250,7 @@ esp_err_t deleteHandler(httpd_req_t* req) {
     if (!Http::queryParam(req, "path", raw_path) || raw_path.empty()) return Http::sendError(req, 400, "Missing path");
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
+    if (isProtected(path)) return sendProtected(req);
 
     if (path == BASE_PATH || path == std::string(BASE_PATH) + "/") {
         return Http::sendError(req, 403, "Cannot delete root SD mount point");

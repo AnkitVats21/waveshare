@@ -6,8 +6,9 @@ def should_generate(schema_path, output_h, output_cpp):
     if not os.path.exists(output_h) or not os.path.exists(output_cpp):
         return True
     
-    schema_mtime = os.path.getmtime(schema_path)
-    if os.path.getmtime(output_h) < schema_mtime or os.path.getmtime(output_cpp) < schema_mtime:
+    # Regenerate when either the schema or this generator changed.
+    src_mtime = max(os.path.getmtime(schema_path), os.path.getmtime(__file__))
+    if os.path.getmtime(output_h) < src_mtime or os.path.getmtime(output_cpp) < src_mtime:
         return True
         
     return False
@@ -24,6 +25,7 @@ def generate_gemini_framework(schema_path, output_h, output_cpp):
     # 1. Generate Header Body
     h_content = """#pragma once
 #include <string>
+#include <cmath>
 #include <cstring>
 #include <ArduinoJson.h>
 
@@ -64,6 +66,8 @@ enum class SkillType {
     h_content += """struct DecodedSkillCall {
     SkillType type = SkillType::UNKNOWN;
     char call_id[64] = {0};
+    // Why decoding failed (unknown tool, missing required argument); nullptr on success.
+    const char* error = nullptr;
     union {
 """
     for tool in tools:
@@ -73,10 +77,17 @@ enum class SkillType {
     h_content += """    } args;
 
     DecodedSkillCall() { memset(&args, 0, sizeof(args)); }
-    ~DecodedSkillCall();
+    ~DecodedSkillCall() { reset(); }
+    DecodedSkillCall(const DecodedSkillCall&) = delete;
+    DecodedSkillCall& operator=(const DecodedSkillCall&) = delete;
+
+    // Frees the decoded arguments and returns to the empty state.
+    void reset();
 };
 
-// Safe PSRAM-bounded translation method
+// Decodes a functionCall into out_call (reset first). args_obj may be null for
+// parameterless tools. Returns false with out_call.error set for an unknown
+// tool or a missing required argument.
 bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, DecodedSkillCall& out_call);
 
 } // namespace GeminiSkills
@@ -111,7 +122,7 @@ namespace GeminiSkills {{
 
 const char* const SETUP_HANDSHAKE_JSON = "{raw_json_escaped}";
 
-DecodedSkillCall::~DecodedSkillCall() {{
+void DecodedSkillCall::reset() {{
     switch(type) {{
 """
     for tool in tools:
@@ -119,10 +130,15 @@ DecodedSkillCall::~DecodedSkillCall() {{
         cpp_content += f"        case SkillType::{skill_name.upper()}: delete args.{skill_name}; break;\n"
     cpp_content += """        default: break;
     }
+    type = SkillType::UNKNOWN;
+    call_id[0] = '\\0';
+    error = nullptr;
+    memset(&args, 0, sizeof(args));
 }
 
 bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, DecodedSkillCall& out_call) {
-    if (!func_name || args_obj.isNull()) return false;
+    out_call.error = "Unknown tool";
+    if (!func_name) return false;
 """
     
     first = True
@@ -146,12 +162,19 @@ bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, 
                 if ptype == 'STRING':
                     cpp_content += f"            if (item_{param}.is<const char*>()) out_call.args.{skill_name}->{param} = item_{param}.as<const char*>();\n"
                 elif ptype in ('INTEGER', 'INT'):
-                    cpp_content += f"            if (item_{param}.is<int>()) out_call.args.{skill_name}->{param} = item_{param}.as<int>();\n"
+                    # The model sometimes sends whole numbers as 7.0.
+                    cpp_content += f"            if (item_{param}.is<float>()) out_call.args.{skill_name}->{param} = static_cast<int>(lroundf(item_{param}.as<float>()));\n"
                 elif ptype in ('NUMBER', 'FLOAT', 'DOUBLE'):
                     cpp_content += f"            if (item_{param}.is<float>() || item_{param}.is<double>() || item_{param}.is<int>()) out_call.args.{skill_name}->{param} = item_{param}.as<float>();\n"
                 elif ptype in ('BOOLEAN', 'BOOL'):
                     cpp_content += f"            if (item_{param}.is<bool>()) out_call.args.{skill_name}->{param} = item_{param}.as<bool>();\n"
                 cpp_content += f"        }}\n"
+        for param in tool.get("parameters", {}).get("required", []):
+            cpp_content += f'        if (args_obj["{param}"].isNull()) {{\n'
+            cpp_content += f'            out_call.error = "Missing required argument \'{param}\'";\n'
+            cpp_content += "            return false;\n"
+            cpp_content += "        }\n"
+        cpp_content += "        out_call.error = nullptr;\n"
         cpp_content += "        return true;\n"
 
     cpp_content += """    }

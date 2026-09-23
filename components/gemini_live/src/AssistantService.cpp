@@ -1,7 +1,7 @@
 #include "AssistantService.h"
 #include "app/audio/AlertPlayer.h"
 #include "app/audio/AudioOrchestrator.h"
-#include "app/gemini_live/GeminiProtocol.h"
+#include "GeminiProtocol.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
