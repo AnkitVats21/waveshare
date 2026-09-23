@@ -1,3 +1,4 @@
+#include "core_sysdb/AudioRates.h"
 #include "NexusPlayer.h"
 #include "media_player/CatalogDB.h"
 #include "media_player/MusicPlaybackService.h"
@@ -74,7 +75,7 @@ bool NexusPlayer::begin() {
             _sessionSeekTable.push_back({timecodeMs, byteOffset});
         }
     });
-    return _audioEngine.initialize(44100, 1);
+    return _audioEngine.initialize(MIXER_SAMPLE_RATE, 1);
 }
 
 void NexusPlayer::addObserver(IPlaybackObserver* observer) {
@@ -132,7 +133,9 @@ void NexusPlayer::onAudioFocusChange(AudioTrack track, FocusEvent event) {
                 pause_internal();
             }
         } else if (event == FocusEvent::GAIN) {
-            if (_state == STATE_PAUSED && _should_resume_after_session) {
+            // During an assistant session the resume waits for the session to end
+            // (onStateChanged), so a mid-session focus gain doesn't restart music.
+            if (_state == STATE_PAUSED && _should_resume_after_session && !_session_active) {
                 ESP_LOGI(TAG, "Audio focus gained (resume) — resuming media playback");
                 _should_resume_after_session = false;
                 resume_internal();
@@ -435,6 +438,13 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
                 _pendingDownloadUrl.clear();
                 _pendingStartPosMs = 0;
                 _should_play_after_session = false;
+            } else if (_should_resume_after_session && _state == STATE_PAUSED) {
+                // Set by the wake-word pause (onAudioFocusChange) or by a "resume"
+                // request made during the session (resume()). A "pause"/"stop"
+                // request during the session clears it, so the music stays paused.
+                ESP_LOGI(TAG, "Resuming playback paused for the assistant session");
+                _should_resume_after_session = false;
+                resume_internal();
             }
         }
     }

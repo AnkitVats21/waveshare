@@ -1,3 +1,4 @@
+#include "core_sysdb/AudioRates.h"
 #include "audio_core/AlertPlayer.h"
 #include "audio_core/AudioOrchestrator.h"
 #include "audio_core/SpeakerPlayback.h"
@@ -142,7 +143,7 @@ void AlertPlayer::processAlert(AlertType type) {
             case ALERT_ERROR:
                 playTone(440.0f, 9000, 60, 10);
                 {
-                    constexpr uint32_t GAP_SAMPLES = (44100 * 40) / 1000;
+                    constexpr uint32_t GAP_SAMPLES = (MIXER_SAMPLE_RATE * 40) / 1000;
                     int16_t silence[GAP_SAMPLES] = {};
                     BufferManager::getInstance().send(Buffers::ALERT_RX_BUF, silence, GAP_SAMPLES * sizeof(int16_t), pdMS_TO_TICKS(10));
                 }
@@ -156,11 +157,11 @@ void AlertPlayer::processAlert(AlertType type) {
 }
 
 void AlertPlayer::playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms) {
-    constexpr uint32_t SAMPLE_RATE = 44100;
+    constexpr uint32_t SAMPLE_RATE = MIXER_SAMPLE_RATE;
     const uint32_t total_samples = (SAMPLE_RATE * duration_ms) / 1000;
     const uint32_t fade_samples  = (SAMPLE_RATE * fade_ms) / 1000;
 
-    constexpr uint32_t BLOCK = 882; // 20 ms @ 44.1 kHz
+    constexpr uint32_t BLOCK = SAMPLE_RATE / 50; // 20 ms
     int16_t buf[BLOCK];
 
     uint32_t sent = 0;

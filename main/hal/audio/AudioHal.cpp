@@ -194,6 +194,12 @@ esp_err_t AudioHal::initI2s(uint32_t sample_rate) {
   i2s_chan_config_t chan_cfg =
       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
   chan_cfg.auto_clear = true;
+  // RX headroom: the wake-word feed task reads 64 ms chunks, so the default
+  // 6 x 240 frames (~45 ms @ 32 kHz) overflowed whenever the task was late.
+  // 6 x 480 = 2880 frames (~90 ms); 480 frames x 8 B = 3840 B per descriptor,
+  // under the 4092 B limit. Costs ~23 KB more internal DMA RAM (TX + RX).
+  chan_cfg.dma_desc_num = 6;
+  chan_cfg.dma_frame_num = 480;
 
   esp_err_t ret = i2s_new_channel(&chan_cfg, &m_tx_handle, &m_rx_handle);
   if (ret != ESP_OK) {

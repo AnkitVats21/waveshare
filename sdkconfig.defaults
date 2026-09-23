@@ -37,3 +37,13 @@ CONFIG_DISPLAY_BL_PIN=5
 CONFIG_TOUCH_ENABLE=n
 # CONFIG_TOUCH_CS_PIN is not set
 # CONFIG_TOUCH_IRQ_PIN is not set
+
+# Needed for the per-core CPU% in the dashboard telemetry (c0/c1): without it
+# HttpFileServerService::getCpuUsage() is compiled out and always reports 0.
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+
+# Run code + rodata from octal PSRAM instead of DIO flash: ESP-SR (AEC + BSS in
+# afe_feed) is instruction-fetch bound (~95% of a core during playback on DIO
+# flash). Costs ~app-size (~2.3 MB) of PSRAM. QIO flash gave a similar speedup;
+# its audio failure was later traced to AEC gating, so QIO is untested since.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y

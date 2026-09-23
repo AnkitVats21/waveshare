@@ -121,7 +121,7 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
             }
         }
 
-        // Resample mono to target rate (typically 44.1 kHz — see SpeakerPlayback mixer domain)
+        // Resample mono to the mixer rate (MIXER_SAMPLE_RATE — see SpeakerPlayback)
         uint32_t src_rate = _decoder->getSourceSampleRate();
         uint32_t dst_rate = _sampleRate;
 

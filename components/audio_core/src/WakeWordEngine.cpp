@@ -131,7 +131,10 @@ bool WakeWordEngine::begin() {
     const char  *input_format = m_feed_source->feedInputFormat();
     afe_config_t *afe_config  = afe_config_init(input_format, models,
                                                  AFE_TYPE_SR, AFE_MODE_LOW_COST);
-    afe_config->ns_init  = true;
+    // NS off: in AFE_TYPE_SR the WebRTC noise suppressor sits in front of WakeNet and
+    // VAD, but WakeNet9 is trained on un-suppressed audio (ESP-SR advises against NS for
+    // recognition), and it cost CPU we don't have while AEC + BSS + Opus decode run.
+    afe_config->ns_init  = false;
     afe_config->vad_init = true; // needed for VAD-based streaming timeout
 
     // 3. Create AFE handle + data
@@ -157,10 +160,15 @@ bool WakeWordEngine::begin() {
         xEventGroupSetBits(m_audio_event_group, AUDIO_RUNNING_BIT);
     }
 
-    // 4. Launch tasks. Both feed and detect tasks run on the audio DSP core (Core 1)
-    // so network and TLS activity on Core 0 never starve AFE fetch/detect processing.
+    // 4. Launch tasks on separate cores. In AFE_MODE_LOW_COST the 2-mic pipeline runs
+    // AEC *and* BSS inside feed(), so ww_feed is the heavy task (~70-85% of a core
+    // while audio plays) and ww_detect (NS/VAD/WakeNet via fetch) is ~30%. Measured
+    // with both on Core 1 they overran real time and the I2S RX DMA dropped mic audio;
+    // with feed on Core 0 it starved IDLE0 next to Wi-Fi/lwIP/Opus. So the heavy feed
+    // gets the audio core (Core 1: otherwise just the speaker mixer and audio pump) and
+    // detect goes to Core 0, where at prio 12 it outranks the media/network tasks.
     xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", ThreadConfig::StackSize::STACK_WW_DET,
-                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, ThreadConfig::CORE_AUDIO);
+                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, ThreadConfig::CORE_NETWORK);
     xTaskCreatePinnedToCore(feedTaskBridge,   "ww_feed",   ThreadConfig::StackSize::STACK_WW_FEED,
                             afe_data, ThreadConfig::Priority::WAKE_WORD_FEED, nullptr, ThreadConfig::CORE_AUDIO);
 
@@ -271,6 +279,8 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
     // Warm-up: ignore the first ~800ms to let mic hardware bias settle
     int warmup_chunks = 50;
 
+
+
     while (m_task_flag) {
         // Use a timed wait so paused tasks still periodically service TWDT.
         EventBits_t bits = xEventGroupWaitBits(m_audio_event_group,
@@ -287,7 +297,7 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         // Re-check task flag after waking — stop() may have unblocked us to exit
         if (!m_task_flag) break;
 
-        // Read 24kHz 4-channel data from hardware
+        // Read 4-channel data at the local hardware rate
         esp_err_t err = m_feed_source->readFeedData(hw_buff, hw_buf_bytes);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "readFeedData failed (err=0x%x) — backing off", err);
@@ -337,9 +347,9 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
             }
         }
 
+        // No vTaskDelay here: readFeedData() blocks on I2S DMA, which already yields,
+        // and a 1-tick (10 ms) sleep per chunk only ate into the DMA headroom.
         esp_task_wdt_reset();
-        // Yield 1 tick so lower-priority tasks and IDLE1 (CPU 1) can run and pet watchdog
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     if (m_raw_tap_scratch) {

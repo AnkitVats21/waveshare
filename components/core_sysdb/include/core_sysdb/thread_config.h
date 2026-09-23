@@ -25,11 +25,11 @@ namespace ThreadConfig {
         ASSISTANT        = 6,   ///< AssistantService state machine
         LED              = 6,   ///< LedService animation loop
         GEMINI_PROTOCOL  = 7,   ///< GeminiProtocol WebSocket handler (Core 0)
-        AUDIO_PUMP       = 8,   ///< GeminiAudioPump uplink (Core 1)
-        WAKE_WORD_FEED   = 9,   ///< WakeWordEngine feed task (DSP AFE on Core 1)
+        AUDIO_PUMP       = 8,   ///< GeminiAudioPump uplink (Core 0)
+        WAKE_WORD_FEED   = 9,   ///< WakeWordEngine feed task (AFE feed: AEC + BSS, Core 1)
         AUDIO_SERVICE    = 10,  ///< AudioService reactor loop
         AUDIO_ALERT      = 11,  ///< AlertPlayer chime/notification generator (Core 1)
-        WAKE_WORD_DETECT = 12,  ///< WakeWordEngine detect/fetch task
+        WAKE_WORD_DETECT = 12,  ///< WakeWordEngine detect/fetch task (NS/VAD/WakeNet, Core 0)
         MIC_CAPTURE      = 14,  ///< MicCaptureTask I2S read task
         SPEAKER_PLAYBACK = 18,  ///< SpeakerPlayback I2S write task
     };

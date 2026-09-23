@@ -208,6 +208,10 @@ MediaPendingCommand EmbeddedSysDb::mediaPendingCommand() const {
 
 void EmbeddedSysDb::registerReactor(ComponentMask interest, TaskHandle_t handle) {
     // Called at boot time only — no lock needed (tasks haven't started writing yet)
+    if (handle == nullptr) {
+        ESP_LOGE(TAG, "registerReactor: null task handle (mask=0x%02lx) ignored", (unsigned long)interest);
+        return;
+    }
     if (m_reactor_count >= MAX_REACTORS) {
         ESP_LOGE(TAG, "MAX_REACTORS (%zu) exceeded — increase limit", MAX_REACTORS);
         return;

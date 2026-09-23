@@ -29,14 +29,16 @@ GeminiAudioPump& GeminiAudioPump::getInstance() {
         .name = "GeminiAudioPump",
         .stack_size = ThreadConfig::StackSize::STACK_NORMAL,
         .priority = ThreadConfig::Priority::AUDIO_PUMP,
-        .core_id = ThreadConfig::CORE_AUDIO
+        // Core 0: each chunk is base64 + JSON + a synchronous TLS WebSocket send,
+        // i.e. network work; keep it off Core 1, which carries the AFE feed (AEC+BSS).
+        .core_id = ThreadConfig::CORE_NETWORK
     };
     static GeminiAudioPump instance(default_config);
     return instance;
 }
 
 bool GeminiAudioPump::start() {
-    if (!TaskBase::start()) {
+    if (!TaskBase::start() || m_task_handle == nullptr) {
         return false;
     }
     sysdb.registerReactor(COMP::PIPELINE | COMP::ASSISTANT, m_task_handle);

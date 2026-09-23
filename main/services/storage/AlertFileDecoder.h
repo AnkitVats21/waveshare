@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core_sysdb/AudioRates.h"
 #include "audio_core/AlertPlayer.h"
 #include "audio_core/SpeakerPlayback.h"
 #include "audio_core/Resampler.h"
@@ -8,6 +9,7 @@
 #include "services/storage/StorageService.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include <cstdio>
 #include <memory>
 
@@ -63,9 +65,18 @@ public:
             }
 
             if (!decoder) {
+                // Temporary diagnostics: the factory has reported valid OggS files as
+                // "ambiguous"; log exactly what the sniffer sees.
+                const uint8_t* h = read_buf + current_offset;
+                size_t hl = payload_len - current_offset;
+                ESP_LOGI("AlertFileDecoder", "sniff: len=%u off=%u bytes=%02x %02x %02x %02x buf=%s ferror=%d int_free=%u",
+                         (unsigned)hl, (unsigned)current_offset,
+                         hl > 0 ? h[0] : 0, hl > 1 ? h[1] : 0, hl > 2 ? h[2] : 0, hl > 3 ? h[3] : 0,
+                         esp_ptr_external_ram(read_buf) ? "psram" : "internal", ferror(f),
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
                 decoder = AudioDecoderFactory::createDecoder(read_buf + current_offset, payload_len - current_offset);
                 if (decoder) {
-                    decoder->init(44100, 1);
+                    decoder->init(MIXER_SAMPLE_RATE, 1);
                 } else {
                     break;
                 }
@@ -101,7 +112,7 @@ public:
                 }
 
                 uint32_t src_rate = decoder->getSourceSampleRate();
-                uint32_t dst_rate = 44100;
+                uint32_t dst_rate = MIXER_SAMPLE_RATE;
                 size_t resampled_count = computeResampledFrames(mono_samples, src_rate, dst_rate);
                 if (resampled_count > MAX_SAMPLES) resampled_count = MAX_SAMPLES;
 

@@ -57,10 +57,12 @@ void AudioOrchestrator::broadcastFocusEvent(AudioTrack track, FocusEvent event) 
 }
 
 void AudioOrchestrator::notifyWakeWordDetected() {
-    ESP_LOGI(TAG, "notifyWakeWordDetected: ducking background media immediately");
+    // Pause (not duck) for the whole assistant session; NexusPlayer resumes it when
+    // the session returns to Idle. Pausing also clears m_media_active (via
+    // notifyMediaStopped), so the per-turn voice pause/resume below stays out of it.
+    ESP_LOGI(TAG, "notifyWakeWordDetected: pausing background media for the session");
     if (m_media_active) {
-        duckMedia(0.20f, 50);
-        m_media_ducked = true;
+        broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::LOSS_PAUSE);
     }
 }
 

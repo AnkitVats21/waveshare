@@ -27,6 +27,9 @@ public:
     bool start() {
         if (m_task_handle != nullptr) return true;
 
+        // Set before creating: a higher-priority task on the caller's core runs
+        // immediately, and would otherwise see m_running == false and exit.
+        m_running = true;
         BaseType_t ret = xTaskCreatePinnedToCore(
             taskEntry,
             m_config.name,
@@ -39,10 +42,9 @@ public:
 
         if (ret != pdPASS) {
             ESP_LOGE("TaskBase", "Failed to create task: %s", m_config.name);
+            m_running = false;
             return false;
         }
-        
-        m_running = true;
         return true;
     }
 

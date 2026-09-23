@@ -42,10 +42,10 @@ void SpeakerPlaybackTask::stop() {
 // ─────────────────────────────────────────────────────────────────────────────
 // run() — Multi-Track Real-Time Audio Mixer & Output Loop
 //
-// Mixes Voice (Gemini 24kHz upsampled to 44.1kHz), Alert (44.1kHz chimes/tones),
-// and Media (44.1kHz music) with smooth ducking gain interpolation, all in a
-// 44.1kHz mixer domain. The mixed track is then downsampled to the local
-// hardware rate (32kHz) right before each esp_codec_dev_write().
+// Mixes Voice (Gemini 24kHz resampled to the mixer rate), Alert (chimes/tones)
+// and Media (music) with smooth ducking gain interpolation. Every track is
+// produced at MIXER_SAMPLE_RATE, which equals the codec rate, so the mix is
+// written straight to esp_codec_dev_write() with no output resample.
 // ─────────────────────────────────────────────────────────────────────────────
 void SpeakerPlaybackTask::run() {
   esp_codec_dev_handle_t device = m_device;
@@ -82,21 +82,18 @@ void SpeakerPlaybackTask::run() {
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   int16_t *media_pcm = (int16_t *)heap_caps_malloc(
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  int16_t *local_mono_44k = (int16_t *)heap_caps_malloc(
-      MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  int16_t *local_mono_32k = (int16_t *)heap_caps_malloc(
+  int16_t *mix_pcm = (int16_t *)heap_caps_malloc(
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
   if (!expanded_buffer || !silence_buffer || !voice_pcm || !alert_pcm || !media_pcm ||
-      !local_mono_44k || !local_mono_32k) {
+      !mix_pcm) {
     LOGE_HAL("Failed to allocate Multi-Track Mixer buffers!");
     if (expanded_buffer)   heap_caps_free(expanded_buffer);
     if (silence_buffer)    heap_caps_free(silence_buffer);
     if (voice_pcm)         heap_caps_free(voice_pcm);
     if (alert_pcm)         heap_caps_free(alert_pcm);
     if (media_pcm)         heap_caps_free(media_pcm);
-    if (local_mono_44k)    heap_caps_free(local_mono_44k);
-    if (local_mono_32k)    heap_caps_free(local_mono_32k);
+    if (mix_pcm)           heap_caps_free(mix_pcm);
     m_running = false;
     return;
   }
@@ -108,6 +105,8 @@ void SpeakerPlaybackTask::run() {
 
   constexpr uint32_t NATIVE_RATE = MIXER_SAMPLE_RATE;
   constexpr uint32_t LOCAL_RATE = LOCAL_SAMPLE_RATE;
+  static_assert(NATIVE_RATE == LOCAL_RATE,
+                "mixer output is written to the codec without resampling");
   constexpr uint32_t VOICE_SRC_RATE = 24000;
   const size_t target_samples = samplesForDurationMs(NATIVE_RATE, TARGET_FRAME_MS);
 
@@ -125,7 +124,7 @@ void SpeakerPlaybackTask::run() {
     bool has_media = false;
     size_t num_media = 0;
 
-    // 1. Voice Track (Gemini Live 24kHz -> 44.1kHz)
+    // 1. Voice Track (Gemini Live 24kHz -> mixer rate)
     if (asst_speaking || turn_pending) {
       if (m_buffering) {
         size_t buffered = bm.getUsedBytes(Buffers::VOICE_RX_BUF);
@@ -156,7 +155,7 @@ void SpeakerPlaybackTask::run() {
       m_buffering = true;
     }
 
-    // 2. Alert Track (32kHz mono chimes/tones)
+    // 2. Alert Track (mixer-rate mono chimes/tones)
     {
       size_t target_alert_bytes = target_samples * sizeof(int16_t);
       size_t rx_bytes = 0;
@@ -170,7 +169,7 @@ void SpeakerPlaybackTask::run() {
       }
     }
 
-    // 3. Media Track (32kHz music playback / WAV)
+    // 3. Media Track (mixer-rate music playback)
     bool is_media_active = AudioOrchestrator::getInstance().isMediaActive();
     if (is_media_active) {
       size_t target_media_bytes = target_samples * sizeof(int16_t);
@@ -231,17 +230,13 @@ void SpeakerPlaybackTask::run() {
         else if (mix < -32768) mix = -32768;
 
         int16_t s16 = static_cast<int16_t>(mix);
-        local_mono_44k[i] = s16;
+        mix_pcm[i] = s16;
       }
 
-      // Downsample the mixed mono track to the local hardware rate, then
-      // expand to 32-bit stereo DMA frames for the onboard codec.
-      size_t local_frames = computeResampledFrames(frames_to_write, NATIVE_RATE, LOCAL_RATE);
-      if (local_frames == 0) local_frames = 1;
-      if (local_frames > MAX_AUDIO_CHUNK_SAMPLES) local_frames = MAX_AUDIO_CHUNK_SAMPLES;
-      resampler.resample(local_mono_44k, frames_to_write, local_mono_32k, local_frames, 1);
+      // Expand the mono mix to 32-bit stereo DMA frames for the onboard codec.
+      const size_t local_frames = frames_to_write;
       for (size_t i = 0; i < local_frames; ++i) {
-        int32_t sample32 = ((int32_t)local_mono_32k[i]) << 16;
+        int32_t sample32 = ((int32_t)mix_pcm[i]) << 16;
         expanded_buffer[2 * i + 0] = sample32; // L
         expanded_buffer[2 * i + 1] = sample32; // R
       }
@@ -288,6 +283,5 @@ void SpeakerPlaybackTask::run() {
   heap_caps_free(voice_pcm);
   heap_caps_free(alert_pcm);
   heap_caps_free(media_pcm);
-  heap_caps_free(local_mono_44k);
-  heap_caps_free(local_mono_32k);
+  heap_caps_free(mix_pcm);
 }

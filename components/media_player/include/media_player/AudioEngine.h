@@ -1,6 +1,7 @@
 #pragma once
 
 #include "services/BufferManager.h"
+#include "core_sysdb/AudioRates.h"
 #include "IAudioDecoder.h"
 #include "PlayerTypes.h" // For ChunkType, AudioChunkHeader
 #include "freertos/event_groups.h"
@@ -15,7 +16,7 @@ public:
     /**
      * @brief Initializes the pre-allocated buffers in PSRAM.
      */
-    bool initialize(int sampleRate = 44100, int channels = 1);
+    bool initialize(int sampleRate = MIXER_SAMPLE_RATE, int channels = 1);
     
     void start();
     void stop();

@@ -1570,6 +1570,20 @@ esp_err_t HttpFileServerService::otaUploadHandler(httpd_req_t* req) {
 
     ESP_LOGI(TAG, "Starting OTA update to partition '%s' (size %ld bytes)...", update_partition->label, req->content_len);
 
+    // Stop music (frees CPU/network for the transfer) and blink green while
+    // flashing. On failure the previous LED state is restored; on success the
+    // device reboots anyway.
+    MusicPlaybackService::getInstance().pause();
+    auto& sysdb = EmbeddedSysDb::getInstance();
+    const auto prev_led = sysdb.snapshot().led;
+    sysdb.mutate([](SystemState& s) {
+        s.led.mode = LedMode::BLINK;
+        s.led.color = GREEN_LED;
+        s.led.speed_ms = 250;
+        s.led.repeat = 0;
+    });
+    auto restoreLed = [&]() { sysdb.mutate([&](SystemState& s) { s.led = prev_led; }); };
+
     OtaWorkState state;
     state.partition = update_partition;
     state.req_sem = xSemaphoreCreateBinary();
@@ -1589,6 +1603,7 @@ esp_err_t HttpFileServerService::otaUploadHandler(httpd_req_t* req) {
     if (!worker) {
         vSemaphoreDelete(state.req_sem);
         vSemaphoreDelete(state.done_sem);
+        restoreLed();
         return sendJsonError(req, 500, "Failed to create internal OTA worker");
     }
 
@@ -1603,6 +1618,7 @@ esp_err_t HttpFileServerService::otaUploadHandler(httpd_req_t* req) {
         xSemaphoreGive(state.req_sem);
         vSemaphoreDelete(state.req_sem);
         vSemaphoreDelete(state.done_sem);
+        restoreLed();
         return sendJsonError(req, 500, "esp_ota_begin failed");
     }
 
@@ -1659,6 +1675,7 @@ esp_err_t HttpFileServerService::otaUploadHandler(httpd_req_t* req) {
     vSemaphoreDelete(state.done_sem);
 
     if (!success) {
+        restoreLed();
         return sendJsonError(req, 500, "OTA Flashing failed");
     }
 
