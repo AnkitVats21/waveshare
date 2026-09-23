@@ -48,16 +48,14 @@ Current tools (verify against `gemini_skills_generated.cpp`'s
 | `play_next(query)` | Queue a track to play right after the current one |
 | `pause` / `resume` / `stop` | Playback transport |
 | `next` / `previous` | Skip within queue/history |
-| `volume(level)` | Player-level volume (0-100) |
-| `mute` | Toggle mute |
+| `volume(level)` | Speaker volume (0-100) |
+| `mute` | Volume to 0 (unmute with `volume`) |
 | `autoplay(enabled)` | Toggle autoplay recommendations |
 | `set_caching(enabled)` | Toggle SD-card stream caching |
-| `set_device_volume(level)` | Physical hardware speaker volume |
 | `set_led_strip(r,g,b)` | Solid status LED color |
-| `restart_websocket_client` | Reinit the Gemini WS connection |
-| `read_file(path)` / `write_file(path, content)` | SD card text file I/O (`/sdcard/...`) |
+| `read_file(path)` / `write_file(path, content)` | Text notes, confined to `/sdcard/notes/` (plain file names only) |
 | `save_to_memory(text)` | Append to a persistent long-term memory file |
-| `set_alarm(hour, minute, tone_file?, enabled?)` / `stop_active_alarm` | Real, backed by `Services::AlarmService` |
+| `set_alarm(hour, minute, tone_file?, enabled?)` / `stop_active_alarm` | Saved via `Services::AlarmService` (ringing task not started yet) |
 
 ## Depends on
 

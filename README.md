@@ -192,9 +192,9 @@ Lives in `components/gemini_live`:
 - **Bi-directional WebSocket**: Streams 16-bit PCM audio uplink (16kHz from AFE) and downlink (24kHz from Gemini Live API) in real time, to model `gemini-3.1-flash-live-preview`.
 - **Tool / Function Calling Router** (`DeviceCommandHandler` + `MediaCommandHandler`, dispatched via `IDeviceCommandDelegate` -> `AppController`): the live tool surface, generated from `components/gemini_live/schema/gemini_skills_schema.json`, currently has these functions —
   - Media: `play(query)`, `play_next(query)`, `pause`, `resume`, `stop`, `next`, `previous`, `volume(level)`, `mute`, `autoplay(enabled)`, `set_caching(enabled)`
-  - Device: `set_device_volume(level)`, `set_led_strip(r,g,b)`, `restart_websocket_client`
-  - Storage/memory: `read_file(path)`, `write_file(path, content)`, `save_to_memory(text)`
-  - Alarms: `set_alarm(hour, minute, tone_file?, enabled?)`, `stop_active_alarm` — both real, backed by `Services::AlarmService`
+  - Device: `set_led_strip(r,g,b)`
+  - Notes/memory: `read_file(path)`, `write_file(path, content)` (confined to `/sdcard/notes/`), `save_to_memory(text)`
+  - Alarms: `set_alarm(hour, minute, tone_file?, enabled?)`, `stop_active_alarm` — saved by `Services::AlarmService`; its ringing task is not started yet
 - **Linear Resampler**: Converts incoming 24kHz audio from Gemini into 32kHz native I2S output on-the-fly with fixed-point arithmetic.
 
 ### 4. Wake Word Engine & AFE DSP
