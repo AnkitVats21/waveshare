@@ -1,5 +1,5 @@
-#include "services/network/ControlChannel.h"
-#include "services/network/HttpFileServerService.h"
+#include "services/http/ControlChannel.h"
+#include "services/http/SystemInfo.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "media_player/MusicPlaybackService.h"
 #include "common/thread_config.h"
@@ -250,7 +250,7 @@ void ControlChannel::pushState() {
     doc["up"] = static_cast<uint64_t>(esp_timer_get_time() / 1000000ULL);
 
     int cpu0 = 0, cpu1 = 0;
-    HttpFileServerService::getCpuUsage(cpu0, cpu1);
+    SystemInfo::getCpuUsage(cpu0, cpu1);
     doc["c0"] = cpu0;
     doc["c1"] = cpu1;
     doc["sram"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);

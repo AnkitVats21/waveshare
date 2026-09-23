@@ -19,8 +19,8 @@
 #include "services/storage/AlertFileDecoder.h"
 #include "hal/input/ExpanderKeyInput.h"
 #include "services/network/WifiService.h"
-#include "services/network/HttpFileServerService.h"
-#include "services/network/ControlChannel.h"
+#include "services/http/HttpService.h"
+#include "services/http/ControlChannel.h"
 #include "services/BufferManager.h"
 #if CONFIG_DISPLAY_ENABLE
 #include "hal/display/LcdManager.h"
@@ -108,7 +108,7 @@ extern "C" void app_main(void) {
     static AppController&       app_ctrl = AppController::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
-    static Services::HttpFileServerService& http_server = Services::HttpFileServerService::getInstance();
+    static Services::HttpService& http_server = Services::HttpService::getInstance();
 #endif
 
     // Start services

@@ -26,7 +26,7 @@ public:
 
     bool begin();
 
-    // Called by HttpFileServerService.
+    // Called by HttpService.
     esp_err_t onWsHandshake(httpd_req_t* req);   // ws_post_handshake_cb
     esp_err_t handleWsRequest(httpd_req_t* req); // data frames
     void onSocketClosed(int sockfd);

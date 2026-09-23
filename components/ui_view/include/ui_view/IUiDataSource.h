@@ -23,7 +23,7 @@ public:
     virtual void setVolume(int volume_0_100) = 0;
 
     // mode: "off" | "solid" | "blink" | "breath" | "rainbow" -- matches
-    // POST /api/led/set's body exactly, see HttpFileServerService::ledSetHandler.
+    // POST /api/led/set's body exactly, see ledSetHandler in main/services/http/routes/SystemRoutes.cpp.
     virtual void setLed(const std::string& mode, int r, int g, int b, int speed_ms = 500) = 0;
 };
 

@@ -34,8 +34,17 @@ set(srcs
             # Services
             "services/network/WifiService.cpp"
             "services/network/CaptiveDnsServer.cpp"
-            "services/network/HttpFileServerService.cpp"
-            "services/network/ControlChannel.cpp"
+            "services/http/HttpService.cpp"
+            "services/http/ControlChannel.cpp"
+            "services/http/SystemInfo.cpp"
+            "services/http/routes/WebRoutes.cpp"
+            "services/http/routes/WifiRoutes.cpp"
+            "services/http/routes/FileRoutes.cpp"
+            "services/http/routes/AudioRoutes.cpp"
+            "services/http/routes/MusicRoutes.cpp"
+            "services/http/routes/SystemRoutes.cpp"
+            "services/http/routes/ConfigRoutes.cpp"
+            "services/http/routes/OtaRoutes.cpp"
             "services/storage/StorageService.cpp"
             "services/storage/SysDbSyncReactor.cpp"
             "services/time/TimeSyncHelper.cpp"
@@ -85,6 +94,7 @@ idf_component_register(
             esp_wifi
             esp_netif
             esp_http_server
+            http_server
             mdns
             fatfs
             esp_driver_sdmmc

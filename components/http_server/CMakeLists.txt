@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "src/HttpServer.cpp"
+        "src/HttpUtil.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_http_server
+        log
+)
