@@ -2,6 +2,7 @@
 #include "services/http/ControlChannel.h"
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
+#include "http_server/WebBundle.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 
@@ -31,6 +32,9 @@ HttpService::HttpService()
 }
 
 bool HttpService::begin() {
+    // Maps the active frontend slot; must run on a task with an internal stack
+    // (app_main), not on the httpd task.
+    Http::WebBundle::instance().init();
     onStateChanged(COMP::SYSTEM, EmbeddedSysDb::getInstance().snapshot());
     if (!m_network_up) {
         ESP_LOGI(TAG, "Initialized, awaiting Wi-Fi connection...");
@@ -72,7 +76,7 @@ bool HttpService::startServer() {
     config.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // keep internal SRAM for audio/Wi-Fi
     config.stack_size = 12288;
     config.core_id = ThreadConfig::CORE_NETWORK;
-    config.max_uri_handlers = 48;
+    config.max_uri_handlers = 64;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_open_sockets = 12;
     config.recv_wait_timeout = 10;
@@ -98,6 +102,8 @@ bool HttpService::startServer() {
     Routes::registerOta(m_server);
     // CORS preflight for every /api/* endpoint.
     m_server.on("/api/*", HTTP_OPTIONS, Http::corsPreflight);
+    // Wildcard GET must come after every other GET route (first match wins).
+    Routes::registerFrontend(m_server);
 
     ESP_LOGI(TAG, "Listening on port %d", config.server_port);
     return true;

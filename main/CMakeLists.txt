@@ -37,6 +37,7 @@ set(srcs
             "services/http/HttpService.cpp"
             "services/http/ControlChannel.cpp"
             "services/http/SystemInfo.cpp"
+            "services/http/FlashUpload.cpp"
             "services/http/routes/WebRoutes.cpp"
             "services/http/routes/WifiRoutes.cpp"
             "services/http/routes/FileRoutes.cpp"

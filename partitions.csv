@@ -5,7 +5,8 @@
 #   0x0000  - 0x8FFF   : bootloader
 #   0x9000  - 0xFFFF   : partition table + NVS + phy
 #   0x10000 - 0xA90000 : app partitions (factory, ota_0, ota_1 @ 3.5MB each)
-#   0xA90000+          : data, coredump, wake models (4MB), storage (1.3MB)
+#   0xA90000+          : data, coredump, wake models (4MB),
+#                        web frontend A/B slots (www_0/www_1, 672KB each)
 #
 # Name,      Type,  SubType,  Offset,    Size,     Flags
 nvs,         data,  nvs,      0x9000,    0x6000,
@@ -17,4 +18,5 @@ otadata,     data,  ota,      0xA90000,  0x2000,
 nvs_keys,    data,  nvs_keys, 0xA92000,  0x1000,
 coredump,    data,  coredump, 0xA93000,  0x10000,
 model,       data,  spiffs,   0xAB0000,  0x400000,
-storage,     data,  fat,      0xEB0000,  0x150000,
+www_0,       data,  undefined,0xEB0000,  0xA8000,
+www_1,       data,  undefined,0xF58000,  0xA8000,

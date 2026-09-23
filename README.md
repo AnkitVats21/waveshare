@@ -128,7 +128,7 @@ graph LR
     Dash -- "REST: search/resolve" --> Inv
 ```
 
-- **`/api/ws`** (`main/services/network/ControlChannel`): one client at a
+- **`/api/ws`** (`main/services/http/ControlChannel`): one client at a
   time — a new connection takes over and the previous socket is closed. The
   device pushes the full JSON state on connect, on every relevant SysDb change
   (coalesced to 200 ms) and every 2 s for telemetry; the client sends
@@ -139,6 +139,23 @@ graph LR
   `ver=<firmware>`) and `_http._tcp`.
 - Browsers block `ws://` from an `https://` page, so a dashboard reaching the
   device locally must itself be served over plain `http`.
+
+### Web frontend on the device
+
+The dashboard is served by the ESP itself from two flash slots (`www_0` /
+`www_1`, 672 KB each, see `partitions.csv`), packed as a single "web bundle"
+(`tools/webbundle/mkbundle.py`) and served gzip-compressed straight from the
+memory-mapped partition (`components/http_server`, `Http::WebBundle`).
+
+- `npm run deploy` in `waveshare-dashboard` builds it (`vite build --mode
+  device`) and uploads it with `POST /api/ota/frontend`: written to the
+  inactive slot, SHA-256 verified, then activated. No reboot; a failed upload
+  leaves the current frontend untouched.
+- `GET /api/ota/frontend` shows both slots; `POST /api/ota/frontend/rollback`
+  switches back to the other slot.
+- Without a valid bundle, `/` serves the built-in page compiled into the
+  firmware; it is always reachable at `/recovery`. The Wi-Fi setup portal is
+  at `/setup` (and on every page while the setup SoftAP is up).
 
 ---
 
@@ -236,8 +253,10 @@ waveshare/
 │   │
 │   ├── services/                         # Higher-level app services
 │   │   ├── alarm/                        # AlarmService — voice-scheduled alarms (real, wired)
-│   │   ├── network/                      # WifiService, ControlChannel (/api/ws + mDNS),
-│   │   │                                 # HttpFileServerService (REST + web UI), CaptiveDnsServer
+│   │   ├── http/                         # HttpService (server lifecycle), ControlChannel (/api/ws + mDNS),
+│   │   │   ├── routes/                   # REST endpoints, one file per area (files, music, ota, ...)
+│   │   │   └── web/                      # Built-in recovery dashboard + captive portal pages
+│   │   ├── network/                      # WifiService, CaptiveDnsServer
 │   │   ├── storage/                      # StorageService, SysDbSyncReactor (state -> SD persistence)
 │   │   └── time/                         # TimeSyncHelper (SNTP)
 │   │
@@ -252,12 +271,15 @@ waveshare/
 │   ├── media_player/                     # NexusPlayer, InvidiousClient, decoders, StorageManager,
 │   │                                     # CatalogDB (SD track index)
 │   ├── gemini_live/                      # Gemini Live WS client, tool-calling router, AssistantService
+│   ├── http_server/                      # App-agnostic HTTP server wrapper, JSON/CORS helpers,
+│   │                                     # WebBundle (frontend served from flash A/B slots)
 │   ├── ui_view/                          # LVGL v9 touchscreen dashboard (DashboardScreen, AssistantScreen)
 │   └── espressif__led_strip/             # Managed upstream WS2812 driver (has its own upstream README)
 │
 ├── schema/sysdb.star                     # SysDb schema — source of truth for SystemState fields
 ├── tools/
 │   ├── starc/                            # Schema compiler: sysdb.star -> SystemState.generated.h
+│   ├── webbundle/                        # mkbundle.py: pack a built frontend for the www slots
 │   └── lvgl_sim/                         # Desktop LVGL UI emulator for ui_view development
 ├── host_tests/                           # Host-side (non-ESP32) unit tests
 ├── docs/

@@ -12,13 +12,14 @@
  */
 namespace Routes {
 
-void registerWeb(Http::Server& server);     // /, /index.html, /setup
+void registerWeb(Http::Server& server);     // /setup, /recovery
 void registerWifi(Http::Server& server);    // /api/wifi/*, captive-portal probes
 void registerFiles(Http::Server& server);   // /api/storage/info, /api/files*
 void registerAudio(Http::Server& server);   // /api/audio/*
 void registerMusic(Http::Server& server);   // /api/music/*
 void registerSystem(Http::Server& server);  // /api/system/*, /api/logs, /api/led/set
 void registerConfig(Http::Server& server);  // /api/config/*
-void registerOta(Http::Server& server);     // /api/ota*
+void registerOta(Http::Server& server);     // /api/ota*, /api/ota/frontend*
+void registerFrontend(Http::Server& server); // GET /* catch-all: frontend bundle; register last
 
 } // namespace Routes
