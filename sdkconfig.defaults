@@ -42,8 +42,15 @@ CONFIG_TOUCH_ENABLE=n
 # HttpFileServerService::getCpuUsage() is compiled out and always reports 0.
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 
-# Run code + rodata from octal PSRAM instead of DIO flash: ESP-SR (AEC + BSS in
-# afe_feed) is instruction-fetch bound (~95% of a core during playback on DIO
-# flash). Costs ~app-size (~2.3 MB) of PSRAM. QIO flash gave a similar speedup;
-# its audio failure was later traced to AEC gating, so QIO is untested since.
+# Run code + rodata from octal PSRAM: ESP-SR (AEC + BSS in afe_feed) is
+# instruction-fetch bound. From flash it starves CPU 1 during playback (DIO
+# ~95% of a core; QIO still tripped the IDLE1 task watchdog in ww_feed).
+# Costs ~app-size (~2.3 MB) of PSRAM. XIP was ruled out as the cause of the
+# SD corruption under streaming load (it happens with code in flash too).
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+# The bootloader is in QIO since 2026-09-23 (changing it needs a USB flash).
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# PSRAM ECC off (the IDF default; it had been switched on by hand). Turning it
+# off did not fix the SD corruption seen under streaming load.
+# CONFIG_SPIRAM_ECC_ENABLE is not set

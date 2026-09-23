@@ -107,14 +107,15 @@ bool CatalogDB::begin() {
         return false;
     }
 
+    // The index must exist before the migration and WAL replay below: both
+    // look tracks up and pick record slots through it.
+    buildIndex();
+
     // Check for legacy library.json migration
     migrateFromLibraryJson();
 
     // Replay WAL if it contains uncommitted transactions
-    replayWal();
-
-    // Build PSRAM index from catalog.db
-    buildIndex();
+    if (replayWal()) buildIndex();
 
     _initialized = true;
     ESP_LOGI(TAG, "CatalogDB initialized with %u tracks in PSRAM index", _indexCount);
@@ -124,6 +125,8 @@ bool CatalogDB::begin() {
 
 void CatalogDB::buildIndex() {
     _indexCount = 0;
+    _recordCount = 0;
+    _freeRecords.clear();
     memset(_index, 0, _indexCap * sizeof(IdxEntry));
 
     FILE* f = fopen(DB_PATH, "rb");
@@ -144,11 +147,26 @@ void CatalogDB::buildIndex() {
                 _index[slot].videoId[sizeof(_index[slot].videoId) - 1] = '\0';
                 _indexCount++;
             }
+        } else {
+            _freeRecords.push_back(recordNum);
         }
         recordNum++;
     }
 
+    _recordCount = recordNum;
     fclose(f);
+}
+
+// A slot for a new track: a hole left by a removed one, else the end of the
+// file. (Using the valid-track count here overwrote live records once the
+// file had holes.)
+uint16_t CatalogDB::allocRecord() {
+    if (!_freeRecords.empty()) {
+        uint16_t rec = _freeRecords.back();
+        _freeRecords.pop_back();
+        return rec;
+    }
+    return _recordCount++;
 }
 
 bool CatalogDB::readRecord(uint16_t recordNum, TrackRecord& out) {
@@ -166,21 +184,28 @@ bool CatalogDB::readRecord(uint16_t recordNum, TrackRecord& out) {
 }
 
 bool CatalogDB::writeRecord(uint16_t recordNum, const TrackRecord& rec) {
+    // "w+b" truncates, so it is only for creating the file. Falling back to it
+    // on any open failure (e.g. out of file handles) wiped the catalog.
     FILE* f = fopen(DB_PATH, "r+b");
-    if (!f) {
+    if (!f && errno == ENOENT) {
         f = fopen(DB_PATH, "w+b");
     }
-    if (!f) return false;
+    if (!f) {
+        ESP_LOGW(TAG, "writeRecord %u: open failed (errno %d)", recordNum, errno);
+        return false;
+    }
 
     if (fseek(f, static_cast<long>(recordNum) * sizeof(TrackRecord), SEEK_SET) != 0) {
+        ESP_LOGW(TAG, "writeRecord %u: seek failed (errno %d)", recordNum, errno);
         fclose(f);
         return false;
     }
 
     size_t w = fwrite(&rec, sizeof(TrackRecord), 1, f);
-    fflush(f);
-    fclose(f);
-    return (w == 1);
+    bool ok = (w == 1) && fflush(f) == 0;
+    if (fclose(f) != 0) ok = false;
+    if (!ok) ESP_LOGW(TAG, "writeRecord %u: write failed (errno %d)", recordNum, errno);
+    return ok;
 }
 
 bool CatalogDB::walAppend(WalOpType op, const TrackRecord& rec) {
@@ -220,7 +245,7 @@ bool CatalogDB::replayWal() {
             if (entry->opType == WalOpType::UPSERT_TRACK || entry->opType == WalOpType::UPDATE_SEEK_TBL) {
                 uint32_t h = hashVideoId(entry->videoId);
                 int16_t slot = findSlot(entry->videoId, h);
-                uint16_t recNum = (slot >= 0) ? _index[slot].recordNum : _indexCount;
+                uint16_t recNum = (slot >= 0) ? _index[slot].recordNum : allocRecord();
                 writeRecord(recNum, entry->record);
                 replayedAny = true;
             } else if (entry->opType == WalOpType::DELETE_TRACK) {
@@ -248,6 +273,7 @@ bool CatalogDB::upsert(const TrackRecord& record) {
     uint32_t h = hashVideoId(record.videoId);
     int16_t slot = findSlot(record.videoId, h);
     uint16_t targetRecNum = 0;
+    const bool existed = slot >= 0;
 
     if (slot >= 0) {
         targetRecNum = _index[slot].recordNum;
@@ -259,7 +285,7 @@ bool CatalogDB::upsert(const TrackRecord& record) {
             ESP_LOGE(TAG, "PSRAM index full");
             return false;
         }
-        targetRecNum = _indexCount;
+        targetRecNum = allocRecord();
     }
 
     auto toWrite = std::make_unique<TrackRecord>(record);
@@ -277,6 +303,7 @@ bool CatalogDB::upsert(const TrackRecord& record) {
 
     walAppend(WalOpType::UPSERT_TRACK, *toWrite);
     bool ok = writeRecord(targetRecNum, *toWrite);
+    if (!ok && !existed) _freeRecords.push_back(targetRecNum);
 
     if (ok) {
         _index[slot].hash = h;
@@ -284,7 +311,7 @@ bool CatalogDB::upsert(const TrackRecord& record) {
         _index[slot].flags = 0x01;
         strncpy(_index[slot].videoId, record.videoId, sizeof(_index[slot].videoId) - 1);
         _index[slot].videoId[sizeof(_index[slot].videoId) - 1] = '\0';
-        if (targetRecNum == _indexCount) _indexCount++;
+        if (!existed) _indexCount++;
         unlink(WAL_PATH);
     }
 
@@ -306,8 +333,12 @@ bool CatalogDB::remove(const char* videoId) {
 
     uint16_t recNum = _index[slot].recordNum;
     auto emptyRec = std::make_unique<TrackRecord>();
+    // The id lets a WAL replay find the record; without TRACK_FLAG_VALID the
+    // slot still reads as empty.
+    strncpy(emptyRec->videoId, videoId, sizeof(emptyRec->videoId) - 1);
     walAppend(WalOpType::DELETE_TRACK, *emptyRec);
     writeRecord(recNum, *emptyRec);
+    _freeRecords.push_back(recNum);
 
     // Mark slot as tombstone
     _index[slot].flags = 0x02;
@@ -364,17 +395,38 @@ std::vector<TrackRecord> CatalogDB::getAll() {
 
     FILE* f = fopen(DB_PATH, "rb");
     if (!f) {
+        ESP_LOGW(TAG, "getAll: open %s failed (errno %d)", DB_PATH, errno);
         xSemaphoreGiveRecursive(_mutex);
         return result;
     }
 
-    auto rec = std::make_unique<TrackRecord>();
-    while (fread(rec.get(), sizeof(TrackRecord), 1, f) == 1) {
-        if (rec->magic == MAGIC_SENTINEL && (rec->flags & TRACK_FLAG_VALID)) {
-            result.push_back(*rec);
+    size_t chunk_size = 4096;
+    uint8_t* chunk = static_cast<uint8_t*>(heap_caps_malloc(chunk_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+    if (!chunk) {
+        chunk_size = sizeof(TrackRecord);
+        chunk = static_cast<uint8_t*>(heap_caps_malloc(chunk_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+    }
+    if (!chunk) {
+        ESP_LOGW(TAG, "getAll: no internal RAM for the read buffer");
+        fclose(f);
+        xSemaphoreGiveRecursive(_mutex);
+        return result;
+    }
+    result.reserve(_indexCount);
+    size_t n;
+    while ((n = fread(chunk, 1, chunk_size, f)) >= sizeof(TrackRecord)) {
+        for (size_t off = 0; off + sizeof(TrackRecord) <= n; off += sizeof(TrackRecord)) {
+            const auto* rec = reinterpret_cast<const TrackRecord*>(chunk + off);
+            if (rec->magic == MAGIC_SENTINEL && (rec->flags & TRACK_FLAG_VALID)) {
+                result.push_back(*rec);
+            }
         }
     }
+    heap_caps_free(chunk);
 
+    if (ferror(f)) {
+        ESP_LOGW(TAG, "getAll: read error after %u records (errno %d)", (unsigned)result.size(), errno);
+    }
     fclose(f);
     xSemaphoreGiveRecursive(_mutex);
     return result;
@@ -566,37 +618,6 @@ size_t CatalogDB::scanAndSync() {
     closedir(dir);
     xSemaphoreGiveRecursive(_mutex);
     return indexed;
-}
-
-std::string CatalogDB::serializeLibraryJson(const std::string& filter) {
-    auto tracks = filter.empty() ? getAll() : search(filter.c_str());
-
-    cJSON* root = cJSON_CreateArray();
-    if (!root) return "[]";
-
-    for (const auto& t : tracks) {
-        cJSON* obj = cJSON_CreateObject();
-        if (!obj) continue;
-
-        cJSON_AddStringToObject(obj, "id", t.videoId);
-        cJSON_AddStringToObject(obj, "title", t.title);
-        cJSON_AddStringToObject(obj, "artist", t.artist);
-        cJSON_AddNumberToObject(obj, "duration", t.durationMs / 1000);
-        cJSON_AddNumberToObject(obj, "size", t.fileSizeBytes);
-        cJSON_AddBoolToObject(obj, "has_thumb", (t.flags & TRACK_FLAG_HAS_THUMBNAIL) != 0);
-        cJSON_AddBoolToObject(obj, "cached", t.fileSizeBytes > 0);
-        cJSON_AddNumberToObject(obj, "cached_at", t.cachedAt);
-        cJSON_AddNumberToObject(obj, "play_count", t.playCount);
-
-        cJSON_AddItemToArray(root, obj);
-    }
-
-    char* rendered = cJSON_PrintUnformatted(root);
-    std::string jsonStr = rendered ? rendered : "[]";
-    if (rendered) free(rendered);
-    cJSON_Delete(root);
-
-    return jsonStr;
 }
 
 bool CatalogDB::compact() {

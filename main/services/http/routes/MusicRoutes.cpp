@@ -150,12 +150,6 @@ esp_err_t statusHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
-esp_err_t libraryHandler(httpd_req_t* req) {
-    std::string filter;
-    Http::queryParam(req, "q", filter);
-    return Http::sendJson(req, 200, CatalogDB::getInstance().serializeLibraryJson(filter));
-}
-
 esp_err_t libraryScanHandler(httpd_req_t* req) {
     JsonDocument doc;
     doc["status"] = "ok";
@@ -218,7 +212,6 @@ void Routes::registerMusic(Http::Server& server) {
     server.on("/api/music/play_local", HTTP_POST, playLocalHandler);
     server.on("/api/music/control", HTTP_POST, controlHandler);
     server.on("/api/music/status", HTTP_GET, statusHandler);
-    server.on("/api/music/library", HTTP_GET, libraryHandler);
     server.on("/api/music/library/scan", HTTP_POST, libraryScanHandler);
     server.on("/api/music/library", HTTP_DELETE, libraryDeleteHandler);
 }

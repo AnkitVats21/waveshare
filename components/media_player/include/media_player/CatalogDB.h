@@ -115,9 +115,8 @@ public:
     bool setThumbnailCached(const char* videoId, bool cached);
     void recordPlay(const char* videoId);
 
-    // Filesystem sync & JSON serialization (HTTP REST compatibility)
+    // Filesystem sync. The dashboard reads catalog.db directly (raw records).
     size_t scanAndSync();
-    std::string serializeLibraryJson(const std::string& filter = "");
 
     // Maintenance & Migration
     bool compact();
@@ -140,7 +139,9 @@ private:
     SemaphoreHandle_t _mutex = nullptr;
     IdxEntry*         _index = nullptr;  // Allocated in PSRAM
     uint16_t          _indexCap = 1024;  // Power of 2
-    uint16_t          _indexCount = 0;
+    uint16_t          _indexCount = 0;   // Valid tracks
+    uint16_t          _recordCount = 0;  // Record slots in catalog.db, valid or not
+    std::vector<uint16_t> _freeRecords;  // Empty slots below _recordCount, reused first
     bool              _initialized = false;
 
     // Internal helpers
@@ -148,6 +149,7 @@ private:
     int16_t  findSlot(const char* videoId, uint32_t hash) const;
     int16_t  findInsertSlot(const char* videoId, uint32_t hash) const;
     bool     walAppend(WalOpType op, const TrackRecord& rec);
+    uint16_t allocRecord();
     bool     replayWal();
     bool     readRecord(uint16_t recordNum, TrackRecord& out);
     bool     writeRecord(uint16_t recordNum, const TrackRecord& rec);

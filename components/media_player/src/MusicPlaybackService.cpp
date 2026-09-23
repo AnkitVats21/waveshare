@@ -959,16 +959,25 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
         }
     }
 
-    // Index into local SD library
+    // Index into local SD library. An existing record only gets fresh
+    // metadata: rebuilding it would reset the saved-file size and seek table.
     auto rec = std::make_unique<TrackRecord>();
-    strncpy(rec->videoId, track.videoId.c_str(), sizeof(rec->videoId) - 1);
-    strncpy(rec->title, track.title.c_str(), sizeof(rec->title) - 1);
-    strncpy(rec->artist, track.author.c_str(), sizeof(rec->artist) - 1);
-    rec->durationMs = track.durationSeconds * 1000;
-    rec->cachedAt = static_cast<uint32_t>(time(nullptr));
-    rec->sampleRate = 48000;
-    rec->channels = 2;
-    rec->codecId = 0; // WebM/Opus
+    if (!CatalogDB::getInstance().get(track.videoId.c_str(), *rec)) {
+        strncpy(rec->videoId, track.videoId.c_str(), sizeof(rec->videoId) - 1);
+        rec->cachedAt = static_cast<uint32_t>(time(nullptr));
+        rec->sampleRate = 48000;
+        rec->channels = 2;
+        rec->codecId = 0; // WebM/Opus
+    }
+    if (!track.title.empty() && track.title != track.videoId) {
+        memset(rec->title, 0, sizeof(rec->title));
+        strncpy(rec->title, track.title.c_str(), sizeof(rec->title) - 1);
+    }
+    if (!track.author.empty()) {
+        memset(rec->artist, 0, sizeof(rec->artist));
+        strncpy(rec->artist, track.author.c_str(), sizeof(rec->artist) - 1);
+    }
+    if (track.durationSeconds > 0) rec->durationMs = track.durationSeconds * 1000;
     CatalogDB::getInstance().upsert(*rec);
     CatalogDB::getInstance().recordPlay(track.videoId.c_str());
 
