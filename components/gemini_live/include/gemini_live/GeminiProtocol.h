@@ -72,6 +72,11 @@ private:
     static constexpr size_t PSRAM_RB_SIZE = 512 * 1024;      // 512KB static ring buffer pool
     static constexpr size_t MAX_INCOMING_FRAME_SIZE = 98304; // 96KB max single frame staging space
 
+    // Flow control: how long each stage waits for downstream room before dropping.
+    // A single Gemini audio frame is ~1s of speech, so these only expire if playback stalls.
+    static constexpr uint32_t VOICE_RX_MAX_BLOCK_MS   = 5000; // parser task -> VOICE_RX_BUF
+    static constexpr uint32_t INCOMING_RB_MAX_BLOCK_MS = 5000; // WS task -> m_incoming_psram_rb
+
     RingbufHandle_t m_incoming_psram_rb = nullptr;
     uint8_t* m_assembly_scratch = nullptr;
     size_t m_assembly_idx = 0;

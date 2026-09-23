@@ -358,10 +358,12 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                 if (data->payload_offset + data->data_len >= data->payload_len) {
                     if (!self->m_frame_overflowed && self->m_assembly_idx < MAX_INCOMING_FRAME_SIZE) {
                         self->m_assembly_scratch[self->m_assembly_idx] = '\0';
+                        // Long wait on purpose: while blocked, the WS task stops reading the
+                        // socket, so the TCP window closes and Gemini pauses sending.
                         BaseType_t ok = xRingbufferSend(self->m_incoming_psram_rb,
                                                         self->m_assembly_scratch,
                                                         self->m_assembly_idx + 1,
-                                                        pdMS_TO_TICKS(20));
+                                                        pdMS_TO_TICKS(INCOMING_RB_MAX_BLOCK_MS));
                         if (ok == pdTRUE) {
                             self->m_rx_frames++;
                             if (self->getHandle() != nullptr) {
@@ -444,9 +446,23 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 if (written > 0) {
                     m_rx_audio_bytes += written;
 
-                    if (!BufferManager::getInstance().send(Buffers::VOICE_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(20))) {
+                    // Gemini streams faster than real time. Rather than dropping when the
+                    // playback buffer is full, block until the speaker drains room. This
+                    // backs up m_incoming_psram_rb, which in turn stalls the WS event
+                    // handler and applies TCP backpressure to the server.
+                    // Bail out if speaking ends (session idle / disconnect) or playback stalls.
+                    auto& bm = BufferManager::getInstance();
+                    bool sent = false;
+                    for (uint32_t waited_ms = 0; waited_ms < VOICE_RX_MAX_BLOCK_MS; waited_ms += 100) {
+                        if (bm.send(Buffers::VOICE_RX_BUF, m_static_pcm_scratch_arena, written, pdMS_TO_TICKS(100))) {
+                            sent = true;
+                            break;
+                        }
+                        if (!m_running || !sysdb.assistantSpeaking()) break;
+                    }
+                    if (!sent) {
                         m_rx_dropped_frames++;
-                        LOGW_NET("Audio drop: VOICE_RX_BUF is full!");
+                        LOGW_NET("Audio drop: VOICE_RX_BUF is full (playback not draining)!");
                     }
                 }
             } else {
