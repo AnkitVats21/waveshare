@@ -41,6 +41,32 @@ LedMode ledModeFromString(const char* s) {
 
 int64_t nowMs() { return esp_timer_get_time() / 1000; }
 
+const char* assistantStateToString(AssistantState s) {
+    switch (s) {
+        case AssistantState::StartingSession:    return "starting";
+        case AssistantState::Connecting:         return "connecting";
+        case AssistantState::StreamingUserAudio: return "listening";
+        case AssistantState::AssistantSpeaking:  return "speaking";
+        case AssistantState::WaitingForFollowup: return "followup";
+        case AssistantState::Closing:            return "closing";
+        case AssistantState::ErrorCooldown:      return "error";
+        default:                                 return "idle";
+    }
+}
+
+const char* wsStateToString(WsState s) {
+    switch (s) {
+        case WsState::CONNECTING:  return "connecting";
+        case WsState::CONNECTED:   return "connected";
+        case WsState::GOING_AWAY:  return "going_away";
+        case WsState::ERROR_STATE: return "error";
+        default:                   return "disconnected";
+    }
+}
+
+// Upper bound on queue entries included in each state push.
+constexpr size_t PUSH_QUEUE_MAX = 30;
+
 } // namespace
 
 ControlChannel& ControlChannel::getInstance() {
@@ -54,7 +80,7 @@ ControlChannel::ControlChannel()
         .stack_size = 6144,
         .priority   = ThreadConfig::Priority::LOW,
         .core_id    = ThreadConfig::CORE_NETWORK,
-        .interest   = COMP::AUDIO | COMP::LED | COMP::MEDIA | COMP::BLUETOOTH
+        .interest   = COMP::AUDIO | COMP::LED | COMP::MEDIA | COMP::BLUETOOTH | COMP::ASSISTANT | COMP::ALARM
     }) {}
 
 bool ControlChannel::begin() {
@@ -220,13 +246,33 @@ void ControlChannel::handleCommand(const char* json, size_t len) {
             music.setAutoplay(value.as<bool>());
         } else if (strcmp(action, "caching") == 0) {
             music.setCaching(value.as<bool>());
+        } else if (strcmp(action, "queue_add") == 0) {
+            // {"id","title","artist","duration","front"}: a track the client already
+            // identified (search result or library entry); resolved when it plays.
+            InvidiousTrack track;
+            track.videoId = doc["id"] | "";
+            track.title = doc["title"] | "Unknown Title";
+            track.author = doc["artist"] | "Unknown Artist";
+            track.durationSeconds = doc["duration"] | 0;
+            if (!track.videoId.empty()) music.enqueueTrack(track, doc["front"] | false);
+        } else if (strcmp(action, "queue_remove") == 0) {
+            music.removeFromQueue(value.as<size_t>());
+        } else if (strcmp(action, "queue_clear") == 0) {
+            music.clearQueue();
+        } else if (strcmp(action, "queue_shuffle") == 0) {
+            music.shuffleQueue();
         } else {
             ESP_LOGW(TAG, "Unknown action '%s'", action);
         }
 
     } else {
         ESP_LOGW(TAG, "Unknown cmd '%s'", cmd);
+        return;
     }
+
+    // Queue edits don't touch SysDb, so push the new state explicitly.
+    m_push_now = true;
+    if (getHandle()) xTaskNotify(getHandle(), 0, eSetBits);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -287,6 +333,25 @@ void ControlChannel::pushState() {
     music["repeat_mode"] = snap.media.repeat_mode;
     music["autoplay"] = snap.media.autoplay_enabled;
     music["caching"] = snap.media.cache_downloads;
+
+    JsonArray queue = music["queue"].to<JsonArray>();
+    const auto upcoming = MusicPlaybackService::getInstance().getQueue();
+    music["queue_length"] = upcoming.size();
+    for (size_t i = 0; i < upcoming.size() && i < PUSH_QUEUE_MAX; ++i) {
+        JsonObject item = queue.add<JsonObject>();
+        item["id"] = upcoming[i].videoId;
+        item["title"] = upcoming[i].title;
+        item["artist"] = upcoming[i].author;
+        item["duration"] = upcoming[i].durationSeconds;
+    }
+
+    JsonObject assistant = doc["assistant"].to<JsonObject>();
+    assistant["state"] = assistantStateToString(snap.assistant.session_state);
+    assistant["connection"] = wsStateToString(snap.assistant.ws_state);
+
+    JsonObject alarm = doc["alarm"].to<JsonObject>();
+    alarm["ringing"] = snap.alarm.playing;
+    alarm["id"] = snap.alarm.active_alarm_id;
 
     JsonObject bt = doc["bluetooth"].to<JsonObject>();
     bt["connected"] = snap.bluetooth.connected;

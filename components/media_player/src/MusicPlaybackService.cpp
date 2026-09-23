@@ -744,6 +744,35 @@ bool MusicPlaybackService::queueInternal(const char* query) {
     }
 }
 
+void MusicPlaybackService::enqueueTrack(const InvidiousTrack& track, bool front) {
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        if (front) {
+            _queue.push_front(track);
+            _prefetchedUrl.clear();
+            _prefetchedVideoId.clear();
+        } else {
+            _queue.push_back(track);
+        }
+        ESP_LOGI(TAG, "Queued '%s' at %s (queue depth: %zu)", track.title.c_str(), front ? "front" : "back", _queue.size());
+    }
+    prefetchNextTrack();
+}
+
+bool MusicPlaybackService::removeFromQueue(size_t index) {
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        if (index >= _queue.size()) return false;
+        _queue.erase(_queue.begin() + index);
+        if (index == 0) {
+            _prefetchedUrl.clear();
+            _prefetchedVideoId.clear();
+        }
+    }
+    if (index == 0) prefetchNextTrack();
+    return true;
+}
+
 void MusicPlaybackService::clearQueue() {
     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
     _queue.clear();

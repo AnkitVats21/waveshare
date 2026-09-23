@@ -1,6 +1,7 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "services/storage/StorageService.h"
+#include "gemini_live/gemini_skills_generated.h"
 
 using Services::StorageService;
 
@@ -28,8 +29,30 @@ esp_err_t setSettingsHandler(httpd_req_t* req) {
     return Http::sendOk(req, "Config updated successfully");
 }
 
-// gemini_config.json: the API key is write-only. GET reports only whether one
-// is set; POST keeps the stored key unless the body carries a new one.
+// Pulls "api_key" out of a config file that no longer parses as JSON (e.g.
+// truncated), so rewriting the file doesn't lose the key.
+std::string salvageApiKey(const std::string& content) {
+    size_t k = content.find("\"api_key\"");
+    if (k == std::string::npos) return "";
+    size_t colon = content.find(':', k);
+    size_t open = (colon == std::string::npos) ? colon : content.find('"', colon);
+    size_t close = (open == std::string::npos) ? open : content.find('"', open + 1);
+    if (close == std::string::npos) return "";
+    return content.substr(open + 1, close - open - 1);
+}
+
+// Model and voice compiled into the firmware, used when the config sets none.
+void addDefaults(JsonDocument& doc) {
+    JsonDocument setup;
+    if (deserializeJson(setup, GeminiSkills::SETUP_HANDSHAKE_JSON)) return;
+    JsonObject defaults = doc["defaults"].to<JsonObject>();
+    defaults["model"] = setup["setup"]["model"];
+    defaults["voice"] = setup["setup"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"];
+}
+
+// gemini_config.json: {"api_key", "model", "voice", "system_prompt"}. The API
+// key is write-only: GET reports only whether one is set; POST keeps the stored
+// key unless the body carries a new one.
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     JsonDocument doc;
     std::string content = StorageService::getInstance().readFile(GEMINI_CONFIG);
@@ -41,8 +64,9 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
         }
     }
     const char* key = doc["api_key"] | "";
-    doc["api_key_set"] = key[0] != '\0';
+    doc["api_key_set"] = key[0] != '\0' || (doc["config_error"].is<const char*>() && !salvageApiKey(content).empty());
     doc.remove("api_key");
+    addDefaults(doc);
     return Http::sendJson(req, 200, doc);
 }
 
@@ -56,13 +80,21 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
         return Http::sendError(req, 400, "Body must be a JSON object");
     }
     doc.remove("api_key_set");
+    doc.remove("defaults");
+    doc.remove("config_error");
 
     const char* new_key = doc["api_key"] | "";
     if (new_key[0] == '\0') {
         JsonDocument current;
         std::string content = StorageService::getInstance().readFile(GEMINI_CONFIG);
-        if (!content.empty() && !deserializeJson(current, content) && current["api_key"].is<const char*>()) {
-            doc["api_key"] = current["api_key"].as<const char*>();
+        std::string key;
+        if (!content.empty() && !deserializeJson(current, content)) {
+            key = current["api_key"] | "";
+        } else {
+            key = salvageApiKey(content);
+        }
+        if (!key.empty()) {
+            doc["api_key"] = key;
         } else {
             doc.remove("api_key");
         }

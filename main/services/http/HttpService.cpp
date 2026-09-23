@@ -100,6 +100,7 @@ bool HttpService::startServer() {
     Routes::registerSystem(m_server);
     Routes::registerConfig(m_server);
     Routes::registerOta(m_server);
+    Routes::registerAlarms(m_server);
     // CORS preflight for every /api/* endpoint.
     m_server.on("/api/*", HTTP_OPTIONS, Http::corsPreflight);
     // Wildcard GET must come after every other GET route (first match wins).

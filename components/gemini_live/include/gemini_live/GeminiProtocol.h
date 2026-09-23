@@ -47,6 +47,9 @@ private:
     ~GeminiProtocol() override;
 
     bool ensureClientInitialized();
+    // Parses /sdcard/gemini_config.json ({"api_key","model","voice","system_prompt"});
+    // false (and `out` empty) if missing or invalid.
+    bool readConfig(JsonDocument& out);
     void transmitSetupHandshake();
     void processIncomingFrame(char* payload, size_t length);
     void handleToolCall(JsonObjectConst toolCall);

@@ -79,6 +79,10 @@ public:
     void handoffToLocal(const std::string& songId, uint32_t posMs);
 
     // Playlist / Queue Management
+    // Adds an already-identified track (no search). front = play next.
+    void enqueueTrack(const InvidiousTrack& track, bool front);
+    // Removes the queue entry at index; false if out of range.
+    bool removeFromQueue(size_t index);
     void clearQueue();
     void shuffleQueue();
     void setRepeatMode(RepeatMode mode);

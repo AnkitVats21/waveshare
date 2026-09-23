@@ -22,6 +22,7 @@
 
 static const char* const GEMINI_LIVE_BASE_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=";
 static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 65536; // 64KB ceiling
+static constexpr const char* GEMINI_CONFIG_PATH = "/sdcard/gemini_config.json";
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
@@ -109,24 +110,30 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
 // WebSocket Client Management
 // ─────────────────────────────────────────────────────────────────────────────
 
+bool GeminiProtocol::readConfig(JsonDocument& out) {
+    out.clear();
+    if (!m_storage || !m_storage->isMounted() || !m_storage->fileExists(GEMINI_CONFIG_PATH)) return false;
+    std::string content = m_storage->readFile(GEMINI_CONFIG_PATH);
+    if (content.empty()) return false;
+    DeserializationError err = deserializeJson(out, content);
+    if (err || !out.is<JsonObject>()) {
+        LOGW_NET("%s is not valid JSON (%s); ignoring it", GEMINI_CONFIG_PATH, err ? err.c_str() : "not an object");
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
 bool GeminiProtocol::ensureClientInitialized() {
     std::lock_guard<std::mutex> lock(m_client_mutex);
     if (m_client) {
         return true;
     }
 
-    std::string api_key = "";
-    if (m_storage && m_storage->isMounted() &&
-        m_storage->fileExists("/sdcard/gemini_config.json")) {
-        std::string content = m_storage->readFile("/sdcard/gemini_config.json");
-        if (!content.empty()) {
-            JsonDocument doc;
-            DeserializationError err = deserializeJson(doc, content);
-            if (!err && !doc["api_key"].isNull()) {
-                api_key = doc["api_key"].as<std::string>();
-                LOGI_NET("Loaded Gemini API key dynamically from SD card.");
-            }
-        }
+    JsonDocument cfg;
+    std::string api_key = readConfig(cfg) ? (cfg["api_key"] | "") : "";
+    if (!api_key.empty()) {
+        LOGI_NET("Using the Gemini API key from the SD card.");
     }
 
     if (api_key.empty()) {
@@ -221,45 +228,53 @@ void GeminiProtocol::connect() {
 
 void GeminiProtocol::transmitSetupHandshake() {
     if (!m_client.isConnected()) return;
-    
-    LOGI_NET("Preparing JSON schema handshake payload...");
-    
-    // Check if memory file exists and read it
-    std::string memory_content = "";
-    if (m_storage && m_storage->isMounted() &&
-        m_storage->fileExists("/sdcard/gemini_memory.txt")) {
-        memory_content = m_storage->readFile("/sdcard/gemini_memory.txt");
+
+    // Start from the compiled-in setup (model, voice, tool declarations), then
+    // apply /sdcard/gemini_config.json overrides and the long-term memory.
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, GeminiSkills::SETUP_HANDSHAKE_JSON);
+    if (err) {
+        LOGE_NET("Failed to parse SETUP_HANDSHAKE_JSON (%s); sending it unmodified", err.c_str());
+        m_client.sendLargeText(GeminiSkills::SETUP_HANDSHAKE_JSON, strlen(GeminiSkills::SETUP_HANDSHAKE_JSON),
+                               pdMS_TO_TICKS(2000));
+        return;
+    }
+    JsonObject setup = doc["setup"];
+
+    JsonDocument cfg;
+    readConfig(cfg);
+    const char* model = cfg["model"] | "";
+    const char* voice = cfg["voice"] | "";
+    if (model[0]) {
+        std::string full = (strncmp(model, "models/", 7) == 0) ? model : std::string("models/") + model;
+        setup["model"] = full;
+    }
+    if (voice[0]) {
+        setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] = voice;
     }
 
-    if (!memory_content.empty()) {
-        LOGI_NET("Memory content loaded. Injecting system instruction context...");
-        
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, GeminiSkills::SETUP_HANDSHAKE_JSON);
-        if (!err) {
-            JsonObject setup = doc["setup"].as<JsonObject>();
-            JsonObject systemInstruction = setup["systemInstruction"].to<JsonObject>();
-            JsonArray parts = systemInstruction["parts"].to<JsonArray>();
-            JsonObject part = parts.add<JsonObject>();
-            
-            std::string instruction = "You have access to the following long-term memory context containing facts, notes, or preferences about the user from previous conversations. Use it to inform your responses:\n" + memory_content;
-            part["text"] = instruction;
-            
-            std::string payload;
-            serializeJson(doc, payload);
-            LOGI_NET("Uplinking handshake with injected memory context (payload size: %zu bytes)...", payload.length());
-            m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
-            return;
-        } else {
-            LOGE_NET("Failed to deserialize SETUP_HANDSHAKE_JSON: %s. Falling back to static handshake.", err.c_str());
+    std::string instruction = cfg["system_prompt"] | "";
+    if (m_storage && m_storage->isMounted() && m_storage->fileExists("/sdcard/gemini_memory.txt")) {
+        std::string memory = m_storage->readFile("/sdcard/gemini_memory.txt");
+        if (!memory.empty()) {
+            if (!instruction.empty()) instruction += "\n\n";
+            instruction += "You have access to the following long-term memory context containing facts, notes, "
+                           "or preferences about the user from previous conversations. Use it to inform your responses:\n";
+            instruction += memory;
         }
     }
+    if (!instruction.empty()) {
+        JsonArray parts = setup["systemInstruction"]["parts"].to<JsonArray>();
+        parts.add<JsonObject>()["text"] = instruction;
+    }
 
-    // Default fallback to static handshake
-    LOGI_NET("Uplinking static JSON schema handshake compilation payload...");
-    m_client.sendLargeText(GeminiSkills::SETUP_HANDSHAKE_JSON, 
-                           strlen(GeminiSkills::SETUP_HANDSHAKE_JSON), 
-                           pdMS_TO_TICKS(2000));
+    std::string payload;
+    serializeJson(doc, payload);
+    LOGI_NET("Uplinking setup: model=%s voice=%s instruction=%zu bytes (payload %zu bytes)",
+             setup["model"] | "?",
+             setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] | "?",
+             instruction.size(), payload.size());
+    m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
 }
 
 void GeminiProtocol::transmitToolResponse(const char* call_id, const char* json_result) {

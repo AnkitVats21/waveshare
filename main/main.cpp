@@ -13,7 +13,7 @@
 #include "common/LogRouter.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "hal/Board.h"
-// #include "services/alarm/AlarmService.h"
+#include "services/alarm/AlarmService.h"
 #include "services/storage/StorageService.h"
 #include "services/storage/SysDbSyncReactor.h"
 #include "services/storage/AlertFileDecoder.h"
@@ -123,6 +123,9 @@ extern "C" void app_main(void) {
     MusicPlaybackService::getInstance().begin();
     gemini_pump.start();
     app_ctrl.begin();
+    // Loads alarms.json so the API and voice tools edit the saved list. The
+    // ringing task is deliberately not started yet (alarm playback untested).
+    Services::AlarmService::getInstance().begin();
     sync_reactor.begin();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
     Services::ControlChannel::getInstance().begin();
