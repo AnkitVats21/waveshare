@@ -3,7 +3,7 @@
 
 #include "core_sysdb/app_types.h"
 #include "core_sysdb/led_types.h"
-#include "core_sysdb/WalTypes.h"
+#include "core_sysdb/SysDbTypes.h"
 #include "core_sysdb/AudioRates.h"
 #include <cstdint>
 #include <string>
@@ -44,7 +44,6 @@ enum class MediaPlaybackState : uint8_t {
 namespace BIT_SYSTEM {
     static constexpr ComponentMask WIFI_CONNECTED   = (1u << 0);
     static constexpr ComponentMask NETWORK_STATE    = (1u << 2);
-    static constexpr ComponentMask SERVER_IP        = (1u << 1);
     static constexpr ComponentMask AP_ACTIVE        = (1u << 3);
     static constexpr ComponentMask WIFI_CONFIG      = (1u << 4);
     static constexpr ComponentMask APPLY_CREDS      = (1u << 5);
@@ -52,22 +51,17 @@ namespace BIT_SYSTEM {
 
 namespace BIT_AUDIO {
     static constexpr ComponentMask SAMPLE_RATE      = (1u << 0);
-    static constexpr ComponentMask HW_RATE          = (1u << 7);
     static constexpr ComponentMask MIC_GAIN         = (1u << 1);
     static constexpr ComponentMask SPEAKER_VOLUME   = (1u << 2);
     static constexpr ComponentMask MIC_ENABLED      = (1u << 3);
     static constexpr ComponentMask ASST_SPEAKING    = (1u << 4);
     static constexpr ComponentMask SESSION_ACTIVE   = (1u << 5);
     static constexpr ComponentMask TURN_COMPLETE    = (1u << 6);
-    static constexpr ComponentMask LAST_ACTIVITY    = (1u << 8);
-    static constexpr ComponentMask WAV_PLAYING      = (1u << 9);
     static constexpr ComponentMask RECORD_CHANNELS  = (1u << 10);
 }
 
 namespace BIT_PIPELINE {
     static constexpr ComponentMask MODE             = (1u << 0);
-    static constexpr ComponentMask RTP_TX           = (1u << 1);
-    static constexpr ComponentMask RTP_RX           = (1u << 2);
 }
 
 namespace BIT_ASSISTANT {
@@ -115,8 +109,6 @@ namespace BIT_MEDIA {
 #define SYSTEM_FIELDS \
     X(bool, wifi_connected, false, BIT_SYSTEM::WIFI_CONNECTED, FieldAccess::ReadOnly) \
     X(NetworkState, network_state, NetworkState::Disconnected, BIT_SYSTEM::NETWORK_STATE, FieldAccess::ReadOnly) \
-    X_STR(server_ip, 32, "192.168.1.24", BIT_SYSTEM::SERVER_IP, FieldAccess::Writable) \
-    X(int, wifi_max_retries, 5, 0, FieldAccess::Writable) \
     X(bool, ap_active, false, BIT_SYSTEM::AP_ACTIVE, FieldAccess::ReadOnly) \
     X_STR(wifi_ssid, 33, "", BIT_SYSTEM::WIFI_CONFIG, FieldAccess::Writable) \
     X_STR(wifi_password, 65, "", BIT_SYSTEM::WIFI_CONFIG, FieldAccess::Writable) \
@@ -124,28 +116,16 @@ namespace BIT_MEDIA {
 
 #define AUDIO_FIELDS \
     X(uint32_t, sample_rate, LOCAL_SAMPLE_RATE, BIT_AUDIO::SAMPLE_RATE, FieldAccess::ReadOnly) \
-    X(uint32_t, current_hardware_rate, LOCAL_SAMPLE_RATE, BIT_AUDIO::HW_RATE, FieldAccess::ReadOnly) \
     X(float, mic_gain_db, 60.0f, BIT_AUDIO::MIC_GAIN, FieldAccess::Writable) \
     X(int, speaker_volume, 80, BIT_AUDIO::SPEAKER_VOLUME, FieldAccess::Writable) \
     X(bool, mic_enabled, true, BIT_AUDIO::MIC_ENABLED, FieldAccess::Writable) \
     X(bool, assistant_speaking, false, BIT_AUDIO::ASST_SPEAKING, FieldAccess::ReadOnly) \
     X(bool, session_active, false, BIT_AUDIO::SESSION_ACTIVE, FieldAccess::ReadOnly) \
     X(bool, turn_complete_pending, false, BIT_AUDIO::TURN_COMPLETE, FieldAccess::ReadOnly) \
-    X(uint64_t, last_activity_ms, 0, BIT_AUDIO::LAST_ACTIVITY, FieldAccess::ReadOnly) \
-    X(uint32_t, buffer_size, 131072, 0, FieldAccess::ReadOnly) \
-    X(uint16_t, rtp_tx_port, 5005, 0, FieldAccess::Writable) \
-    X(uint16_t, rtp_rx_port, 5005, 0, FieldAccess::Writable) \
-    X(AudioStreamFormat, stream_format, AudioStreamFormat::PCM_S16LE, 0, FieldAccess::Writable) \
-    X(bool, wav_playing, false, BIT_AUDIO::WAV_PLAYING, FieldAccess::ReadOnly) \
-    X(uint32_t, wav_sample_rate, 16000, 0, FieldAccess::ReadOnly) \
-    X(bool, wav_prefetched, false, 0, FieldAccess::ReadOnly) \
     X(bool, record_all_mic_channels, true, BIT_AUDIO::RECORD_CHANNELS, FieldAccess::Writable)
 
 #define PIPELINE_FIELDS \
-    X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE, FieldAccess::Writable) \
-    X(bool, rtp_tx_en, false, BIT_PIPELINE::RTP_TX, FieldAccess::Writable) \
-    X(bool, rtp_rx_en, false, BIT_PIPELINE::RTP_RX, FieldAccess::Writable) \
-    X(bool, rtp_enabled, false, 0, FieldAccess::Writable)
+    X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE, FieldAccess::Writable)
 
 #define ASSISTANT_FIELDS \
     X(AssistantState, session_state, AssistantState::Idle, BIT_ASSISTANT::SESSION_STATE, FieldAccess::ReadOnly) \

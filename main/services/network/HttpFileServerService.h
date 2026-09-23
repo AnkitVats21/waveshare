@@ -22,6 +22,9 @@ public:
     void stopServer();
     bool isRunning() const { return m_server != nullptr; }
 
+    // Realtime per-core CPU load (cached, refreshed at most every 250 ms)
+    static void getCpuUsage(int& cpu0_pct, int& cpu1_pct);
+
 protected:
     void run() override;
 

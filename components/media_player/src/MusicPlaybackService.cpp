@@ -639,8 +639,42 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
 
     NexusPlayer::getInstance().stop();
 
+    // 1. Direct stream URL (e.g. http://... or https://...)
+    if (strncmp(query, "http://", 7) == 0 || strncmp(query, "https://", 8) == 0) {
+        ESP_LOGI(TAG, "resolveAndPlayImmediate: direct stream URL detected, playing immediately");
+        clearQueue();
+        InvidiousTrack track;
+        track.videoId = "stream";
+        track.title = "Direct Stream";
+        track.author = "Online";
+        track.durationSeconds = 0;
+        return playDirect(track, query);
+    }
+
+    // 2. Direct 11-char YouTube video ID (alphanumeric, -, _)
+    auto isVideoId = [](const char* s) -> bool {
+        if (strlen(s) != 11) return false;
+        for (int i = 0; i < 11; i++) {
+            char c = s[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     InvidiousTrack track;
-    esp_err_t err = _invidious.search(query, track);
+    esp_err_t err = ESP_FAIL;
+    if (isVideoId(query)) {
+        track.videoId = query;
+        track.title = query;
+        track.author = "YouTube";
+        track.durationSeconds = 0;
+        err = ESP_OK;
+    } else {
+        err = _invidious.search(query, track);
+    }
+
     if (err != ESP_OK || track.videoId.empty()) {
         ESP_LOGE(TAG, "Search failed for '%s': %s", query, esp_err_to_name(err));
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
@@ -1296,42 +1330,6 @@ void MusicPlaybackService::handoffToLocal(const std::string& songId, uint32_t po
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.media.state = MediaPlaybackState::ERROR_STATE;
         });
-    }
-}
-
-bool MusicPlaybackService::executeAction(uint8_t cmd_id, uint32_t param, const char* data) {
-    auto cmd = static_cast<MediaCmdId>(cmd_id);
-    switch (cmd) {
-        case MediaCmdId::PLAY:
-            return postCommand(MediaCmdType::PLAY, data);
-        case MediaCmdId::PAUSE:
-            return postCommand(MediaCmdType::PAUSE);
-        case MediaCmdId::RESUME:
-            return postCommand(MediaCmdType::RESUME);
-        case MediaCmdId::STOP:
-            return postCommand(MediaCmdType::STOP);
-        case MediaCmdId::NEXT:
-            return postCommand(MediaCmdType::NEXT);
-        case MediaCmdId::PREVIOUS:
-            return postCommand(MediaCmdType::PREVIOUS);
-        case MediaCmdId::SEEK: {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "%u", (unsigned int)param);
-            return postCommand(MediaCmdType::SEEK, buf);
-        }
-        case MediaCmdId::AUTOPLAY:
-            setAutoplay(param != 0);
-            return true;
-        case MediaCmdId::CACHING:
-            setCaching(param != 0);
-            return true;
-        case MediaCmdId::VOLUME:
-            EmbeddedSysDb::getInstance().mutate([param](SystemState& s) {
-                s.audio.speaker_volume = std::min<int>(100, std::max<int>(0, param));
-            });
-            return true;
-        default:
-            return false;
     }
 }
 

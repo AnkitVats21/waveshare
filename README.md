@@ -6,7 +6,7 @@
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](https://www.espressif.com/en/products/socs/esp32-s3)
 [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
-An advanced, production-grade C++17 firmware for the **Waveshare ESP32-S3 Audio Development Board**. This firmware combines an event-driven conversational voice assistant powered by **Google Gemini Live (Bidirectional WebSocket API)** with 20+ voice-driven tool functions, an intelligent streaming music player powered by **Invidious (NexusPlayer)** with zero-latency autoplay and local SD caching, hands-free **ESP-SR Wake Word detection with Acoustic Echo Cancellation (AEC)**, an on-device **LVGL v9 touchscreen dashboard** (ILI9341 + XPT2046), and a reactive state machine (**EmbeddedSysDb**) that also replicates over the network to a host-side control stack (`starhub` + a web dashboard, in [sibling repos](#companion-repositories)).
+An advanced, production-grade C++17 firmware for the **Waveshare ESP32-S3 Audio Development Board**. This firmware combines an event-driven conversational voice assistant powered by **Google Gemini Live (Bidirectional WebSocket API)** with 20+ voice-driven tool functions, an intelligent streaming music player powered by **Invidious (NexusPlayer)** with zero-latency autoplay and local SD caching, hands-free **ESP-SR Wake Word detection with Acoustic Echo Cancellation (AEC)**, an on-device **LVGL v9 touchscreen dashboard** (ILI9341 + XPT2046), and a reactive state machine (**EmbeddedSysDb**) exposed to clients over a local WebSocket control channel (`ws://nexus.local/api/ws`, used by the web dashboard in a [sibling repo](#companion-repositories)).
 
 ---
 
@@ -113,28 +113,32 @@ graph TD
 
 ### System-of-systems view
 
-This repo is the **firmware side only**. In production the board talks to
-a small host-side stack over the STAR wire protocol (a schema-driven state
-replication protocol compiled from `schema/sysdb.star`); that stack lives
-in sibling repos, not here:
+This repo is the **firmware side only**. The device is the single gateway for
+its clients: it advertises itself over mDNS as `nexus.local` and serves its
+own control API. There is no host-side daemon in between.
 
 ```mermaid
 graph LR
-    FW["ESP32-S3 firmware (this repo)<br/>EmbeddedSysDb"]
-    Hub["starhub daemon<br/>(STAR replica host, WS gateway)"]
+    FW["ESP32-S3 firmware (this repo)<br/>EmbeddedSysDb + ControlChannel"]
     Dash["waveshare-dashboard<br/>(React/Vite web UI)"]
     Inv["invidious-daemon<br/>(YouTube resolver, remote host)"]
 
-    FW <-- "binary WS, /api/star/ws<br/>WAL_BATCH / REQ_CATCHUP / CMD_SET_FIELD" --> Hub
-    Dash <-- "JSON WS, /api/dashboard/ws<br/>{cmd, ...} + full-state snapshots" --> Hub
-    Dash -- "REST: search, SD library, alert chime" --> FW
+    Dash <-- "JSON WS, /api/ws<br/>{cmd, ...} + full-state pushes" --> FW
+    Dash -- "REST: SD library, alert chime, direct stream play" --> FW
     Dash -- "REST: search/resolve" --> Inv
 ```
 
-`starhub` and `waveshare-dashboard` run as Docker containers (see
-[Companion repositories](#companion-repositories) below) — the firmware
-itself is still flashed the normal ESP-IDF way and has no Docker
-involvement.
+- **`/api/ws`** (`main/services/network/ControlChannel`): one client at a
+  time — a new connection takes over and the previous socket is closed. The
+  device pushes the full JSON state on connect, on every relevant SysDb change
+  (coalesced to 200 ms) and every 2 s for telemetry; the client sends
+  `{"cmd": "volume" | "mic_gain" | "mic_mute" | "led" | "action", ...}`.
+- **REST** (`/api/*` on the same HTTP server) stays for one-shot operations:
+  files, OTA, SD library, Wi-Fi provisioning, alert chime.
+- **mDNS**: hostname `nexus.local`, services `_nexus._tcp` (TXT `api=/api/ws`,
+  `ver=<firmware>`) and `_http._tcp`.
+- Browsers block `ws://` from an `https://` page, so a dashboard reaching the
+  device locally must itself be served over plain `http`.
 
 ---
 
@@ -145,7 +149,7 @@ involvement.
 * **Direct Google Gemini Live Integration**: Bidirectional streaming WebSocket client communicating directly with Google AI Studio (`wss://generativelanguage.googleapis.com`). Zero proxy requirement, dynamic tool/function calling with 20+ functions spanning music control, device settings (volume/LED), SD file I/O, voice-scheduled alarms, and persistent memory notes — see [Subsystem 3](#3-gemini-live-voice-assistant--tool-calling) for the exact tool list and its one unimplemented function. Real-time linear 3:4 upsampling (24kHz to 32kHz native hardware DAC rate).
 * **Hands-free ESP-SR Wake Word & AEC**: Local WakeNet model running on dedicated DSP Core 1 (`CORE_AUDIO`) with real-time Acoustic Echo Cancellation (AEC) and Voice Activity Detection (VAD).
 * **On-Device LVGL Touchscreen Dashboard**: A 320×240 ILI9341 SPI display with XPT2046 touch renders a live `DashboardScreen`/`AssistantScreen` (LVGL v9), driven directly off `EmbeddedSysDb` snapshots — no phone/web app required to see device state.
-* **EmbeddedSysDb State Pattern**: Zero-allocation, trivially copyable POD system state snapshot with 32-bit component bitmasks. Eliminates busy polling loops via FreeRTOS task notification wakeups (`xTaskNotify`). The same state is WAL-replicated over WebSocket to the host-side `starhub` daemon (see [Companion repositories](#companion-repositories)).
+* **EmbeddedSysDb State Pattern**: Zero-allocation, trivially copyable POD system state snapshot with 32-bit component bitmasks. Eliminates busy polling loops via FreeRTOS task notification wakeups (`xTaskNotify`). The same state is pushed to clients as JSON over the `/api/ws` control channel.
 * **Persistent SD State & Caching**: Local caching of streaming audio tracks to microSD card (`StorageManager`), automatic state synchronization (`/sdcard/state_sync.txt`), and external JSON configuration loading (`gemini_config.json`).
 
 ---
@@ -194,7 +198,7 @@ Lives in `components/core_sysdb` (not `main/common/sysdb` — that path doesn't 
   });
   ```
 - Subsystems subscribe to specific component bitmasks (`COMP::AUDIO`, `COMP::LED`, `COMP::WIFI`, etc.) without cross-component polling. The schema (`schema/sysdb.star`) currently defines 8 components: `System`, `Audio`, `Pipeline`, `Assistant`, `Led`, `Alarm`, `Bluetooth`, `Media`.
-- `SysDbSyncReactor` (`main/services/storage`) persists relevant state to `/sdcard/state_sync.txt`; `StarWsClient` (`main/services/network`) WAL-replicates it over WebSocket to `starhub` at `ws://<server_ip>:8765/api/star/ws`.
+- `SysDbSyncReactor` (`main/services/storage`) persists relevant state to `/sdcard/state_sync.txt`; `ControlChannel` (`main/services/network`) pushes it as JSON to the connected client over `ws://nexus.local/api/ws`.
 
 ### 6. On-Device Display & Touch UI
 Lives in `components/ui_view` + `main/hal/display`:
@@ -232,8 +236,8 @@ waveshare/
 │   │
 │   ├── services/                         # Higher-level app services
 │   │   ├── alarm/                        # AlarmService — voice-scheduled alarms (real, wired)
-│   │   ├── network/                      # WifiService, StarWsClient (STAR uplink to starhub),
-│   │   │                                 # HttpFileServerService (web config UI), CaptiveDnsServer
+│   │   ├── network/                      # WifiService, ControlChannel (/api/ws + mDNS),
+│   │   │                                 # HttpFileServerService (REST + web UI), CaptiveDnsServer
 │   │   ├── storage/                      # StorageService, SysDbSyncReactor (state -> SD persistence)
 │   │   └── time/                         # TimeSyncHelper (SNTP)
 │   │
@@ -242,7 +246,7 @@ waveshare/
 │   └── main.cpp                          # System entry point (app_main)
 │
 ├── components/                           # ESP-IDF components — each has its own README.md
-│   ├── core_sysdb/                       # EmbeddedSysDb, WAL replication, generated SystemState schema
+│   ├── core_sysdb/                       # EmbeddedSysDb, reactors, generated SystemState schema
 │   ├── audio_core/                       # AudioOrchestrator, SpeakerPlayback, MicCapture, AlertPlayer,
 │   │                                     # WakeWordEngine, Resampler
 │   ├── media_player/                     # NexusPlayer, InvidiousClient, decoders, StorageManager,
@@ -251,7 +255,7 @@ waveshare/
 │   ├── ui_view/                          # LVGL v9 touchscreen dashboard (DashboardScreen, AssistantScreen)
 │   └── espressif__led_strip/             # Managed upstream WS2812 driver (has its own upstream README)
 │
-├── schema/sysdb.star                     # STAR schema — source of truth for SystemState fields
+├── schema/sysdb.star                     # SysDb schema — source of truth for SystemState fields
 ├── tools/
 │   ├── starc/                            # Schema compiler: sysdb.star -> SystemState.generated.h
 │   └── lvgl_sim/                         # Desktop LVGL UI emulator for ui_view development
@@ -263,39 +267,19 @@ waveshare/
 
 ### Companion repositories
 
-The host-side services that used to live under `server/` and `web-app/`
-in this repo now live in their own repositories, each pulling in a
-vendored copy of the STAR wire-protocol headers generated here from
-`schema/sysdb.star`:
-
-- [`starhub`](https://github.com/AnkitVats21/starhub) — the STAR replica
-  daemon that syncs firmware system state over a binary WebSocket
-  protocol (formerly `server/star-replica-daemon`).
 - [`waveshare-dashboard`](https://github.com/AnkitVats21/waveshare-dashboard) —
-  the React/Vite web dashboard (formerly `web-app/`).
+  the React/Vite web dashboard (formerly `web-app/`). It connects straight
+  to the device (`nexus.local` by default; the host is editable in its header).
 - [`invidious-daemon`](https://github.com/AnkitVats21/invidious-daemon) —
   the Invidious-backed YouTube audio resolver/cache daemon (formerly
-  `server/invidious-daemon`), deployed separately and not part of the
-  local Docker stack below.
+  `server/invidious-daemon`), deployed separately.
+- [`starhub`](https://github.com/AnkitVats21/starhub) — **retired.** It was a
+  host-side daemon that replicated SysDb over a binary WebSocket protocol
+  (STAR); the device now serves `/api/ws` itself, so it is no longer used.
 
-**Schema changes propagate manually.** When `schema/sysdb.star` changes,
-regenerate `SystemState.generated.h` here via `tools/starc`, then copy the
-updated headers into `starhub`'s `vendor/core_sysdb/` — there's no
-automated sync between the two repos yet.
-
-**Running `starhub` + `waveshare-dashboard` locally** is done via Docker
-Compose from the sibling `~/ai-assistant` directory (one level up from
-this repo), not as bare background processes — a stale bare daemon binary
-silently drifting out of sync with the dashboard's expected snapshot shape
-has caused real bugs before:
-
-```bash
-cd ~/ai-assistant
-docker compose up -d --build
-```
-
-This starts `starhub` on `:8765` (WS + REST) and the dashboard on `:5173`.
-See `~/ai-assistant/AGENT.md` for the full system layout.
+The dashboard can run via Docker Compose from the sibling `~/ai-assistant`
+directory (`docker compose up -d --build`, served on `:5173`) or with the
+Vite dev server. See `~/ai-assistant/AGENT.md` for the full system layout.
 
 ---
 

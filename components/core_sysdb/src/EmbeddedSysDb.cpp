@@ -203,50 +203,6 @@ MediaPendingCommand EmbeddedSysDb::mediaPendingCommand() const {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STAR Replication API
-// ─────────────────────────────────────────────────────────────────────────────
-
-WriteResult EmbeddedSysDb::processRemoteWrite(ComponentId comp, uint8_t field_tag, const uint8_t* val, uint8_t val_len) {
-    if (static_cast<uint8_t>(comp) >= static_cast<uint8_t>(ComponentId::COUNT)) {
-        return WriteResult::INVALID_COMPONENT;
-    }
-
-    if (field_tag >= getFieldCount(comp)) {
-        return WriteResult::INVALID_TAG;
-    }
-
-    FieldAccess access = getFieldAccess(comp, field_tag);
-    if (access == FieldAccess::ReadOnly) {
-        ESP_LOGW(TAG, "Write rejected: field (comp=%u, tag=%u) is ReadOnly",
-                 static_cast<unsigned>(comp), field_tag);
-        return WriteResult::REJECTED_READONLY;
-    }
-
-    bool success = false;
-    mutate([comp, field_tag, val, val_len, &success](SystemState& s) {
-        success = SysDbCodec::applyFieldWrite(s, comp, field_tag, val, val_len);
-    });
-
-    if (!success) {
-        ESP_LOGE(TAG, "Decode error applying write to (comp=%u, tag=%u, len=%u)",
-                 static_cast<unsigned>(comp), field_tag, val_len);
-        return WriteResult::DECODE_ERROR;
-    }
-
-    return WriteResult::OK;
-}
-
-uint32_t EmbeddedSysDb::exportSnapshot(std::vector<WalRecordEntry>& out_snapshot) const {
-    acquireRead();
-    SystemState copy = m_state;
-    uint32_t head_seq = m_wal.getHeadSeq();
-    releaseRead();
-
-    SysDbCodec::serializeSnapshot(copy, head_seq, out_snapshot);
-    return head_seq;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Reactor registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -269,11 +225,6 @@ void EmbeddedSysDb::notifyReactors_locked(ComponentMask changed) {
     }
 }
 
-ComponentMask EmbeddedSysDb::diffAndEmitWal_locked(const SystemState& old_s, const SystemState& new_s) {
-    return SysDbCodec::diffAndEmitWal(old_s, new_s, m_wal);
-}
-
 ComponentMask EmbeddedSysDb::diffState(const SystemState& old_s, const SystemState& new_s) {
-    WalRingBuffer dummy_wal(1024);
-    return SysDbCodec::diffAndEmitWal(old_s, new_s, dummy_wal);
+    return SysDbCodec::diffState(old_s, new_s);
 }

@@ -20,6 +20,7 @@
 #include "hal/input/ExpanderKeyInput.h"
 #include "services/network/WifiService.h"
 #include "services/network/HttpFileServerService.h"
+#include "services/network/ControlChannel.h"
 #include "services/BufferManager.h"
 #if CONFIG_DISPLAY_ENABLE
 #include "hal/display/LcdManager.h"
@@ -43,14 +44,9 @@ extern "C" void app_main(void) {
     // 2. Boot SysDb with Kconfig defaults
     EmbeddedSysDb::getInstance().mutate(
         [](SystemState& s) {
-            strncpy(s.system.server_ip, CONFIG_WAVESHARE_SERVER_IP, sizeof(s.system.server_ip) - 1);
-            s.system.server_ip[sizeof(s.system.server_ip) - 1] = '\0';
             s.audio.sample_rate       = LOCAL_SAMPLE_RATE;
             s.audio.speaker_volume    = 80;
             s.audio.mic_gain_db       = 60.0f;
-            s.audio.rtp_tx_port       = CONFIG_WAVESHARE_RTP_TX_PORT;
-            s.audio.rtp_rx_port       = CONFIG_WAVESHARE_RTP_RX_PORT;
-            s.audio.buffer_size       = 131072;
             s.audio.record_all_mic_channels = true;
         }
     );
@@ -129,6 +125,7 @@ extern "C" void app_main(void) {
     app_ctrl.begin();
     sync_reactor.begin();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    Services::ControlChannel::getInstance().begin();
     http_server.begin();
 #endif
 
@@ -149,6 +146,7 @@ extern "C" void app_main(void) {
     sync_reactor.start();
     NexusPlayer::getInstance().start();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    Services::ControlChannel::getInstance().start();
     http_server.start();
 #endif
 

@@ -1,7 +1,6 @@
 #include "bindings.h"
 #include "core_sysdb/EmbeddedSysDb.h"
-#include "core_sysdb/WalTypes.h"
-#include "core_sysdb/StarProtocol.h"
+#include "core_sysdb/SysDbTypes.h"
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -26,20 +25,6 @@ void init_sysdb(nb::module_& m) {
         .value("ALARM", ComponentId::ALARM)
         .value("BLUETOOTH", ComponentId::BLUETOOTH)
         .value("MEDIA", ComponentId::MEDIA)
-        .export_values();
-
-    nb::enum_<WriteResult>(m, "WriteResult")
-        .value("OK", WriteResult::OK)
-        .value("REJECTED_READONLY", WriteResult::REJECTED_READONLY)
-        .value("INVALID_COMPONENT", WriteResult::INVALID_COMPONENT)
-        .value("INVALID_TAG", WriteResult::INVALID_TAG)
-        .value("DECODE_ERROR", WriteResult::DECODE_ERROR)
-        .export_values();
-
-    nb::enum_<WalQueryResult>(m, "WalQueryResult")
-        .value("SUCCESS", WalQueryResult::SUCCESS)
-        .value("SNAPSHOT_REQUIRED", WalQueryResult::SNAPSHOT_REQUIRED)
-        .value("UP_TO_DATE", WalQueryResult::UP_TO_DATE)
         .export_values();
 
     nb::enum_<MediaOutputTarget>(m, "MediaOutputTarget")
@@ -85,8 +70,6 @@ void init_sysdb(nb::module_& m) {
     nb::enum_<PipelineMode>(m, "PipelineMode")
         .value("WAKE_IDLE", PipelineMode::WAKE_IDLE)
         .value("GEMINI_LIVE", PipelineMode::GEMINI_LIVE)
-        .value("RTP_REMOTE", PipelineMode::RTP_REMOTE)
-        .value("RTP_WAKEWORD", PipelineMode::RTP_WAKEWORD)
         .export_values();
 
     nb::enum_<NetworkState>(m, "NetworkState")
@@ -122,7 +105,7 @@ void init_sysdb(nb::module_& m) {
     comp.attr("LED") = COMP::LED;
     comp.attr("ALARM") = COMP::ALARM;
     comp.attr("BLUETOOTH") = COMP::BLUETOOTH;
-    comp.attr("BT_COMPANION") = COMP::BT_COMPANION;
+    comp.attr("BLUETOOTH") = COMP::BLUETOOTH;
     comp.attr("MEDIA") = COMP::MEDIA;
     comp.attr("ALL") = COMP::ALL;
 
@@ -130,8 +113,6 @@ void init_sysdb(nb::module_& m) {
     auto tag_system = m.def_submodule("TAG_SYSTEM");
     tag_system.attr("wifi_connected") = static_cast<uint8_t>(TAG_SYSTEM::wifi_connected);
     tag_system.attr("network_state") = static_cast<uint8_t>(TAG_SYSTEM::network_state);
-    tag_system.attr("server_ip") = static_cast<uint8_t>(TAG_SYSTEM::server_ip);
-    tag_system.attr("wifi_max_retries") = static_cast<uint8_t>(TAG_SYSTEM::wifi_max_retries);
     tag_system.attr("ap_active") = static_cast<uint8_t>(TAG_SYSTEM::ap_active);
     tag_system.attr("wifi_ssid") = static_cast<uint8_t>(TAG_SYSTEM::wifi_ssid);
     tag_system.attr("wifi_password") = static_cast<uint8_t>(TAG_SYSTEM::wifi_password);
@@ -246,17 +227,6 @@ void init_sysdb(nb::module_& m) {
                 s.media.title[sizeof(s.media.title) - 1] = '\0';
             });
 
-    // ── WalRecordEntry ──
-    nb::class_<WalRecordEntry>(m, "WalRecordEntry")
-        .def_ro("seq", &WalRecordEntry::seq)
-        .def_prop_ro("component_id", [](const WalRecordEntry& e) {
-            return static_cast<ComponentId>(e.component_id);
-        })
-        .def_ro("field_tag", &WalRecordEntry::field_tag)
-        .def_prop_ro("value", [](const WalRecordEntry& e) {
-            return nb::bytes(reinterpret_cast<const char*>(e.value.data()), e.value.size());
-        });
-
     // ── EmbeddedSysDb ──
     nb::class_<EmbeddedSysDb>(m, "EmbeddedSysDb")
         .def_static("get_instance", &EmbeddedSysDb::getInstance, nb::rv_policy::reference)
@@ -267,24 +237,6 @@ void init_sysdb(nb::module_& m) {
                 nb::gil_scoped_acquire acquire_gil;
                 fn(nb::cast(&s, nb::rv_policy::reference));
             });
-        })
-        .def("process_remote_write", [](EmbeddedSysDb& self, ComponentId comp, uint8_t tag, nb::bytes data) {
-            nb::gil_scoped_release release_gil;
-            return self.processRemoteWrite(comp, tag,
-                reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
-        })
-        .def("wal_head_seq", &EmbeddedSysDb::walHeadSeq, nb::call_guard<nb::gil_scoped_release>())
-        .def("get_wal_records_since", [](const EmbeddedSysDb& self, uint32_t since_seq, uint32_t max_records) {
-            nb::gil_scoped_release release_gil;
-            std::vector<WalRecordEntry> records;
-            WalQueryResult res = self.getWalRecordsSince(since_seq, records, max_records);
-            return std::make_pair(res, records);
-        })
-        .def("export_snapshot", [](const EmbeddedSysDb& self) {
-            nb::gil_scoped_release release_gil;
-            std::vector<WalRecordEntry> snapshot;
-            uint32_t head_seq = self.exportSnapshot(snapshot);
-            return std::make_pair(head_seq, snapshot);
         })
         .def("wifi_connected", &EmbeddedSysDb::wifiConnected, nb::call_guard<nb::gil_scoped_release>())
         .def("network_state", &EmbeddedSysDb::networkState, nb::call_guard<nb::gil_scoped_release>())
@@ -303,56 +255,9 @@ void init_sysdb(nb::module_& m) {
         .def("autoplay_enabled", &EmbeddedSysDb::autoplayEnabled, nb::call_guard<nb::gil_scoped_release>())
         .def("cache_downloads", &EmbeddedSysDb::cacheDownloads, nb::call_guard<nb::gil_scoped_release>())
         .def("bluetooth_connected", &EmbeddedSysDb::bluetoothConnected, nb::call_guard<nb::gil_scoped_release>())
-        .def("bt_companion_connected", &EmbeddedSysDb::btCompanionConnected, nb::call_guard<nb::gil_scoped_release>())
-        .def("bt_companion_link_settled", &EmbeddedSysDb::btCompanionLinkSettled, nb::call_guard<nb::gil_scoped_release>())
         .def("hot_audio_flags", &EmbeddedSysDb::hotAudioFlags)
         .def("hot_assistant_speaking", &EmbeddedSysDb::hotAssistantSpeaking)
         .def("hot_turn_complete_pending", &EmbeddedSysDb::hotTurnCompletePending)
-        .def("hot_companion_connected", &EmbeddedSysDb::hotCompanionConnected)
-        .def("hot_companion_settled", &EmbeddedSysDb::hotCompanionSettled);
-
-    // ── StarProtocol Wire Framing ──
-    nb::enum_<StarProtocol::MsgType>(m, "MsgType")
-        .value("WAL_BATCH", StarProtocol::MsgType::WAL_BATCH)
-        .value("REQ_CATCHUP", StarProtocol::MsgType::REQ_CATCHUP)
-        .value("SNAPSHOT_START", StarProtocol::MsgType::SNAPSHOT_START)
-        .value("SNAPSHOT_FIELD", StarProtocol::MsgType::SNAPSHOT_FIELD)
-        .value("SNAPSHOT_END", StarProtocol::MsgType::SNAPSHOT_END)
-        .value("CMD_SET_FIELD", StarProtocol::MsgType::CMD_SET_FIELD)
-        .value("CMD_EXEC_ACTION", StarProtocol::MsgType::CMD_EXEC_ACTION)
-        .value("CMD_ACK", StarProtocol::MsgType::CMD_ACK)
-        .export_values();
-
-    m.def("build_catchup_req", [](uint32_t since_seq) {
-        auto vec = StarProtocol::buildCatchupReqFrame(since_seq);
-        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
-    });
-
-    m.def("build_set_field_cmd", [](ComponentId comp, uint8_t field_tag, nb::bytes data) {
-        auto vec = StarProtocol::buildSetFieldCmdFrame(
-            static_cast<uint8_t>(comp), field_tag,
-            reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
-        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
-    });
-
-    m.def("build_exec_action_cmd", [](MediaCmdId cmd, uint32_t nonce, uint32_t param, const std::string& data) {
-        auto vec = StarProtocol::buildExecActionCmdFrame(
-            static_cast<uint8_t>(cmd), nonce, param, data.c_str());
-        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
-    });
-
-    m.def("parse_frame_header", [](nb::bytes data) {
-        if (data.size() < StarProtocol::HEADER_SIZE) {
-            throw std::runtime_error("Buffer too small for StarProtocol header");
-        }
-        const auto* p = reinterpret_cast<const uint8_t*>(data.c_str());
-        StarProtocol::MsgType type = static_cast<StarProtocol::MsgType>(p[0]);
-        uint16_t length = StarProtocol::readU16BE(&p[1]);
-        return std::make_pair(type, length);
-    });
-
-    m.def("build_ack_frame", [](WriteResult status, uint32_t seq) {
-        auto vec = StarProtocol::buildAckFrame(status, seq);
-        return nb::bytes(reinterpret_cast<const char*>(vec.data()), vec.size());
-    });
+        .def("hot_companion_connected", &EmbeddedSysDb::hotBluetoothConnected)
+        .def("hot_companion_settled", &EmbeddedSysDb::hotBluetoothSettled);
 }

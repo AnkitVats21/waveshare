@@ -21,6 +21,7 @@ dependencies:
   espressif/led_strip: ^2.4.1
   espressif/esp-sr: '*'
   espressif/esp_websocket_client: '*'
+  espressif/mdns: '*'
   bblanchon/arduinojson: '*'
   esphome/micro-opus: '*'
   # lvgl/lvgl: ^9.2.2

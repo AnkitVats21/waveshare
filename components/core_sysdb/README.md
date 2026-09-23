@@ -1,32 +1,27 @@
 # core_sysdb
 
 The state-management foundation everything else in this firmware builds
-on: `EmbeddedSysDb`, the generated `SystemState` schema, WAL-based change
-replication, and the reactive task base class (`ReactorTask`).
+on: `EmbeddedSysDb`, the generated `SystemState` schema, and the reactive
+task base class (`ReactorTask`).
 
 ## What's here
 
 - **`EmbeddedSysDb`** (`include/core_sysdb/EmbeddedSysDb.h`, `src/EmbeddedSysDb.cpp`)
   — a singleton holding one `SystemState` POD struct as the single source
   of truth. All writes go through `EmbeddedSysDb::getInstance().mutate(fn)`,
-  which takes a write lock, runs `fn`, diffs the before/after state, emits
-  WAL records for changed fields, and notifies any `ReactorTask` whose
-  `interest` bitmask overlaps the change.
+  which takes a write lock, runs `fn`, diffs the before/after state into a
+  per-field change mask, and notifies any `ReactorTask` whose `interest`
+  bitmask overlaps the change.
 - **`SystemState.generated.h`** — **generated, do not hand-edit**. Compiled
   from `schema/sysdb.star` (two directories up) by `tools/starc/starc.py`,
   wired in as a CMake custom command (`add_custom_command` in this
   component's `CMakeLists.txt`) that reruns automatically whenever
   `schema/sysdb.star` changes and regenerates both
   `SystemState.generated.h` and `src/SysDbCodec.generated.cpp`. You never
-  need to run `starc` by hand for *this* repo — it's only a manual step
-  when copying the generated headers out to the `starhub` daemon repo
-  (see the root README's [Companion repositories](../../README.md#companion-repositories)
-  section).
-- **`WalRingBuffer` / `SysDbCodec`** (`WalTypes.h`, `WalRingBuffer.*`,
-  `SysDbCodec.*`) — the write-ahead-log ring buffer and binary
-  encode/decode logic for the STAR wire protocol (`StarProtocol.h`) used
-  to replicate state to `starhub` over WebSocket (`main/services/network/StarWsClient`
-  is the client that actually opens that connection).
+  need to run `starc` by hand.
+- **`SysDbCodec` / `SysDbTypes.h`** — the generated `diffState()` that
+  computes the `(COMP::X | BIT_X::FIELD)` change mask for `mutate()`, and
+  the shared schema types (`ComponentId`, `FieldAccess`, `MediaPendingCommand`).
 - **`ReactorTask`** (`ReactorTask.h`/`.cpp`) — base class for any service
   that needs to react to state changes without polling. Subclass it,
   declare an `interest` component bitmask, override `onStateChanged()`
@@ -60,6 +55,6 @@ EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
 ```
 
 Never write `SystemState` fields outside a `mutate()` call — direct writes
-skip WAL emission and reactor notification, silently desyncing the UI
-(both the on-device LVGL dashboard in `ui_view` and the remote web
-dashboard via `starhub`) from real device state.
+skip change detection and reactor notification, silently desyncing the UI
+(both the on-device LVGL dashboard in `ui_view` and the web dashboard fed
+by `/api/ws`) from real device state.

@@ -15,8 +15,6 @@ enum MediaPlaybackState : uint8_t {
 component System id=0 mask=0x00010000 {
     field wifi_connected: bool = false [readonly, bit=0:WIFI_CONNECTED]
     field network_state: NetworkState = NetworkState::Disconnected [readonly, bit=2:NETWORK_STATE]
-    field server_ip: string[32] = "192.168.1.24" [writable, bit=1:SERVER_IP]
-    field wifi_max_retries: int = 5 [writable]
     field ap_active: bool = false [readonly, bit=3:AP_ACTIVE]
     field wifi_ssid: string[33] = "" [writable, bit=4:WIFI_CONFIG]
     field wifi_password: string[65] = "" [writable, bit=4:WIFI_CONFIG]
@@ -25,29 +23,17 @@ component System id=0 mask=0x00010000 {
 
 component Audio id=1 mask=0x00020000 {
     field sample_rate: uint32_t = LOCAL_SAMPLE_RATE [readonly, bit=0:SAMPLE_RATE]
-    field current_hardware_rate: uint32_t = LOCAL_SAMPLE_RATE [readonly, bit=7:HW_RATE]
     field mic_gain_db: float = 60.0f [writable, bit=1:MIC_GAIN]
     field speaker_volume: int = 80 [writable, bit=2:SPEAKER_VOLUME]
     field mic_enabled: bool = true [writable, bit=3:MIC_ENABLED]
     field assistant_speaking: bool = false [readonly, bit=4:ASST_SPEAKING]
     field session_active: bool = false [readonly, bit=5:SESSION_ACTIVE]
     field turn_complete_pending: bool = false [readonly, bit=6:TURN_COMPLETE]
-    field last_activity_ms: uint64_t = 0 [readonly, bit=8:LAST_ACTIVITY]
-    field buffer_size: uint32_t = 131072 [readonly]
-    field rtp_tx_port: uint16_t = 5005 [writable]
-    field rtp_rx_port: uint16_t = 5005 [writable]
-    field stream_format: AudioStreamFormat = AudioStreamFormat::PCM_S16LE [writable]
-    field wav_playing: bool = false [readonly, bit=9:WAV_PLAYING]
-    field wav_sample_rate: uint32_t = 16000 [readonly]
-    field wav_prefetched: bool = false [readonly]
     field record_all_mic_channels: bool = true [writable, bit=10:RECORD_CHANNELS]
 }
 
 component Pipeline id=2 mask=0x00040000 {
     field mode: PipelineMode = PipelineMode::WAKE_IDLE [writable, bit=0:MODE]
-    field rtp_tx_en: bool = false [writable, bit=1:RTP_TX]
-    field rtp_rx_en: bool = false [writable, bit=2:RTP_RX]
-    field rtp_enabled: bool = false [writable]
 }
 
 component Assistant id=3 mask=0x00080000 {

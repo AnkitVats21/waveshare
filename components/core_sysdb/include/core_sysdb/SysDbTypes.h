@@ -2,11 +2,9 @@
 
 #include <cstdint>
 #include <cstring>
-#include <string>
-#include <vector>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STAR Replication Core Types
+// SysDb core types shared by the generated schema
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -19,7 +17,7 @@ enum class FieldAccess : uint8_t {
 };
 
 /**
- * @brief Sequential, compact component identifiers for wire replication.
+ * @brief Sequential, compact component identifiers.
  */
 enum class ComponentId : uint8_t {
     SYSTEM    = 0,
@@ -27,10 +25,7 @@ enum class ComponentId : uint8_t {
     PIPELINE  = 2,
     ASSISTANT = 3,
     LED       = 4,
-    // 5 was MQTT; retired (no live component ever used it). Left unassigned
-    // rather than renumbering ALARM..MEDIA, since this byte value is also
-    // the wire-protocol id shared with the starhub daemon's vendored copy
-    // of this header.
+    // 5 was MQTT; retired.
     ALARM     = 6,
     BLUETOOTH = 7,
     MEDIA     = 8,
@@ -79,45 +74,4 @@ struct MediaPendingCommand {
     bool operator!=(const MediaPendingCommand& o) const {
         return !(*this == o);
     }
-};
-
-/**
- * @brief Result of a remote write request through the SysDb write-gate.
- */
-enum class WriteResult : uint8_t {
-    OK                = 0, ///< Mutation accepted, applied, and emitted to WAL
-    REJECTED_READONLY = 1, ///< Field is marked ReadOnly, structurally immutable
-    INVALID_COMPONENT = 2, ///< Component ID not found
-    INVALID_TAG       = 3, ///< Field tag out of range for component
-    DECODE_ERROR      = 4  ///< Value bytes could not be decoded into target type
-};
-
-/**
- * @brief Status of a sequence catch-up query.
- */
-enum class WalQueryResult : uint8_t {
-    SUCCESS           = 0, ///< All records since requested seq are returned
-    SNAPSHOT_REQUIRED = 1, ///< Requested seq has scrolled past ring; full snapshot required
-    UP_TO_DATE        = 2  ///< Requested seq matches current head; no new records
-};
-
-/**
- * @brief Wire representation of a single WAL mutation record.
- */
-struct __attribute__((packed)) WalWireRecord {
-    uint32_t seq;          ///< Monotonically increasing sequence number
-    uint8_t  component_id; ///< ComponentId as uint8_t
-    uint8_t  field_tag;    ///< Sequential field index within component
-    uint8_t  val_len;      ///< Length of value payload in bytes
-    uint8_t  value[];      ///< Raw serialized value bytes
-};
-
-/**
- * @brief High-level C++ representation of a WAL record.
- */
-struct WalRecordEntry {
-    uint32_t seq = 0;
-    uint8_t  component_id = 0;
-    uint8_t  field_tag = 0;
-    std::vector<uint8_t> value;
 };

@@ -151,17 +151,6 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
         ww.setAssistantActive(false);
         ww.setVadDeferred(false);
         ww.resumeHardware();
-        
-        sysdb.mutate([](SystemState& s) {
-            s.pipeline.rtp_enabled = true;
-        });
-    }
-
-    // Transition D: Reactive WAV status logging (playback resampled in software to 44.1kHz)
-    if (((changed & COMP::AUDIO) && (changed & BIT_AUDIO::WAV_PLAYING)) || (changed == 0)) {
-        if (snap.audio.wav_playing) {
-            LOGI_AUDIO("WAV playback active (resampled to native 44.1 kHz).");
-        }
     }
 }
 
@@ -214,8 +203,6 @@ static const char* pipelineModeToString(PipelineMode mode) {
     switch (mode) {
         case PipelineMode::WAKE_IDLE:    return "WAKE_IDLE";
         case PipelineMode::GEMINI_LIVE:  return "GEMINI_LIVE";
-        case PipelineMode::RTP_REMOTE:   return "RTP_REMOTE";
-        case PipelineMode::RTP_WAKEWORD: return "RTP_WAKEWORD";
         default:                         return "Unknown";
     }
 }
@@ -225,8 +212,6 @@ void AudioService::applyPipelineModeSwitch(PipelineMode mode) {
     m_current_pipeline_mode = mode;
 
     LOGI_AUDIO("Pipeline mode switch → %s", pipelineModeToString(mode));
-    bool tx = false;
-    bool rx = false;
     switch (mode) {
         case PipelineMode::WAKE_IDLE:
             WakeWordEngine::getInstance().resumeHardware();
@@ -234,22 +219,6 @@ void AudioService::applyPipelineModeSwitch(PipelineMode mode) {
         case PipelineMode::GEMINI_LIVE:
             // GeminiAudioPump handles its own uplink
             break;
-        case PipelineMode::RTP_REMOTE:
-            tx = true;
-            rx = true;
-            break;
-        case PipelineMode::RTP_WAKEWORD:
-            tx = true;
-            rx = true;
-            break;
-    }
-    
-    auto snap = sysdb.snapshot();
-    if (snap.pipeline.rtp_tx_en != tx || snap.pipeline.rtp_rx_en != rx) {
-        sysdb.mutate([tx, rx](SystemState& s) {
-            s.pipeline.rtp_tx_en = tx;
-            s.pipeline.rtp_rx_en = rx;
-        });
     }
 }
 

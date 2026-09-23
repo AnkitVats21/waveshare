@@ -1,4 +1,5 @@
 #include "HttpFileServerService.h"
+#include "ControlChannel.h"
 #include "WebDashboardHtml.h"
 #include "CaptivePortalHtml.h"
 #include "services/storage/StorageService.h"
@@ -25,6 +26,7 @@
 #include <esp_app_desc.h>
 #include <freertos/idf_additions.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <cstring>
 #include <cstdlib>
 
@@ -119,6 +121,10 @@ bool HttpFileServerService::startServer() {
     config.recv_wait_timeout = 10;
     config.send_wait_timeout = 10;
     config.lru_purge_enable = true;
+    config.close_fn = [](httpd_handle_t, int sockfd) {
+        ControlChannel::getInstance().onSocketClosed(sockfd);
+        close(sockfd);
+    };
 
     esp_err_t ret = httpd_start(&m_server, &config);
     if (ret != ESP_OK) {
@@ -136,6 +142,7 @@ void HttpFileServerService::stopServer() {
     if (m_server != nullptr) {
         ESP_LOGI(TAG, "Stopping HTTP Server...");
         httpd_stop(m_server);
+        ControlChannel::getInstance().onServerStopped();
         m_server = nullptr;
     }
 }
@@ -169,6 +176,23 @@ void HttpFileServerService::registerUriHandlers() {
     reg("/connecttest.txt", HTTP_GET, captiveRedirectHandler);
     reg("/ncsi.txt", HTTP_GET, captiveRedirectHandler);
     reg("/canonical.html", HTTP_GET, captiveRedirectHandler);
+
+    // Live control channel (single client, takeover) — see ControlChannel
+    {
+        httpd_uri_t ws = {
+            .uri      = "/api/ws",
+            .method   = HTTP_GET,
+            .handler  = [](httpd_req_t* req) { return ControlChannel::getInstance().handleWsRequest(req); },
+            .user_ctx = nullptr,
+            .is_websocket = true,
+            .handle_ws_control_frames = false,
+            .supported_subprotocol = nullptr,
+            // With CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT the server does NOT call
+            // .handler for the handshake GET; this callback is the only connect hook.
+            .ws_post_handshake_cb = [](httpd_req_t* req) { return ControlChannel::getInstance().onWsHandshake(req); }
+        };
+        httpd_register_uri_handler(m_server, &ws);
+    }
 
     // Wi-Fi Setup & Provisioning APIs
     reg("/api/wifi/scan", HTTP_GET, wifiScanHandler);
@@ -1121,7 +1145,7 @@ esp_err_t HttpFileServerService::musicLibraryDeleteHandler(httpd_req_t* req) {
 // Real-time CPU Usage & Telemetry Handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
-static void getCpuUsage(int& cpu0_pct, int& cpu1_pct) {
+void HttpFileServerService::getCpuUsage(int& cpu0_pct, int& cpu1_pct) {
 #if (configGENERATE_RUN_TIME_STATS == 1)
     static uint32_t s_last_idle0 = 0;
     static uint32_t s_last_idle1 = 0;

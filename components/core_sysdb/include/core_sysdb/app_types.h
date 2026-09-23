@@ -11,7 +11,6 @@
  *   - AssistantState       — conversation session state machine
  *   - AssistantVisualState — LED orchestration state
  *   - PipelineMode         — active audio backend selector
- *   - AudioStreamFormat    — wire format for audio streaming
  *
  * Hardware handle types → common/hw_types.h
  * LED color/animation    → common/led_types.h
@@ -50,14 +49,6 @@ enum class AssistantVisualState : int {
 enum class PipelineMode : uint8_t {
     WAKE_IDLE,    ///< WakeNet armed, no network streaming (boot default)
     GEMINI_LIVE,  ///< WebSocket uplink via GeminiAudioPump
-    RTP_REMOTE,   ///< UDP RTP Tx/Rx to remote inference server
-    RTP_WAKEWORD, ///< Wake word over RTP + UDP control signals
-};
-
-// ── Audio wire format ─────────────────────────────────────────────────────────
-enum class AudioStreamFormat : uint8_t {
-    PCM_S16LE, ///< Raw 16-bit signed little-endian PCM
-    G711_ULAW, ///< 8-bit u-law compressed
 };
 
 // ── WebSocket Connection State ───────────────────────────────────────────────

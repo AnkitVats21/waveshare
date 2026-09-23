@@ -1,7 +1,6 @@
 idf_component_register(
     SRCS
         "src/EmbeddedSysDb.cpp"
-        "src/WalRingBuffer.cpp"
         "src/SysDbCodec.cpp"
         "src/ReactorTask.cpp"
         "src/BufferManager.cpp"

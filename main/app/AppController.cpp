@@ -9,7 +9,6 @@
 #include "services/time/TimeSyncHelper.h"
 #include "services/storage/StorageService.h"
 #include "services/alarm/AlarmService.h"
-#include "services/network/StarWsClient.h"
 
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
@@ -47,9 +46,6 @@ bool AppController::begin() {
 
     m_wifi_connected = EmbeddedSysDb::getInstance().snapshot().system.wifi_connected;
 
-    // Start STAR WebSocket replication client
-    Services::StarWsClient::getInstance().begin();
-
     LOGI_SYSTEM("AppController initialized.");
     return true;
 }
@@ -83,7 +79,6 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
         // if (wifi_ok && !m_wifi_connected) {
         //     m_wifi_connected = true;
         //     LOGI_SYSTEM("Network connected. Initializing net logging...");
-        //     // AsyncNetLogger::getInstance().init(snap.system.server_ip, 5006);
         //     // AsyncNetLogger::getInstance().startWorker();
         //     LogRouter::getInstance().setNetworkStreamingState(
         //         LogRouter::State::ROUTE_CONSOLE_ONLY);

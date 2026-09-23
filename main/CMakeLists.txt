@@ -35,7 +35,7 @@ set(srcs
             "services/network/WifiService.cpp"
             "services/network/CaptiveDnsServer.cpp"
             "services/network/HttpFileServerService.cpp"
-            "services/network/StarWsClient.cpp"
+            "services/network/ControlChannel.cpp"
             "services/storage/StorageService.cpp"
             "services/storage/SysDbSyncReactor.cpp"
             "services/time/TimeSyncHelper.cpp"
@@ -85,6 +85,7 @@ idf_component_register(
             esp_wifi
             esp_netif
             esp_http_server
+            mdns
             fatfs
             esp_driver_sdmmc
             esp_driver_gpio

@@ -1,15 +1,12 @@
 #pragma once
 
 #include "core_sysdb/SystemState.h"
-#include "core_sysdb/WalTypes.h"
-#include "core_sysdb/WalRingBuffer.h"
 #include "core_sysdb/SysDbCodec.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <cstddef>
 #include <atomic>
-#include <vector>
 
 namespace HotAudioBit {
     static constexpr uint32_t ASST_SPEAKING      = (1u << 0);
@@ -22,11 +19,8 @@ namespace HotAudioBit {
 /**
  * @brief Authoritative singleton state database for the entire device.
  *
- * Implements STAR (Single-writer, Tagged-field, Asynchronous Replication):
- *   - The device holds the authoritative state.
  *   - All mutations pass through mutate() under write lock.
- *   - Automatic per-field change detection emits records into a PSRAM WAL ring buffer.
- *   - External writes are validated at a single choke point against compile-time FieldAccess.
+ *   - Per-field change detection computes a change mask and notifies interested reactors.
  */
 class EmbeddedSysDb {
 public:
@@ -35,7 +29,7 @@ public:
     // ── Writer API ────────────────────────────────────────────────────────────
 
     /**
-     * @brief Atomically mutate state, emit WAL records for changed fields, and notify reactors.
+     * @brief Atomically mutate state and notify reactors interested in the changed fields.
      *
      * @param fn Lambda / function pointer that receives a writable SystemState&.
      *           Must return quickly — runs inside the write lock.
@@ -46,19 +40,12 @@ public:
         SystemState old_state = m_state;
         fn(m_state);
         updateHotAudioFlags_locked();
-        ComponentMask changed = diffAndEmitWal_locked(old_state, m_state);
+        ComponentMask changed = SysDbCodec::diffState(old_state, m_state);
         if (changed > 0) {
             notifyReactors_locked(changed);
         }
         releaseWrite();
     }
-
-    /**
-     * @brief Validate and execute a remote write request from WebSocket/REST through the write-gate.
-     *
-     * Rejects ReadOnly fields structurally without taking the write lock.
-     */
-    WriteResult processRemoteWrite(ComponentId comp, uint8_t field_tag, const uint8_t* val, uint8_t val_len);
 
     // ── Reader API ────────────────────────────────────────────────────────────
 
@@ -105,30 +92,6 @@ public:
     MediaOutputTarget   mediaOutputTarget()    const;
     MediaPendingCommand mediaPendingCommand()  const;
 
-    // ── STAR Replication API ──────────────────────────────────────────────────
-
-    /**
-     * @brief Access the WAL ring buffer directly.
-     */
-    WalRingBuffer& getWal() { return m_wal; }
-    const WalRingBuffer& getWal() const { return m_wal; }
-
-    uint32_t walHeadSeq() const { return m_wal.getHeadSeq(); }
-
-    /**
-     * @brief Catch-up query for STAR clients.
-     */
-    WalQueryResult getWalRecordsSince(uint32_t since_seq,
-                                      std::vector<WalRecordEntry>& out_records,
-                                      uint32_t max_records = 256) const {
-        return m_wal.getRecordsSince(since_seq, out_records, max_records);
-    }
-
-    /**
-     * @brief Export full state as serialized WAL records with current head_seq.
-     */
-    uint32_t exportSnapshot(std::vector<WalRecordEntry>& out_snapshot) const;
-
     // ── Reactor registration ──────────────────────────────────────────────────
 
     /**
@@ -156,7 +119,6 @@ private:
 
     // ── State ─────────────────────────────────────────────────────────────────
     SystemState   m_state;
-    WalRingBuffer m_wal;
 
     // ── Reactor registry ──────────────────────────────────────────────────────
     static constexpr size_t MAX_REACTORS = 12;
@@ -172,8 +134,6 @@ private:
     // ── Hot-path atomic state cache ──────────────────────────────────────────
     std::atomic<uint32_t> m_hot_audio_flags{0};
     void updateHotAudioFlags_locked();
-
-    ComponentMask diffAndEmitWal_locked(const SystemState& old_s, const SystemState& new_s);
 
     static constexpr const char* TAG = "SysDb";
 };
