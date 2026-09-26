@@ -1,6 +1,7 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "sd_storage/Fs.h"
+#include "credentials/Credentials.h"
 #include "gemini_live/gemini_skills_generated.h"
 
 namespace {
@@ -27,18 +28,6 @@ esp_err_t setSettingsHandler(httpd_req_t* req) {
     return Http::sendOk(req, "Config updated successfully");
 }
 
-// Pulls "api_key" out of a config file that no longer parses as JSON (e.g.
-// truncated), so rewriting the file doesn't lose the key.
-std::string salvageApiKey(const std::string& content) {
-    size_t k = content.find("\"api_key\"");
-    if (k == std::string::npos) return "";
-    size_t colon = content.find(':', k);
-    size_t open = (colon == std::string::npos) ? colon : content.find('"', colon);
-    size_t close = (open == std::string::npos) ? open : content.find('"', open + 1);
-    if (close == std::string::npos) return "";
-    return content.substr(open + 1, close - open - 1);
-}
-
 // Model and voice compiled into the firmware, used when the config sets none.
 void addDefaults(JsonDocument& doc) {
     JsonDocument setup;
@@ -48,22 +37,20 @@ void addDefaults(JsonDocument& doc) {
     defaults["voice"] = setup["setup"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"];
 }
 
-// gemini_config.json: {"api_key", "model", "voice", "system_prompt"}. The API
-// key is write-only: GET reports only whether one is set; POST keeps the stored
-// key unless the body carries a new one.
+// gemini_config.json holds {"model", "voice", "system_prompt"}; the API key is
+// in NVS. The key is write-only: GET reports only whether one is set; POST
+// stores a new key when the body carries one and never writes it to the file.
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     JsonDocument doc;
     std::string content = sd_storage::Fs::readText(GEMINI_CONFIG);
     if (content.empty() || deserializeJson(doc, content) || !doc.is<JsonObject>()) {
         doc.to<JsonObject>();
         if (!content.empty()) {
-            // The firmware then falls back to its compiled-in key (CONFIG_GEMINI_API_KEY).
             doc["config_error"] = "gemini_config.json on the SD card is not valid JSON; it is being ignored";
         }
     }
-    const char* key = doc["api_key"] | "";
-    doc["api_key_set"] = key[0] != '\0' || (doc["config_error"].is<const char*>() && !salvageApiKey(content).empty());
     doc.remove("api_key");
+    doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
 }
@@ -81,21 +68,10 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     doc.remove("defaults");
     doc.remove("config_error");
 
-    const char* new_key = doc["api_key"] | "";
-    if (new_key[0] == '\0') {
-        JsonDocument current;
-        std::string content = sd_storage::Fs::readText(GEMINI_CONFIG);
-        std::string key;
-        if (!content.empty() && !deserializeJson(current, content)) {
-            key = current["api_key"] | "";
-        } else {
-            key = salvageApiKey(content);
-        }
-        if (!key.empty()) {
-            doc["api_key"] = key;
-        } else {
-            doc.remove("api_key");
-        }
+    std::string new_key = doc["api_key"] | "";
+    doc.remove("api_key");
+    if (!new_key.empty() && !credentials::setGeminiApiKey(new_key)) {
+        return Http::sendError(req, 500, "Failed to store the API key");
     }
 
     std::string out;

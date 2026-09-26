@@ -14,6 +14,7 @@ idf_component_register(
         audio_core
         media_player
         sd_storage
+        credentials
         esp_websocket_client
         mbedtls
         freertos

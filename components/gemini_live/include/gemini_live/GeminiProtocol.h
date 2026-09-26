@@ -41,7 +41,7 @@ private:
     ~GeminiProtocol() override;
 
     bool ensureClientInitialized();
-    // Parses /sdcard/gemini_config.json ({"api_key","model","voice","system_prompt"});
+    // Parses /sdcard/gemini_config.json ({"model","voice","system_prompt"}; the API key is in NVS);
     // false (and `out` empty) if missing or invalid.
     bool readConfig(JsonDocument& out);
     void transmitSetupHandshake();

@@ -5,6 +5,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "sd_storage/Fs.h"
+#include "credentials/Credentials.h"
 #include <ArduinoJson.h>
 #include "sdkconfig.h"
 #include "esp_timer.h"
@@ -129,21 +130,20 @@ bool GeminiProtocol::ensureClientInitialized() {
         return true;
     }
 
-    JsonDocument cfg;
-    std::string api_key = readConfig(cfg) ? (cfg["api_key"] | "") : "";
+    std::string api_key = credentials::geminiApiKey();
     if (!api_key.empty()) {
-        LOGI_NET("Using the Gemini API key from the SD card.");
+        LOGI_NET("Using the Gemini API key from NVS.");
     }
 
     if (api_key.empty()) {
 #ifdef CONFIG_GEMINI_API_KEY
         if (std::strlen(CONFIG_GEMINI_API_KEY) == 0) {
-            LOGE_NET("CONFIG_GEMINI_API_KEY is empty and no SD card key found.");
+            LOGE_NET("CONFIG_GEMINI_API_KEY is empty and no key is stored in NVS.");
             return false;
         }
         api_key = CONFIG_GEMINI_API_KEY;
 #else
-        LOGE_NET("CONFIG_GEMINI_API_KEY is missing and no SD card key found.");
+        LOGE_NET("CONFIG_GEMINI_API_KEY is missing and no key is stored in NVS.");
         return false;
 #endif
     }

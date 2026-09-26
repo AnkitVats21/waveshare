@@ -2,16 +2,13 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/AppLogger.h"
 #include "common/thread_config.h"
-#include "sd_storage/Fs.h"
-#include "sd_storage/SdCard.h"
+#include "credentials/Credentials.h"
 #include "services/network/CaptiveDnsServer.h"
-#include "ArduinoJson.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_mac.h"
 #include "nvs_flash.h"
-#include "nvs.h"
 #include <cstring>
 
 WifiService::WifiService(const Config& cfg)
@@ -30,76 +27,32 @@ WifiService::~WifiService() {
 }
 
 bool WifiService::saveCredentials(const std::string& ssid, const std::string& password) {
-    if (ssid.empty()) return false;
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open("wifi_store", NVS_READWRITE, &handle);
-    if (err == ESP_OK) {
-        nvs_set_str(handle, "ssid", ssid.c_str());
-        nvs_set_str(handle, "password", password.c_str());
-        err = nvs_commit(handle);
-        nvs_close(handle);
-        if (err == ESP_OK) {
-            LOGI_WIFI("Saved Wi-Fi credentials to NVS: SSID '%s'", ssid.c_str());
-            return true;
-        }
+    if (credentials::saveWifi({ssid, password})) {
+        LOGI_WIFI("Saved Wi-Fi credentials to NVS: SSID '%s'", ssid.c_str());
+        return true;
     }
-    LOGE_WIFI("Failed to save Wi-Fi credentials to NVS: %s", esp_err_to_name(err));
+    LOGE_WIFI("Failed to save Wi-Fi credentials to NVS");
     return false;
 }
 
 bool WifiService::clearStoredCredentials() {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open("wifi_store", NVS_READWRITE, &handle);
-    if (err == ESP_OK) {
-        nvs_erase_all(handle);
-        nvs_commit(handle);
-        nvs_close(handle);
-        LOGI_WIFI("Cleared stored Wi-Fi credentials in NVS");
-        return true;
-    }
-    return false;
+    if (!credentials::clearWifi()) return false;
+    LOGI_WIFI("Cleared stored Wi-Fi credentials in NVS");
+    return true;
 }
 
 bool WifiService::loadCredentials(std::string& outSsid, std::string& outPassword) {
-    // 1. Tier 1: SD card JSON override (/sdcard/wifi_config.json)
-    if (sd_storage::SdCard::instance().isMounted() &&
-        sd_storage::Fs::isFile("/sdcard/wifi_config.json")) {
-        std::string content = sd_storage::Fs::readText("/sdcard/wifi_config.json");
-        if (!content.empty()) {
-            JsonDocument doc;
-            DeserializationError err = deserializeJson(doc, content);
-            if (!err && doc["ssid"].is<std::string>()) {
-                outSsid = doc["ssid"].as<std::string>();
-                outPassword = doc["password"] | "";
-                if (!outSsid.empty()) {
-                    LOGI_WIFI("Loaded Wi-Fi credentials from SD card (/sdcard/wifi_config.json): SSID '%s'", outSsid.c_str());
-                    return true;
-                }
-            }
-        }
+    // 1. NVS. A /sdcard/wifi_config.json is moved here at boot by
+    //    credentials::importFromSdCard().
+    credentials::Wifi stored;
+    if (credentials::loadWifi(stored)) {
+        outSsid = stored.ssid;
+        outPassword = stored.password;
+        LOGI_WIFI("Loaded Wi-Fi credentials from NVS: SSID '%s'", outSsid.c_str());
+        return true;
     }
 
-    // 2. Tier 2: NVS runtime store ("wifi_store")
-    nvs_handle_t handle;
-    if (nvs_open("wifi_store", NVS_READONLY, &handle) == ESP_OK) {
-        char ssidBuf[65] = {0};
-        char passBuf[65] = {0};
-        size_t ssidLen = sizeof(ssidBuf);
-        size_t passLen = sizeof(passBuf);
-
-        if (nvs_get_str(handle, "ssid", ssidBuf, &ssidLen) == ESP_OK && ssidLen > 1) {
-            outSsid = ssidBuf;
-            if (nvs_get_str(handle, "password", passBuf, &passLen) == ESP_OK) {
-                outPassword = passBuf;
-            }
-            nvs_close(handle);
-            LOGI_WIFI("Loaded Wi-Fi credentials from NVS: SSID '%s'", outSsid.c_str());
-            return true;
-        }
-        nvs_close(handle);
-    }
-
-    // 3. Tier 3: Optional compile-time Kconfig defaults (if defined)
+    // 2. Optional compile-time Kconfig defaults (if defined)
     if (!m_config.ssid.empty()) {
         outSsid = m_config.ssid;
         outPassword = m_config.password;
@@ -107,7 +60,7 @@ bool WifiService::loadCredentials(std::string& outSsid, std::string& outPassword
         return true;
     }
 
-    LOGW_WIFI("No Wi-Fi credentials found across SD, NVS, or Kconfig defaults");
+    LOGW_WIFI("No Wi-Fi credentials in NVS or Kconfig defaults");
     return false;
 }
 

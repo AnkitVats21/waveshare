@@ -88,6 +88,7 @@ idf_component_register(
             media_player
             gemini_live
             sd_storage
+            credentials
             ${DISPLAY_REQUIRES}
             nvs_flash
             esp_wifi

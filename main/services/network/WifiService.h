@@ -43,7 +43,7 @@ public:
     bool isApActive() const { return m_ap_active; }
 
     /**
-     * @brief Load credentials following precedence: SD card -> NVS -> Kconfig.
+     * @brief Load credentials following precedence: NVS -> Kconfig.
      */
     bool loadCredentials(std::string& outSsid, std::string& outPassword);
 
