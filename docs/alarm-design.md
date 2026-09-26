@@ -283,3 +283,23 @@ Every check runs on the device, with logs from `/api/logs`:
 6. **Keys:** Key 2 stops; Key 3/4/5 snooze and do not change volume or playback.
 7. **Leaks:** 20 test rings back to back; internal heap and PSRAM free are the same
    before and after; no `Decode task did not stop` warnings; no underruns.
+
+## Step B: measured
+
+On the device, 2026-09-27:
+
+- **Migration:** the one `alarms.json` alarm came across as a daily alarm with
+  the built-in tone (its `.wav` path dropped); the file is kept as `.bak`.
+- **Timer:** rang 0.09 s after its second and was deleted.
+- **One-shot alarm:** rang on the minute and was disabled after firing.
+- **Snooze across a restart:** snoozed (1 min), rebooted; rang again on time
+  from the saved `snooze_until`, which stop then cleared. While the saved
+  snooze waits, `/api/alarms/status` says `idle` (the live state is not
+  restored); step D's banner needs it.
+- **Reminder, offline path:** chime three times 2.5 s apart; pending until
+  acknowledged.
+- **Reminder, spoken:** chime, session, text turn after `setupComplete`;
+  Gemini started speaking 5.3 s after the reminder was due (1 s chime, 2 s
+  connect, 1.5 s to the reply). The follow-up window works as usual.
+- **Not yet checked:** the 25 s no-speech fallback, a reminder due during a
+  ringing alarm or mid-turn, two reminders in one turn.
