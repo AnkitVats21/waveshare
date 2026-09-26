@@ -46,6 +46,7 @@ set(srcs
             "services/http/routes/OtaRoutes.cpp"
             "services/http/routes/AlarmRoutes.cpp"
             "services/http/routes/AlertRoutes.cpp"
+            "services/http/routes/TimeRoutes.cpp"
             "services/http/routes/AssistantRoutes.cpp"
             "services/http/routes/DbRoutes.cpp"
             "services/storage/SysDbSyncReactor.cpp"
@@ -53,6 +54,7 @@ set(srcs
             "services/storage/generated/SystemDb.generated.cpp"
             "services/time/TimeSyncHelper.cpp"
             "services/alarm/AlarmService.cpp"
+            "services/alarm/AlarmRing.cpp"
             "services/alerts/AlertLibrary.cpp"
 )
 

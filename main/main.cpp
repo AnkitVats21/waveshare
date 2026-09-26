@@ -17,6 +17,7 @@
 #include "nexus_db/StressTest.h"
 #include "services/storage/SystemDatabase.h"
 #include "services/alarm/AlarmService.h"
+#include "services/time/TimeSyncHelper.h"
 #include "services/storage/SysDbSyncReactor.h"
 #include "services/alerts/AlertLibrary.h"
 #include "hal/input/ExpanderKeyInput.h"
@@ -133,8 +134,7 @@ extern "C" void app_main(void) {
     MusicPlaybackService::getInstance().begin();
     gemini_pump.start();
     app_ctrl.begin();
-    // Loads alarms.json so the API and voice tools edit the saved list. The
-    // ringing task is deliberately not started yet (alarm playback untested).
+    Services::TimeSyncHelper::instance().begin();
     Services::AlarmService::getInstance().begin();
     sync_reactor.begin();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
@@ -157,6 +157,7 @@ extern "C" void app_main(void) {
     key_svc.start();
     sync_reactor.start();
     NexusPlayer::getInstance().start();
+    Services::AlarmService::getInstance().start();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
     Services::ControlChannel::getInstance().start();
     http_server.start();

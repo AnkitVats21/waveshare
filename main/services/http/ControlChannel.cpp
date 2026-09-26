@@ -350,6 +350,10 @@ void ControlChannel::pushState() {
     JsonObject alarm = doc["alarm"].to<JsonObject>();
     alarm["ringing"] = snap.alarm.playing;
     alarm["id"] = snap.alarm.active_alarm_id;
+    alarm["state"] = snap.alarm.state == AlarmRingState::RINGING   ? "ringing"
+                   : snap.alarm.state == AlarmRingState::SNOOZED ? "snoozed" : "idle";
+    alarm["builtin_tone"] = snap.alarm.using_builtin;
+    if (snap.alarm.state == AlarmRingState::SNOOZED) alarm["snooze_until"] = snap.alarm.snooze_until;
 
     JsonObject bt = doc["bluetooth"].to<JsonObject>();
     bt["connected"] = snap.bluetooth.connected;

@@ -89,7 +89,9 @@ void AudioOrchestrator::notifyVoiceEnded() {
 void AudioOrchestrator::notifyAlertStarted() {
     ESP_LOGI(TAG, "notifyAlertStarted: Alert chime starting");
     m_alert_active = true;
-    if (m_media_active && !m_voice_active) {
+    // The alarm's built-in tone plays on the alert track; it must not duck the
+    // alarm (nor would any other chime play while an alarm rings).
+    if (m_media_active && !m_voice_active && !m_alarm_active) {
         duckMedia(0.20f, 50);
         m_media_ducked = true;
     }
@@ -104,26 +106,29 @@ void AudioOrchestrator::notifyAlertEnded() {
     }
 }
 
+// The alarm is the top priority. It does not pause and resume media through
+// focus events: AlarmService takes NexusPlayer over (NexusPlayer::beginAlarm)
+// and gives it back, restoring the music itself.
 void AudioOrchestrator::notifyAlarmStarted() {
     ESP_LOGI(TAG, "notifyAlarmStarted: Alarm ringing");
     m_alarm_active = true;
-    if (m_media_active) {
-        broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::LOSS_PAUSE);
-    }
+    m_media_paused_by_voice = false;
 }
 
 void AudioOrchestrator::notifyAlarmEnded() {
     ESP_LOGI(TAG, "notifyAlarmEnded: Alarm stopped");
     m_alarm_active = false;
-    if (!m_voice_active) {
-        broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::GAIN);
-        unduckMedia(100);
-    }
+    unduckMedia(0);
+    m_media_ducked = false;
 }
 
 void AudioOrchestrator::notifyMediaStarted() {
     ESP_LOGI(TAG, "notifyMediaStarted: Media playback active");
     m_media_active = true;
+    if (m_alarm_active) {
+        // The alarm song: AlarmService sets the media gain for its fade-in.
+        return;
+    }
     if (m_voice_active) {
         // Voice is running; immediately pause media
         m_media_paused_by_voice = true;
@@ -164,4 +169,11 @@ void AudioOrchestrator::unduckMedia(uint32_t rampMs) {
     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
         s.media.is_ducked = false;
     });
+}
+
+void AudioOrchestrator::fadeInMedia(float from, uint32_t rampMs) {
+    if (m_speaker_task) {
+        m_speaker_task->setMediaGain(from, 0);
+        m_speaker_task->setMediaGain(1.0f, rampMs);
+    }
 }

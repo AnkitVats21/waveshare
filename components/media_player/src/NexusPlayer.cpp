@@ -104,41 +104,32 @@ void NexusPlayer::removeObserver(IPlaybackObserver* observer) {
     _observers.erase(std::remove(_observers.begin(), _observers.end(), observer), _observers.end());
 }
 
+std::vector<IPlaybackObserver*> NexusPlayer::currentObservers() {
+    PlayerLock lock(_mutex);
+    if (_alarmOwner) return {_alarmObserver};
+    return _observers;
+}
+
 void NexusPlayer::notifyTrackStarted(const char* songId) {
-    std::vector<IPlaybackObserver*> obsCopy;
-    {
-        PlayerLock lock(_mutex);
-        obsCopy = _observers;
-    }
-    for (auto* obs : obsCopy) {
+    for (auto* obs : currentObservers()) {
         if (obs) obs->onTrackStarted(songId);
     }
 }
 
 void NexusPlayer::notifyTrackFinished(const char* songId) {
-    std::vector<IPlaybackObserver*> obsCopy;
-    {
-        PlayerLock lock(_mutex);
-        obsCopy = _observers;
-    }
-    for (auto* obs : obsCopy) {
+    for (auto* obs : currentObservers()) {
         if (obs) obs->onTrackFinished(songId);
     }
 }
 
 void NexusPlayer::notifyPlaybackError(const char* songId, int err) {
-    std::vector<IPlaybackObserver*> obsCopy;
-    {
-        PlayerLock lock(_mutex);
-        obsCopy = _observers;
-    }
-    for (auto* obs : obsCopy) {
+    for (auto* obs : currentObservers()) {
         if (obs) obs->onPlaybackError(songId, err);
     }
 }
 
 void NexusPlayer::onAudioFocusChange(AudioTrack track, FocusEvent event) {
-    if (track == AudioTrack::MEDIA) {
+    if (track == AudioTrack::MEDIA && !_alarmOwner) {
         PlayerLock lock(_mutex);
         if (event == FocusEvent::LOSS_PAUSE) {
             if (_state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK) {
@@ -164,6 +155,11 @@ void NexusPlayer::play(const char* songId, const char* downloadUrl) {
 
 void NexusPlayer::playAt(const char* songId, const char* downloadUrl, uint32_t startPosMs) {
     PlayerLock lock(_mutex);
+
+    if (_alarmOwner) {
+        ESP_LOGW(TAG, "Play of %s ignored: an alarm owns the player", songId ? songId : "?");
+        return;
+    }
 
     if (!songId || (!downloadUrl && !_storageManager.fileExists(songId))) {
         ESP_LOGE(TAG, "Invalid play arguments");
@@ -365,6 +361,7 @@ void NexusPlayer::pause_internal() {
 
 void NexusPlayer::resume() {
     PlayerLock lock(_mutex);
+    if (_alarmOwner) return;
     if (_session_active) {
         ESP_LOGI(TAG, "Resume requested during active session. Deferring until session ends.");
         _should_resume_after_session = true;
@@ -457,7 +454,9 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
         else if (!new_session_active && _session_active) {
             ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
             _session_active = false;
-            if (_should_play_after_session && (!_pendingDownloadUrl.empty() || _storageManager.fileExists(_pendingSongId.c_str()))) {
+            if (_alarmOwner) {
+                // beginAlarm() took the deferred play/resume into the resume point.
+            } else if (_should_play_after_session && (!_pendingDownloadUrl.empty() || _storageManager.fileExists(_pendingSongId.c_str()))) {
                 play_internal(_pendingSongId.c_str(), _pendingDownloadUrl.c_str(), _pendingStartPosMs);
                 _pendingSongId.clear();
                 _pendingDownloadUrl.clear();
@@ -513,6 +512,7 @@ void NexusPlayer::run() {
 void NexusPlayer::checkPlaybackFinished() {
     char finishedSong[64] = {0};
     bool trackFinished = false;
+    std::vector<IPlaybackObserver*> observers;
 
     {
         PlayerLock lock(_mutex);
@@ -533,6 +533,8 @@ void NexusPlayer::checkPlaybackFinished() {
                     _pendingDownloadUrl.clear();
                     AudioOrchestrator::getInstance().notifyMediaStopped();
                     trackFinished = true;
+                    // Chosen now: the owner may change before the notification.
+                    observers = currentObservers();
                     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                         s.media.state = MediaPlaybackState::IDLE;
                         s.media.active_song_id[0] = '\0';
@@ -543,9 +545,73 @@ void NexusPlayer::checkPlaybackFinished() {
     }
 
     if (trackFinished) {
-        // Notify observers (MusicPlaybackService) outside the player lock
-        notifyTrackFinished(finishedSong);
+        // Notify observers (MusicPlaybackService, or the alarm) outside the player lock
+        for (auto* obs : observers) {
+            if (obs) obs->onTrackFinished(finishedSong);
+        }
     }
+}
+
+void NexusPlayer::beginAlarm(IPlaybackObserver* alarm) {
+    PlayerLock lock(_mutex);
+    _resume = {};
+    const bool playing = _state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK;
+    // Music paused for an assistant session was going to resume when the
+    // session ended; the alarm ends the session, so it counts as playing.
+    const bool pausedForSession = _state == STATE_PAUSED && _should_resume_after_session;
+    if ((playing || pausedForSession) && _activeSongId[0] != '\0') {
+        _resume.valid = true;
+        _resume.songId = _activeSongId;
+        _resume.url = _activeDownloadUrl;
+        _resume.positionMs = _audioEngine.getPositionMs();
+    } else if (_should_play_after_session && !_pendingSongId.empty()) {
+        _resume.valid = true;
+        _resume.songId = _pendingSongId;
+        _resume.url = _pendingDownloadUrl;
+        _resume.positionMs = _pendingStartPosMs;
+    }
+    if (_resume.valid) {
+        ESP_LOGI(TAG, "Alarm takes the player; will resume %s at %u ms", _resume.songId.c_str(),
+                 (unsigned)_resume.positionMs);
+    }
+
+    stop();   // clears the deferred play/resume flags
+    _alarmObserver = alarm;
+    _alarmOwner = true;
+}
+
+bool NexusPlayer::playAlarm(const char* songId) {
+    PlayerLock lock(_mutex);
+    if (!_alarmOwner || !songId || !_storageManager.fileExists(songId)) return false;
+    play_internal(songId, nullptr, 0);
+    return _state == STATE_LOCAL_PLAYBACK;
+}
+
+void NexusPlayer::stopAlarmSong() {
+    PlayerLock lock(_mutex);
+    if (_alarmOwner) stop();
+}
+
+void NexusPlayer::endAlarm(bool restore) {
+    PlayerLock lock(_mutex);
+    if (!_alarmOwner) return;
+    stop();
+    _alarmOwner = false;
+    _alarmObserver = nullptr;
+    ResumePoint r = std::move(_resume);
+    _resume = {};
+    if (!restore || !r.valid) return;
+    const bool local = _storageManager.fileExists(r.songId.c_str());
+    if (!local && r.url.empty()) {
+        ESP_LOGW(TAG, "Cannot resume %s after the alarm: no file and no stream URL", r.songId.c_str());
+        return;
+    }
+    ESP_LOGI(TAG, "Alarm over; resuming %s at %u ms", r.songId.c_str(), (unsigned)r.positionMs);
+    play_internal(r.songId.c_str(), r.url.empty() ? nullptr : r.url.c_str(), r.positionMs);
+}
+
+void NexusPlayer::yieldAlarm() {
+    if (_alarmOwner && _alarmYield) _alarmYield();
 }
 
 void NexusPlayer::commitSessionSeekTable() {

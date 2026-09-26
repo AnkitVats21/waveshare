@@ -7,6 +7,7 @@
 #include "IPlaybackObserver.h"
 #include "common/ReactorTask.h"
 #include "freertos/semphr.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,23 @@ public:
     uint32_t getPositionMs() const;
     
     PlayerState getState() { return _state; }
+
+    // ── Alarm ownership (docs/alarm-design.md) ─────────────────────────────
+    // While an alarm owns the player, playback events go only to `alarm`,
+    // focus changes and music play requests are ignored, and the music that
+    // was playing is remembered for endAlarm(true).
+    void beginAlarm(IPlaybackObserver* alarm);
+    // Plays a local (cached) track for the alarm; false if it can't start.
+    bool playAlarm(const char* songId);
+    // Stops the alarm song, keeping ownership (snooze, built-in fallback).
+    void stopAlarmSong();
+    // Gives the player back; with restore, the remembered music resumes.
+    void endAlarm(bool restore);
+    bool alarmOwned() const { return _alarmOwner; }
+    // MusicPlaybackService calls yieldAlarm() before a user music command; the
+    // handler (AlarmService) stops the alarm without restoring the old music.
+    void setAlarmYieldHandler(std::function<void()> handler) { _alarmYield = std::move(handler); }
+    void yieldAlarm();
     StorageManager& getStorageManager() { return _storageManager; }
 
     // Observer Pattern registration
@@ -87,6 +105,19 @@ private:
     std::string _activeDownloadUrl;
     std::vector<SeekEntry> _sessionSeekTable;
     void commitSessionSeekTable();
+
+    // Alarm ownership
+    volatile bool _alarmOwner = false;
+    IPlaybackObserver* _alarmObserver = nullptr;
+    std::function<void()> _alarmYield;
+    struct ResumePoint {
+        bool valid = false;
+        std::string songId;
+        std::string url;
+        uint32_t positionMs = 0;
+    } _resume;
+    // Observers for the current owner, copied under the lock.
+    std::vector<IPlaybackObserver*> currentObservers();
 
     void pause_internal();
     void resume_internal();

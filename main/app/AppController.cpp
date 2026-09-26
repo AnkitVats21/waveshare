@@ -60,21 +60,11 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
     if ((changed & COMP::SYSTEM) && (changed & BIT_SYSTEM::WIFI_CONNECTED)) {
         bool wifi_ok = snap.system.wifi_connected;
 
-        if (wifi_ok && !m_time_synced) {
-            m_time_synced = true;
-            LOGI_SYSTEM("Wi-Fi connected. Spawning background NTP synchronization task in PSRAM...");
-            BaseType_t ret = xTaskCreateWithCaps([](void* arg) {
-                Services::TimeSyncHelper::synchronizeTimeAndCleanup();
-                vTaskDelete(NULL);
-            }, "ntp_sync", 4096, NULL, 4, NULL, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-            if (ret != pdPASS) {
-                xTaskCreate([](void* arg) {
-                    Services::TimeSyncHelper::synchronizeTimeAndCleanup();
-                    vTaskDelete(NULL);
-                }, "ntp_sync", 3072, NULL, 4, NULL);
-            }
+        if (wifi_ok) {
+            // Syncs now if the clock is not set; retries with backoff on failure.
+            Services::TimeSyncHelper::instance().onWifiConnected();
         }
-        
+
         // if (wifi_ok && !m_wifi_connected) {
         //     m_wifi_connected = true;
         //     LOGI_SYSTEM("Network connected. Initializing net logging...");
@@ -155,7 +145,7 @@ bool AppController::setAlarm(int hour, int minute, const char* tone_file, bool e
     alarm.minute = minute;
     alarm.enabled = enabled;
 
-    std::string tone = (tone_file && tone_file[0] != '\0') ? tone_file : "/sdcard/alarms/soft_wake_up.wav";
+    std::string tone = tone_file ? tone_file : "";  // empty = built-in tone
     strncpy(alarm.tone_file, tone.c_str(), sizeof(alarm.tone_file) - 1);
     alarm.tone_file[sizeof(alarm.tone_file) - 1] = '\0';
 

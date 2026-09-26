@@ -66,6 +66,8 @@ public:
     // Ducking controls (affects Media track)
     void duckMedia(float targetGain = 0.20f, uint32_t rampMs = 50);
     void unduckMedia(uint32_t rampMs = 100);
+    // Media gain jumps to `from` and ramps to full over rampMs (alarm fade-in).
+    void fadeInMedia(float from, uint32_t rampMs);
 
 private:
     AudioOrchestrator();

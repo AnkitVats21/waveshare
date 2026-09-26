@@ -19,6 +19,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/core_sysdb/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/audio_core/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/nexus_db/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
@@ -46,6 +47,8 @@ nanobind_add_module(waveshare_host
     bindings/bind_alerts.cpp
     ../components/audio_core/src/AlertMixer.cpp
     ../components/audio_core/src/AlertTones.cpp
+    bindings/bind_alarm.cpp
+    ../main/services/alarm/AlarmRing.cpp
     bindings/bind_nexus_db.cpp
     ../components/nexus_db/src/Database.cpp
     ../components/nexus_db/src/Crc32.cpp

@@ -121,7 +121,7 @@ private:
     SystemState   m_state;
 
     // ── Reactor registry ──────────────────────────────────────────────────────
-    static constexpr size_t MAX_REACTORS = 12;
+    static constexpr size_t MAX_REACTORS = 16;
     struct ReactorEntry {
         ComponentMask mask   = 0;
         TaskHandle_t  handle = nullptr;

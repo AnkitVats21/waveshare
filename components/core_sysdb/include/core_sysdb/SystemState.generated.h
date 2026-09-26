@@ -29,6 +29,12 @@ namespace COMP {
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums defined in STAR schema
 // ─────────────────────────────────────────────────────────────────────────────
+enum class AlarmRingState : uint8_t {
+    IDLE = 0,
+    RINGING = 1,
+    SNOOZED = 2
+};
+
 enum class MediaPlaybackState : uint8_t {
     IDLE = 0,
     RESOLVING = 1,
@@ -79,6 +85,9 @@ namespace BIT_LED {
 namespace BIT_ALARM {
     static constexpr ComponentMask PLAYING          = (1u << 0);
     static constexpr ComponentMask STOP_REQUESTED   = (1u << 1);
+    static constexpr ComponentMask STATE            = (1u << 2);
+    static constexpr ComponentMask SNOOZE_REQUESTED = (1u << 3);
+    static constexpr ComponentMask SOURCE           = (1u << 4);
 }
 
 namespace BIT_BLUETOOTH {
@@ -141,7 +150,11 @@ namespace BIT_MEDIA {
 #define ALARM_FIELDS \
     X(bool, playing, false, BIT_ALARM::PLAYING, FieldAccess::ReadOnly) \
     X(bool, stop_requested, false, BIT_ALARM::STOP_REQUESTED, FieldAccess::Writable) \
-    X(int, active_alarm_id, 0, 0, FieldAccess::Writable)
+    X(int, active_alarm_id, 0, 0, FieldAccess::Writable) \
+    X(AlarmRingState, state, AlarmRingState::IDLE, BIT_ALARM::STATE, FieldAccess::ReadOnly) \
+    X(bool, snooze_requested, false, BIT_ALARM::SNOOZE_REQUESTED, FieldAccess::Writable) \
+    X(bool, using_builtin, false, BIT_ALARM::SOURCE, FieldAccess::ReadOnly) \
+    X(uint32_t, snooze_until, 0, BIT_ALARM::STATE, FieldAccess::ReadOnly)
 
 #define BLUETOOTH_FIELDS \
     X(bool, connected, false, BIT_BLUETOOTH::CONNECTED, FieldAccess::PiOrigin) \

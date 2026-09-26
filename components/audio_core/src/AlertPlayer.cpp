@@ -35,6 +35,14 @@ const ToneNote OFFLINE[] = {
     {146.8f, 8000, 120, 25},   // D3
 };
 
+// Classic alarm clock: four beeps, then a pause. Looped while ringing.
+const ToneNote ALARM_BEEPS[] = {
+    {1046.5f, 14000, 100, 8}, {0.0f, 0, 60, 0},   // C6
+    {1046.5f, 14000, 100, 8}, {0.0f, 0, 60, 0},
+    {1046.5f, 14000, 100, 8}, {0.0f, 0, 60, 0},
+    {1046.5f, 14000, 100, 8}, {0.0f, 0, 520, 0},
+};
+
 struct ToneSet { const ToneNote* notes; size_t count; };
 template <size_t N> constexpr ToneSet tones(const ToneNote (&n)[N]) { return {n, N}; }
 const ToneSet TONES[ALERT_COUNT] = {
@@ -71,12 +79,20 @@ bool AlertPlayer::begin() {
         m_builtin[i] = clip;
         m_mixer.setClip(i, clip);
     }
+    std::shared_ptr<AlertClip> alarm = synthesizeTones(ALARM_BEEPS, sizeof(ALARM_BEEPS) / sizeof(ALARM_BEEPS[0]),
+                                                       MIXER_SAMPLE_RATE);
+    if (alarm) {
+        bytes += alarm->size() * sizeof(int16_t);
+        m_mixer.setClip(ALARM_SLOT, alarm);
+    } else {
+        ESP_LOGE(TAG, "No PSRAM for the built-in alarm tone");
+    }
     ESP_LOGI(TAG, "Built-in tones ready (%u bytes)", (unsigned)bytes);
     return true;
 }
 
 void AlertPlayer::playAlert(AlertType type) {
-    if (type >= ALERT_COUNT) return;
+    if (type >= ALERT_COUNT || m_alarm_active) return;
     m_requested_us = esp_timer_get_time();
     if (!m_mixer.play(type)) {
         ESP_LOGD(TAG, "%s is disabled or has no clip", NAMES[type]);
@@ -84,7 +100,7 @@ void AlertPlayer::playAlert(AlertType type) {
 }
 
 void AlertPlayer::preview(AlertType type) {
-    if (type >= ALERT_COUNT) return;
+    if (type >= ALERT_COUNT || m_alarm_active) return;
     m_requested_us = esp_timer_get_time();
     m_mixer.play(type, true);
 }
@@ -96,6 +112,21 @@ uint32_t AlertPlayer::clipMs(AlertType type) const {
 
 void AlertPlayer::stop() {
     m_mixer.stop();
+}
+
+void AlertPlayer::startAlarmTone() {
+    m_requested_us = esp_timer_get_time();
+    if (!m_mixer.play(ALARM_SLOT, true, true)) ESP_LOGE(TAG, "No built-in alarm tone");
+}
+
+void AlertPlayer::stopAlarmTone() {
+    if (m_mixer.current() == static_cast<int>(ALARM_SLOT)) m_mixer.stop();
+}
+
+void AlertPlayer::setAlarmActive(bool active) {
+    m_alarm_active = active;
+    // A chime already playing is cut so the alarm starts clean.
+    if (active && m_mixer.current() != static_cast<int>(ALARM_SLOT)) m_mixer.stop();
 }
 
 size_t AlertPlayer::render(int16_t* out, size_t n) {

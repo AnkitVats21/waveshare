@@ -59,7 +59,8 @@ public:
     bool enabled(size_t slot) const;
 
     // Returns false if the slot holds no clip, or is disabled and not `force`.
-    bool play(size_t slot, bool force = false);
+    // A looping clip restarts at its end until stop() or another play().
+    bool play(size_t slot, bool force = false, bool loop = false);
     // Fades out whatever is playing and drops a pending request.
     void stop();
 
@@ -91,11 +92,13 @@ private:
     size_t m_pos = 0;
     int32_t m_gain_q12 = 4096;
     int m_slot = NONE;
+    bool m_loop = false;
     // Remaining samples of a fade-out; 0 when not fading
     size_t m_fade_left = 0;
 
     // Latest request, started once the playing clip has faded out
     int m_pending = NONE;
+    bool m_pending_loop = false;
     bool m_stop_requested = false;
     bool m_was_active = false;
 };

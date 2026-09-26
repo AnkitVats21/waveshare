@@ -53,19 +53,24 @@ void KeyService::run() {
                     }
                     ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
 
+                    // While an alarm rings or is snoozed, the keys belong to it:
+                    // Key 2 stops it, any other key snoozes it.
+                    m_alarmPress[i] = sysdb.snapshot().alarm.state != AlarmRingState::IDLE;
+                    if (m_alarmPress[i]) {
+                        const bool stop = keys[i] == KeyId::KEY_2;
+                        ESP_LOGI(TAG, "Key %d: %s the alarm", i + 1, stop ? "stopping" : "snoozing");
+                        sysdb.mutate([stop](SystemState& s) {
+                            if (stop) s.alarm.stop_requested = true;
+                            else s.alarm.snooze_requested = true;
+                        });
+                    }
                     // Key 4: toggle Play/Pause on press down
-                    if (keys[i] == KeyId::KEY_4) {
+                    else if (keys[i] == KeyId::KEY_4) {
                         ESP_LOGI("KeySvc", "Key 4: toggling playback");
                         MusicPlaybackService::getInstance().postCommand(MediaCmdType::TOGGLE_PLAY_PAUSE);
                     }
-                    // Key 2: stop alarm on press down, and stop any active recording
+                    // Key 2: stop any active recording on press down
                     else if (keys[i] == KeyId::KEY_2) {
-                        sysdb.mutate([](SystemState& s) {
-                            if (s.alarm.playing) {
-                                s.alarm.stop_requested = true;
-                                ESP_LOGI("KeySvc", "Alarm stop requested via Key 2");
-                            }
-                        });
                         if (AudioRecorder::getInstance().isRecording()) {
                             ESP_LOGI("KeySvc", "Key 2 press: stopping active recording");
                             AudioRecorder::getInstance().stopRecording(AudioRecorder::StopReason::MANUAL);
@@ -75,7 +80,7 @@ void KeyService::run() {
                 } else {
                     m_pressCount[i]++;
                     // Standard long press threshold (500ms / 25 ticks of 20ms)
-                    if (m_pressCount[i] >= 25 && !m_longPressedTriggered[i]) {
+                    if (m_pressCount[i] >= 25 && !m_longPressedTriggered[i] && !m_alarmPress[i]) {
                         m_longPressedTriggered[i] = true;
                         ESP_LOGI(TAG, "KEY_%d LONG PRESSED (500ms)", i + 1);
 
@@ -99,7 +104,7 @@ void KeyService::run() {
                     ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);
 
                     // Short press logic: volume up/down if long press was NOT triggered
-                    if (!m_longPressedTriggered[i]) {
+                    if (!m_longPressedTriggered[i] && !m_alarmPress[i]) {
                         if (keys[i] == KeyId::KEY_3) {
                             sysdb.mutate([](SystemState& s) {
                                 int old_vol = s.audio.speaker_volume;

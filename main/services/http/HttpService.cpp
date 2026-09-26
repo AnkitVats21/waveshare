@@ -60,7 +60,10 @@ void HttpService::onStateChanged(ComponentMask changed, const SystemState& snap)
 
 void HttpService::run() {
     while (m_running) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        // Also re-checks every few seconds: if a notification is ever lost (or
+        // this reactor failed to register), the server still comes up, and with
+        // it OTA.
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000));
         if (!m_running) break;
         onStateChanged(COMP::SYSTEM, EmbeddedSysDb::getInstance().snapshot());
     }
@@ -102,6 +105,7 @@ bool HttpService::startServer() {
     Routes::registerOta(m_server);
     Routes::registerAlarms(m_server);
     Routes::registerAlerts(m_server);
+    Routes::registerTime(m_server);
     Routes::registerAssistant(m_server);
     Routes::registerDb(m_server);
     // CORS preflight for every /api/* endpoint.

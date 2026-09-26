@@ -8,4 +8,5 @@ NB_MODULE(waveshare_host, m) {
     init_resampler(m);
     init_nexus_db(m);
     init_alerts(m);
+    init_alarm(m);
 }

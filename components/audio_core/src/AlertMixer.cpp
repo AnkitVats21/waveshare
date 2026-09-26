@@ -65,12 +65,13 @@ bool AlertMixer::enabled(size_t slot) const {
     return m_slots[slot].enabled;
 }
 
-bool AlertMixer::play(size_t slot, bool force) {
+bool AlertMixer::play(size_t slot, bool force, bool loop) {
     if (slot >= SLOTS) return false;
     std::lock_guard<std::mutex> lock(m_mutex);
     const Slot& s = m_slots[slot];
     if ((!s.enabled && !force) || !s.clip || s.clip->size() == 0) return false;
     m_pending = static_cast<int>(slot);
+    m_pending_loop = loop;
     m_stop_requested = false;
     return true;
 }
@@ -97,6 +98,7 @@ void AlertMixer::beginPending() {
     m_clip = s.clip;
     m_gain_q12 = s.gain_q12;
     m_slot = m_pending;
+    m_loop = m_pending_loop;
     m_pos = 0;
     m_fade_left = 0;
     m_pending = NONE;
@@ -136,6 +138,10 @@ size_t AlertMixer::render(int16_t* out, size_t n, Event& event) {
             written += count;
             if (fading) m_fade_left -= count;
 
+            if (m_pos >= m_clip->size() && m_loop && !fading) {
+                m_pos = 0;
+                continue;
+            }
             if (m_pos >= m_clip->size() || (fading && m_fade_left == 0)) {
                 finished = std::move(m_clip);
                 m_clip = nullptr;

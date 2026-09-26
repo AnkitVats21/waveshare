@@ -196,3 +196,30 @@ def test_fade_edges_ramps_both_ends():
     assert pcm[-1] == 0
     assert pcm[-20] == 9500
     assert wh.fade_edges(const(100, 5), 50, 50)[0] == 0
+
+
+def test_looping_clip_repeats_until_stopped(mixer):
+    clip = list(range(1, 101))
+    mixer.set_clip(5, clip)
+    assert mixer.play(5, loop=True)
+    out, ev = mixer.render(350)
+    assert ev == "started"
+    assert out == (clip * 4)[:350]
+    for _ in range(10):
+        pcm, ev = mixer.render(640)
+        assert len(pcm) == 640 and ev == ""
+    mixer.stop()
+    out, events = drain(mixer)
+    assert 0 < len(out) <= FADE
+    assert events == ["ended"]
+
+
+def test_new_alert_replaces_a_looping_one(mixer):
+    mixer.set_clip(0, const(1000, 100))
+    mixer.set_clip(1, const(-50, 30))
+    mixer.play(0, loop=True)
+    mixer.render(250)
+    mixer.play(1)
+    out, events = drain(mixer)
+    assert out[-30:] == const(-50, 30)
+    assert events == ["ended"]

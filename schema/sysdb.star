@@ -3,6 +3,12 @@
 // Single-writer Tagged-field Asynchronous Replication State Database Schema
 // =============================================================================
 
+enum AlarmRingState : uint8_t {
+    IDLE = 0,
+    RINGING = 1,
+    SNOOZED = 2
+}
+
 enum MediaPlaybackState : uint8_t {
     IDLE = 0,
     RESOLVING = 1,
@@ -50,10 +56,15 @@ component Led id=4 mask=0x00100000 {
     field repeat: uint8_t = 0 [writable]
 }
 
+// Alarm ringing (docs/alarm-design.md). playing = the alarm is sounding.
 component Alarm id=6 mask=0x00400000 {
     field playing: bool = false [readonly, bit=0:PLAYING]
     field stop_requested: bool = false [writable, bit=1:STOP_REQUESTED]
     field active_alarm_id: int = 0 [writable]
+    field state: AlarmRingState = AlarmRingState::IDLE [readonly, bit=2:STATE]
+    field snooze_requested: bool = false [writable, bit=3:SNOOZE_REQUESTED]
+    field using_builtin: bool = false [readonly, bit=4:SOURCE]
+    field snooze_until: uint32_t = 0 [readonly, bit=2:STATE]
 }
 
 component Bluetooth id=7 mask=0x00800000 {

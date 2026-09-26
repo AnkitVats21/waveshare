@@ -116,6 +116,9 @@ void MusicPlaybackService::auxWorkerTask(void* arg) {
 
 bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
     if (!_initialized) return false;
+    // Whoever sends a music command is awake: a ringing or snoozed alarm ends
+    // (without bringing back the music it interrupted) before the command runs.
+    if (type != MediaCmdType::QUEUE) NexusPlayer::getInstance().yieldAlarm();
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
     bool isPiBt = (snap.bluetooth.connected || snap.media.output_target == MediaOutputTarget::PI_BT);
@@ -956,6 +959,7 @@ bool MusicPlaybackService::play(const char* query) {
 
 bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* streamUrl) {
     if (!streamUrl || streamUrl[0] == '\0') return false;
+    NexusPlayer::getInstance().yieldAlarm();
 
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
@@ -1017,6 +1021,7 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
 
 bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
     if (!songIdOrPath || songIdOrPath[0] == '\0') return false;
+    NexusPlayer::getInstance().yieldAlarm();
 
     std::string id = songIdOrPath;
     auto rec = std::make_unique<TrackRecord>();

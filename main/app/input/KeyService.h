@@ -22,6 +22,8 @@ private:
     uint32_t m_pressCount[5] = {0};
     bool m_longPressedTriggered[5] = {false};
     bool m_key2StopConsumedThisPress = false;
+    // Press taken by a ringing or snoozed alarm: no normal key action for it.
+    bool m_alarmPress[5] = {false};
 
     static constexpr const char *TAG = "KeySvc";
 };
