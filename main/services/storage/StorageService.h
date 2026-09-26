@@ -8,7 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#include "media_player/IStorageService.h"
+#include "common/storage/IStorageService.h"
 
 namespace Services {
 

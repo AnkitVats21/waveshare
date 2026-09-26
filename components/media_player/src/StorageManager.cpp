@@ -1,11 +1,10 @@
 #include "StorageManager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include <sys/stat.h>
-#include <sys/unistd.h>
+#include "sd_storage/Fs.h"
+#include "sd_storage/SdCard.h"
 #include <cstring>
 #include <algorithm>
-#include <cerrno>
 #include "PlayerTypes.h"
 #include "common/thread_config.h"
 #include "freertos/idf_additions.h"
@@ -28,18 +27,18 @@ StorageManager::~StorageManager() {
 }
 
 bool StorageManager::getValidCachedPath(const char* songId, char* outPath, size_t maxLen) {
-    if (!songId || songId[0] == '\0' || !outPath || maxLen == 0 || !_storageService) return false;
+    if (!songId || songId[0] == '\0' || !outPath || maxLen == 0) return false;
     const char* extensions[] = {".webm", ".opus", ".ogg"};
-    struct stat st;
+    sd_storage::PathInfo info;
 
     for (const char* ext : extensions) {
         snprintf(outPath, maxLen, "/sdcard/music/%s%s", songId, ext);
-        if (stat(outPath, &st) == 0) {
-            if (st.st_size >= 32768) {
+        if (sd_storage::Fs::stat(outPath, info)) {
+            if (info.size >= 32768) {
                 return true;
             }
-            ESP_LOGW(TAG, "Cached file %s is corrupt or incomplete (size=%ld < 32KB). Deleting.", outPath, (long)st.st_size);
-            _storageService->deleteFile(outPath);
+            ESP_LOGW(TAG, "Cached file %s is corrupt or incomplete (size=%ld < 32KB). Deleting.", outPath, (long)info.size);
+            sd_storage::Fs::remove(outPath);
         }
     }
     outPath[0] = '\0';
@@ -47,27 +46,20 @@ bool StorageManager::getValidCachedPath(const char* songId, char* outPath, size_
 }
 
 bool StorageManager::fileExists(const char* songId) {
-    if (!_storageService) return false;
     char path[128];
     return getValidCachedPath(songId, path, sizeof(path));
 }
 
 bool StorageManager::deleteFile(const char* songId) {
-    if (!songId || songId[0] == '\0' || !_storageService) return false;
+    if (!songId || songId[0] == '\0') return false;
     char path[128];
     bool deleted = false;
 
-    snprintf(path, sizeof(path), "/sdcard/music/%s.webm", songId);
-    if (_storageService->fileExists(path)) {
-        deleted = _storageService->deleteFile(path) || deleted;
-    }
-    snprintf(path, sizeof(path), "/sdcard/music/%s.opus", songId);
-    if (_storageService->fileExists(path)) {
-        deleted = _storageService->deleteFile(path) || deleted;
-    }
-    snprintf(path, sizeof(path), "/sdcard/music/%s.ogg", songId);
-    if (_storageService->fileExists(path)) {
-        deleted = _storageService->deleteFile(path) || deleted;
+    for (const char* ext : {".webm", ".opus", ".ogg"}) {
+        snprintf(path, sizeof(path), "/sdcard/music/%s%s", songId, ext);
+        if (sd_storage::Fs::isFile(path)) {
+            deleted = sd_storage::Fs::remove(path) || deleted;
+        }
     }
     if (deleted) {
         ESP_LOGI(TAG, "Deleted local cached audio file(s) for songId: %s", songId);
@@ -76,23 +68,17 @@ bool StorageManager::deleteFile(const char* songId) {
 }
 
 bool StorageManager::openFileForCaching(const char* songId) {
-    if (!songId || !_storageService || !_storageService->isMounted()) return false;
+    if (!songId || !sd_storage::SdCard::instance().isMounted()) return false;
     closeActiveFile();
 
-    // Create the /sdcard/music directory if it doesn't exist
-    struct stat st;
-    if (stat("/sdcard/music", &st) != 0) {
-        if (mkdir("/sdcard/music", 0755) != 0) {
-            ESP_LOGW(TAG, "Failed to create music directory (might already exist): %d", errno);
-        }
-    }
+    if (!sd_storage::Fs::mkdirs("/sdcard/music")) return false;
 
     char tempPath[128];
     snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", songId);
 
     ESP_LOGI(TAG, "Opening cache stream at: %s", tempPath);
-    _writeStream = _storageService->openStream(tempPath, "wb");
-    if (!_writeStream) {
+    _writeFile = sd_storage::File::open(tempPath, sd_storage::Mode::Write);
+    if (!_writeFile) {
         ESP_LOGE(TAG, "Failed to open cache stream for writing: %s", tempPath);
         return false;
     }
@@ -113,12 +99,6 @@ bool StorageManager::openFileForCaching(const char* songId) {
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
     if (ret != pdPASS) {
-        ret = xTaskCreatePinnedToCore(
-            sdWriterTaskThunk, "sd_writer_task", ThreadConfig::StackSize::STACK_STORAGE, this,
-            ThreadConfig::Priority::STORAGE_IO, &_writerTaskHandle, ThreadConfig::CORE_STORAGE
-        );
-    }
-    if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_writer_task");
         closeActiveFile();
         return false;
@@ -131,12 +111,6 @@ bool StorageManager::openFileForCaching(const char* songId) {
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
     if (ret != pdPASS) {
-        ret = xTaskCreatePinnedToCore(
-            sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
-            ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
-        );
-    }
-    if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_reader_task");
         closeActiveFile();
         return false;
@@ -146,7 +120,7 @@ bool StorageManager::openFileForCaching(const char* songId) {
 }
 
 bool StorageManager::openFileForReading(const char* songId) {
-    if (!songId || !_storageService || !_storageService->isMounted()) return false;
+    if (!songId || !sd_storage::SdCard::instance().isMounted()) return false;
     closeActiveFile();
 
     char path[128];
@@ -155,11 +129,9 @@ bool StorageManager::openFileForReading(const char* songId) {
         return false;
     }
 
-    struct stat st;
-    stat(path, &st);
-    ESP_LOGI(TAG, "Opening local playback stream at: %s (size=%ld bytes)", path, (long)st.st_size);
-    _readStream = _storageService->openStream(path, "rb");
-    if (!_readStream) {
+    _readFile = sd_storage::File::open(path, sd_storage::Mode::Read);
+    ESP_LOGI(TAG, "Opening local playback stream at: %s (size=%ld bytes)", path, _readFile.size());
+    if (!_readFile) {
         ESP_LOGE(TAG, "Failed to open playback stream: %s", path);
         return false;
     }
@@ -176,12 +148,6 @@ bool StorageManager::openFileForReading(const char* songId) {
         ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE,
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
-    if (ret != pdPASS) {
-        ret = xTaskCreatePinnedToCore(
-            sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
-            ThreadConfig::Priority::STORAGE_IO, &_readerTaskHandle, ThreadConfig::CORE_STORAGE
-        );
-    }
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_reader_task");
         closeActiveFile();
@@ -209,14 +175,8 @@ void StorageManager::closeActiveFile() {
     }
 
     // Safely close handles
-    if (_writeStream) {
-        if (_storageService) _storageService->closeStream(_writeStream);
-        _writeStream = nullptr;
-    }
-    if (_readStream) {
-        if (_storageService) _storageService->closeStream(_readStream);
-        _readStream = nullptr;
-    }
+    _writeFile.close();
+    _readFile.close();
 
     // If caching, finalize or clean up
     if (_isWritingMode && _currentSongId[0] != '\0') {
@@ -227,19 +187,18 @@ void StorageManager::closeActiveFile() {
 
         if (_downloadComplete) {
             ESP_LOGI(TAG, "Download complete. Committing cache to target: %s", targetPath);
-            if (_storageService && _storageService->fileExists(targetPath)) {
-                _storageService->deleteFile(targetPath);
+            if (sd_storage::Fs::isFile(targetPath)) {
+                sd_storage::Fs::remove(targetPath);
             }
-            int ret = rename(tempPath, targetPath);
-            if (ret != 0) {
-                ESP_LOGE(TAG, "Failed to commit cached file (rename error %d)", errno);
+            if (!sd_storage::Fs::rename(tempPath, targetPath)) {
+                ESP_LOGE(TAG, "Failed to commit cached file %s", targetPath);
             } else {
                 ESP_LOGI(TAG, "Successfully committed cache file: %s", targetPath);
             }
         } else {
             ESP_LOGI(TAG, "Download incomplete or aborted. Cleaning up temp cache: %s", tempPath);
-            if (_storageService && _storageService->fileExists(tempPath)) {
-                _storageService->deleteFile(tempPath);
+            if (sd_storage::Fs::isFile(tempPath)) {
+                sd_storage::Fs::remove(tempPath);
             }
         }
     }
@@ -251,11 +210,11 @@ void StorageManager::closeActiveFile() {
 }
 
 bool StorageManager::seekTo(uint32_t byteOffset) {
-    if (!_readStream) return false;
+    if (!_readFile) return false;
     if (_streamMutex) xSemaphoreTake(_streamMutex, portMAX_DELAY);
 
     ESP_LOGI(TAG, "Seeking local stream to byte offset: %u", (unsigned int)byteOffset);
-    fseek(_readStream, byteOffset, SEEK_SET);
+    _readFile.seek(byteOffset);
 
     // Flush any pending data in playback buffer to avoid playing stale audio
     _bm.flush(_playbackId);
@@ -296,12 +255,12 @@ void StorageManager::runWriterTaskLoop() {
 
         if (chunk->type == ChunkType::DATA && chunk->size > 0) {
             uint8_t* payload = reinterpret_cast<uint8_t*>(chunk) + sizeof(AudioChunkHeader);
-            size_t written = _storageService ? _storageService->writeStream(_writeStream, payload, chunk->size) : 0;
+            size_t written = _writeFile.write(payload, chunk->size);
             if (written != chunk->size) {
                 ESP_LOGE(TAG, "Writer Task: Disk write error! Expected %u, wrote %u", (unsigned)chunk->size, (unsigned)written);
             } else {
-                fflush(_writeStream);
-                fsync(fileno(_writeStream));
+                // Sync so the reader's own handle sees the new length.
+                _writeFile.sync();
                 _bytesWritten += written;
             }
         }
@@ -312,7 +271,7 @@ void StorageManager::runWriterTaskLoop() {
     ESP_LOGI(TAG, "Writer Task exiting");
     _writerTaskRunning = false;
     _writerTaskHandle = nullptr;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(nullptr);  // created WithCaps: plain vTaskDelete leaks the stack
 }
 
 void StorageManager::runReaderTaskLoop() {
@@ -325,7 +284,7 @@ void StorageManager::runReaderTaskLoop() {
         ESP_LOGE(TAG, "Reader Task: Failed to allocate read buffer in PSRAM!");
         _readerTaskRunning = false;
         _readerTaskHandle = nullptr;
-        vTaskDelete(NULL);
+        vTaskDeleteWithCaps(nullptr);  // created WithCaps: plain vTaskDelete leaks the stack
         return;
     }
 
@@ -333,7 +292,7 @@ void StorageManager::runReaderTaskLoop() {
     uint8_t* payload = read_buf + sizeof(AudioChunkHeader);
 
     size_t read_pos = 0;
-    FILE* tempFile = nullptr;
+    sd_storage::File tempFile;
 
     char tempPath[128];
     if (_isWritingMode) {
@@ -354,29 +313,26 @@ void StorageManager::runReaderTaskLoop() {
                 } else {
                     // Caching is active but reader caught up. Close temp stream to allow flush/sync commits,
                     // delay, and reopen to pick up new writes.
-                    if (tempFile) {
-                        fclose(tempFile);
-                        tempFile = nullptr;
-                    }
+                    tempFile.close();
                     vTaskDelay(pdMS_TO_TICKS(100));
                     continue;
                 }
             }
 
             // Open/reopen the temp file if not currently open
-            if (tempFile == nullptr) {
-                tempFile = fopen(tempPath, "rb");
-                if (tempFile == nullptr) {
+            if (!tempFile) {
+                tempFile = sd_storage::File::open(tempPath, sd_storage::Mode::Read, sd_storage::Share::FollowWriter);
+                if (!tempFile) {
                     vTaskDelay(pdMS_TO_TICKS(50));
                     continue;
                 }
-                fseek(tempFile, read_pos, SEEK_SET);
+                tempFile.seek(read_pos);
             }
 
             // Read the next chunk up to the current write threshold
             size_t bytes_to_read = std::min(AUDIO_CHUNK_SIZE, _bytesWritten - read_pos);
             if (bytes_to_read > 0) {
-                size_t read_bytes = fread(payload, 1, bytes_to_read, tempFile);
+                size_t read_bytes = tempFile.read(payload, bytes_to_read);
                 if (read_bytes > 0) {
                     header->type = ChunkType::DATA;
                     header->size = read_bytes;
@@ -385,12 +341,11 @@ void StorageManager::runReaderTaskLoop() {
                         read_pos += read_bytes;
                     } else {
                         // Reseek to retry sending
-                        fseek(tempFile, read_pos, SEEK_SET);
+                        tempFile.seek(read_pos);
                     }
                 } else {
                     // Stale file size read? Wait/reopen
-                    fclose(tempFile);
-                    tempFile = nullptr;
+                    tempFile.close();
                     vTaskDelay(pdMS_TO_TICKS(50));
                 }
             } else {
@@ -400,9 +355,7 @@ void StorageManager::runReaderTaskLoop() {
             // Standard Local Cache Hit Playback
             size_t read_bytes = 0;
             if (_streamMutex) xSemaphoreTake(_streamMutex, portMAX_DELAY);
-            if (_storageService && _readStream) {
-                read_bytes = _storageService->readStream(_readStream, payload, AUDIO_CHUNK_SIZE);
-            }
+            read_bytes = _readFile.read(payload, AUDIO_CHUNK_SIZE);
             if (_streamMutex) xSemaphoreGive(_streamMutex);
             if (read_bytes > 0) {
                 header->type = ChunkType::DATA;
@@ -423,13 +376,11 @@ void StorageManager::runReaderTaskLoop() {
         }
     }
 
-    if (tempFile) {
-        fclose(tempFile);
-    }
+    tempFile.close();  // before the task deletes itself: no destructor runs after that
     heap_caps_free(read_buf);
 
     ESP_LOGI(TAG, "Reader Task exiting");
     _readerTaskRunning = false;
     _readerTaskHandle = nullptr;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(nullptr);  // created WithCaps: plain vTaskDelete leaks the stack
 }

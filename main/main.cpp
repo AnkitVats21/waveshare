@@ -117,7 +117,6 @@ extern "C" void app_main(void) {
     AlertPlayer::getInstance().begin();
     assistant_svc.begin();
     GeminiProtocol::getInstance().setStorageService(&Services::StorageService::getInstance());
-    NexusPlayer::getInstance().setStorageService(&Services::StorageService::getInstance());
     NexusPlayer::getInstance().begin();
     MusicPlaybackService::getInstance().begin();
     gemini_pump.start();

@@ -1,14 +1,11 @@
 #pragma once
-#include <cstdio>
 #include "core_sysdb/BufferManager.h"
-#include "media_player/IStorageService.h"
+#include "sd_storage/File.h"
 
 class StorageManager {
 public:
     StorageManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId);
     ~StorageManager();
-
-    void setStorageService(IStorageService* storageService) { _storageService = storageService; }
 
     bool fileExists(const char* songId);
     bool deleteFile(const char* songId);
@@ -30,13 +27,11 @@ private:
     bool getValidCachedPath(const char* songId, char* outPath, size_t maxLen);
 
     BufferManager& _bm;
-    IStorageService* _storageService = nullptr;
-    
     BufferManager::BufferId _playbackId;
     BufferManager::BufferId _storageId;
     
-    FILE* _writeStream = nullptr;
-    FILE* _readStream = nullptr;
+    sd_storage::File _writeFile;
+    sd_storage::File _readFile;
     
     char _currentSongId[64] = {0};
     

@@ -41,7 +41,6 @@ public:
     
     PlayerState getState() { return _state; }
     StorageManager& getStorageManager() { return _storageManager; }
-    void setStorageService(IStorageService* storageService) { _storageManager.setStorageService(storageService); }
 
     // Observer Pattern registration
     void addObserver(IPlaybackObserver* observer);
