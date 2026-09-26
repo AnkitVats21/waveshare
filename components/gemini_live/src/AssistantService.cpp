@@ -1,5 +1,5 @@
 #include "AssistantService.h"
-#include "app/audio/AlertPlayer.h"
+#include "audio_core/AlertPlayer.h"
 #include "app/audio/AudioOrchestrator.h"
 #include "GeminiProtocol.h"
 #include "common/AppLogger.h"

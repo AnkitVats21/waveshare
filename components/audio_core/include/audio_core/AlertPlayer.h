@@ -1,63 +1,62 @@
 #pragma once
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
+#include "audio_core/AlertMixer.h"
 #include <cstdint>
 
-enum AlertType {
+enum AlertType : uint8_t {
     ALERT_WAKE_CONFIRM,
     ALERT_READY_TO_SPEAK,
     ALERT_SESSION_END,
     ALERT_ERROR,
-    ALERT_OFFLINE
+    ALERT_OFFLINE,
+    ALERT_COUNT
 };
 
-class IAlertFileDecoder {
-public:
-    virtual ~IAlertFileDecoder() = default;
-    virtual bool playAlertFile(const char* path) = 0;
-};
+// "wake_confirm", ...; also the default file name under /sdcard/media/alert/.
+const char* alertName(AlertType type);
+// ALERT_COUNT if the name is unknown.
+AlertType alertFromName(const char* name);
 
 /**
- * @brief Dedicated subsystem for audio alert chimes and system notifications.
+ * @brief Alert chimes, held as decoded PCM in PSRAM and mixed by the speaker task.
  *
- * Runs an isolated worker task that decodes alert files or synthesizes tones directly
- * to the ALERT_RX_BUF. Completely decoupled from NexusPlayer and AudioEngine to prevent
- * decoder clobbering and race conditions.
+ * begin() renders the built-in tones, so every alert can sound from boot. A
+ * loader (AlertLibrary) later decodes the files on the SD card and swaps them
+ * in with setClip(). Playback never touches the SD card: the speaker task
+ * pulls samples straight from the clip through render().
  */
 class AlertPlayer {
 public:
     static AlertPlayer& getInstance();
 
     bool begin();
-    bool start();
-    void stop();
-
-    void setFileDecoder(IAlertFileDecoder* decoder) { m_file_decoder = decoder; }
 
     /**
-     * @brief Asynchronously enqueues an alert to be played.
-     *        Thread-safe, non-blocking, safe to call from any task.
+     * @brief Plays an alert, replacing any that is playing.
+     *        Thread-safe and non-blocking.
      */
     void playAlert(AlertType type);
+    void stop();
+
+    // Speaker task: writes up to n samples of the alert track, returns the count.
+    size_t render(int16_t* out, size_t n);
+
+    void setClip(AlertType type, AlertClipPtr clip);
+    AlertClipPtr clip(AlertType type) const;
+    // The built-in tone for the alert, rendered at begin().
+    AlertClipPtr builtin(AlertType type) const;
+    void setGainDb(AlertType type, float db);
+    void setEnabled(AlertType type, bool enabled);
 
 private:
-    AlertPlayer();
-    ~AlertPlayer();
+    AlertPlayer() = default;
     AlertPlayer(const AlertPlayer&) = delete;
     AlertPlayer& operator=(const AlertPlayer&) = delete;
 
-    static void workerTaskThunk(void* pvParameters);
-    void workerTask();
-
-    void processAlert(AlertType type);
-    void playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms);
-
-    IAlertFileDecoder* m_file_decoder = nullptr;
-    QueueHandle_t m_queue = nullptr;
-    TaskHandle_t  m_task_handle = nullptr;
-    volatile bool m_running = false;
+    AlertMixer m_mixer;
+    AlertClipPtr m_builtin[ALERT_COUNT];
+    // esp_timer time of the last playAlert(), for the trigger-to-mix latency log
+    volatile int64_t m_requested_us = 0;
 
     static constexpr const char* TAG = "AlertPlayer";
 };

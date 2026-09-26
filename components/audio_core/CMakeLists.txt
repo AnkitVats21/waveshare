@@ -3,6 +3,8 @@ idf_component_register(
         "src/SpeakerPlayback.cpp"
         "src/AudioOrchestrator.cpp"
         "src/AlertPlayer.cpp"
+        "src/AlertMixer.cpp"
+        "src/AlertTones.cpp"
         "src/MicCapture.cpp"
         "src/Resampler.cpp"
         "src/WakeWordEngine.cpp"

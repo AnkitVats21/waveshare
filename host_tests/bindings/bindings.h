@@ -7,3 +7,4 @@ void init_sysdb(nb::module_& m);
 void init_buffers(nb::module_& m);
 void init_resampler(nb::module_& m);
 void init_nexus_db(nb::module_& m);
+void init_alerts(nb::module_& m);

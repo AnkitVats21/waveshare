@@ -2,7 +2,7 @@
 #include "app/audio/AudioOrchestrator.h"
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
-#include "app/audio/AlertPlayer.h"
+#include "audio_core/AlertPlayer.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
@@ -46,7 +46,6 @@ bool AudioService::begin() {
     // Verify ring buffers are allocated (done in app_main via BufferManager)
     if (!BufferManager::getInstance().handle(Buffers::MIC_TX_BUF) ||
         !BufferManager::getInstance().handle(Buffers::VOICE_RX_BUF) ||
-        !BufferManager::getInstance().handle(Buffers::ALERT_RX_BUF) ||
         !BufferManager::getInstance().handle(Buffers::MEDIA_RX_BUF)) {
         LOGE_AUDIO("Ring buffers not allocated — was BufferManager initialized?");
         return false;

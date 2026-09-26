@@ -43,6 +43,9 @@ nanobind_add_module(waveshare_host
     ../components/core_sysdb/src/BufferManager.cpp
     ../components/core_sysdb/src/ReactorTask.cpp
     ../components/audio_core/src/Resampler.cpp
+    bindings/bind_alerts.cpp
+    ../components/audio_core/src/AlertMixer.cpp
+    ../components/audio_core/src/AlertTones.cpp
     bindings/bind_nexus_db.cpp
     ../components/nexus_db/src/Database.cpp
     ../components/nexus_db/src/Crc32.cpp

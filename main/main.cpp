@@ -1,7 +1,7 @@
 #include "app/AppController.h"
 #include "app/audio/AudioService.h"
 #include "app/audio/AudioOrchestrator.h"
-#include "app/audio/AlertPlayer.h"
+#include "audio_core/AlertPlayer.h"
 #include "app/led/LedService.h"
 #include "gemini_live/AssistantService.h"
 #include "app/input/KeyService.h"
@@ -18,7 +18,7 @@
 #include "services/storage/SystemDatabase.h"
 #include "services/alarm/AlarmService.h"
 #include "services/storage/SysDbSyncReactor.h"
-#include "services/storage/AlertFileDecoder.h"
+#include "services/alerts/AlertLibrary.h"
 #include "hal/input/ExpanderKeyInput.h"
 #include "services/network/WifiService.h"
 #include "services/http/HttpService.h"
@@ -124,8 +124,10 @@ extern "C" void app_main(void) {
     // Start services
     audio_svc.begin();
     AudioOrchestrator::getInstance().begin();
-    AlertPlayer::getInstance().setFileDecoder(&AlertFileDecoder::getInstance());
     AlertPlayer::getInstance().begin();
+    // Decodes the SD alert files into PSRAM in the background; the built-in
+    // tones play until each one is ready.
+    Services::AlertLibrary::getInstance().start();
     assistant_svc.begin();
     NexusPlayer::getInstance().begin();
     MusicPlaybackService::getInstance().begin();
@@ -148,7 +150,6 @@ extern "C" void app_main(void) {
     // 6.5 Spawn ReactorTask background threads
     wifi.start();
     audio_svc.start();
-    AlertPlayer::getInstance().start();
     led_svc.start();
     assistant_svc.start();
     gemini_proto.start();

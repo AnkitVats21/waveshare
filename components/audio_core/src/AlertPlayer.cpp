@@ -1,186 +1,121 @@
-#include "core_sysdb/AudioRates.h"
 #include "audio_core/AlertPlayer.h"
+#include "audio_core/AlertTones.h"
 #include "audio_core/AudioOrchestrator.h"
-#include "audio_core/SpeakerPlayback.h"
-#include "core_sysdb/BufferManager.h"
-#include "audio_core/Resampler.h"
-#include "core_sysdb/thread_config.h"
+#include "core_sysdb/AudioRates.h"
 #include "esp_log.h"
-#include "esp_heap_caps.h"
-#include <cstdio>
+#include "esp_timer.h"
 #include <cmath>
+#include <cstring>
+
+namespace {
+
+const char* const NAMES[ALERT_COUNT] = {
+    "wake_confirm", "ready_to_speak", "session_end", "error", "offline",
+};
+
+const ToneNote WAKE_CONFIRM[] = {
+    {784.0f, 8000, 80, 15},    // G5
+    {987.8f, 8000, 80, 15},    // B5
+};
+const ToneNote READY_TO_SPEAK[] = {
+    {523.3f, 10000, 90, 15},   // C5
+    {659.3f, 10000, 90, 15},   // E5
+    {784.0f, 10000, 130, 20},  // G5
+};
+const ToneNote SESSION_END[] = {
+    {659.3f, 7000, 100, 20},   // E5
+    {523.3f, 7000, 120, 20},   // C5
+};
+const ToneNote ERROR_BEEPS[] = {
+    {440.0f, 9000, 60, 10},
+    {0.0f, 0, 40, 0},
+    {440.0f, 9000, 60, 10},
+};
+const ToneNote OFFLINE[] = {
+    {146.8f, 8000, 120, 25},   // D3
+};
+
+struct ToneSet { const ToneNote* notes; size_t count; };
+template <size_t N> constexpr ToneSet tones(const ToneNote (&n)[N]) { return {n, N}; }
+const ToneSet TONES[ALERT_COUNT] = {
+    tones(WAKE_CONFIRM), tones(READY_TO_SPEAK), tones(SESSION_END), tones(ERROR_BEEPS), tones(OFFLINE),
+};
+
+} // namespace
+
+const char* alertName(AlertType type) {
+    return type < ALERT_COUNT ? NAMES[type] : "unknown";
+}
+
+AlertType alertFromName(const char* name) {
+    for (int i = 0; i < ALERT_COUNT; ++i) {
+        if (name && strcmp(name, NAMES[i]) == 0) return static_cast<AlertType>(i);
+    }
+    return ALERT_COUNT;
+}
 
 AlertPlayer& AlertPlayer::getInstance() {
     static AlertPlayer instance;
     return instance;
 }
 
-AlertPlayer::AlertPlayer() {
-    m_queue = xQueueCreate(4, sizeof(AlertType));
-}
-
-AlertPlayer::~AlertPlayer() {
-    stop();
-    if (m_queue) {
-        vQueueDelete(m_queue);
-        m_queue = nullptr;
-    }
-}
-
 bool AlertPlayer::begin() {
-    ESP_LOGI(TAG, "AlertPlayer initialized.");
+    size_t bytes = 0;
+    for (int i = 0; i < ALERT_COUNT; ++i) {
+        std::shared_ptr<AlertClip> clip = synthesizeTones(TONES[i].notes, TONES[i].count, MIXER_SAMPLE_RATE);
+        if (!clip) {
+            ESP_LOGE(TAG, "No PSRAM for the built-in %s tone", NAMES[i]);
+            continue;
+        }
+        bytes += clip->size() * sizeof(int16_t);
+        m_builtin[i] = clip;
+        m_mixer.setClip(i, clip);
+    }
+    ESP_LOGI(TAG, "Built-in tones ready (%u bytes)", (unsigned)bytes);
     return true;
 }
 
-bool AlertPlayer::start() {
-    if (m_task_handle != nullptr) {
-        return true;
+void AlertPlayer::playAlert(AlertType type) {
+    if (type >= ALERT_COUNT) return;
+    m_requested_us = esp_timer_get_time();
+    if (!m_mixer.play(type)) {
+        ESP_LOGD(TAG, "%s is disabled or has no clip", NAMES[type]);
     }
-    m_running = true;
-    BaseType_t res = xTaskCreatePinnedToCoreWithCaps(
-        workerTaskThunk,
-        "alert_player",
-        ThreadConfig::StackSize::STACK_LARGE,
-        this,
-        ThreadConfig::Priority::AUDIO_ALERT,
-        &m_task_handle,
-        ThreadConfig::CORE_AUDIO,
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-    );
-    if (res != pdPASS || m_task_handle == nullptr) {
-        res = xTaskCreatePinnedToCore(
-            workerTaskThunk,
-            "alert_player",
-            ThreadConfig::StackSize::STACK_LARGE,
-            this,
-            ThreadConfig::Priority::AUDIO_ALERT,
-            &m_task_handle,
-            ThreadConfig::CORE_AUDIO
-        );
-    }
-    return (res == pdPASS);
 }
 
 void AlertPlayer::stop() {
-    if (m_task_handle != nullptr) {
-        m_running = false;
-        AlertType dummy = ALERT_ERROR;
-        xQueueSend(m_queue, &dummy, 0);
-        while (m_task_handle != nullptr) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    }
+    m_mixer.stop();
 }
 
-void AlertPlayer::playAlert(AlertType type) {
-    if (m_queue) {
-        xQueueSend(m_queue, &type, 0);
+size_t AlertPlayer::render(int16_t* out, size_t n) {
+    AlertMixer::Event event;
+    size_t written = m_mixer.render(out, n, event);
+    if (event == AlertMixer::Event::Started) {
+        ESP_LOGI(TAG, "alert started %lld us after request",
+                 (long long)(esp_timer_get_time() - m_requested_us));
+        AudioOrchestrator::getInstance().notifyAlertStarted();
+    } else if (event == AlertMixer::Event::Ended) {
+        AudioOrchestrator::getInstance().notifyAlertEnded();
     }
+    return written;
 }
 
-void AlertPlayer::workerTaskThunk(void* pvParameters) {
-    static_cast<AlertPlayer*>(pvParameters)->workerTask();
-    vTaskDelete(NULL);
+void AlertPlayer::setClip(AlertType type, AlertClipPtr clip) {
+    if (type < ALERT_COUNT) m_mixer.setClip(type, std::move(clip));
 }
 
-void AlertPlayer::workerTask() {
-    ESP_LOGI(TAG, "AlertPlayer worker task active.");
-    AlertType type;
-
-    while (m_running) {
-        if (xQueueReceive(m_queue, &type, portMAX_DELAY) == pdTRUE) {
-            if (!m_running) break;
-
-            AudioOrchestrator::getInstance().notifyAlertStarted();
-            processAlert(type);
-
-            // Wait for ALERT_RX_BUF to fully drain so the alert finishes cleanly
-            auto& bm = BufferManager::getInstance();
-            while (bm.getUsedBytes(Buffers::ALERT_RX_BUF) > 0) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-            }
-            // Small cushion for I2S DMA latency
-            vTaskDelay(pdMS_TO_TICKS(40));
-
-            AudioOrchestrator::getInstance().notifyAlertEnded();
-        }
-    }
-
-    m_task_handle = nullptr;
+AlertClipPtr AlertPlayer::clip(AlertType type) const {
+    return type < ALERT_COUNT ? m_mixer.clip(type) : nullptr;
 }
 
-void AlertPlayer::processAlert(AlertType type) {
-    const char* path = nullptr;
-    switch (type) {
-        case ALERT_WAKE_CONFIRM:    path = "/sdcard/media/alert/wake_confirm.ogg"; break;
-        case ALERT_READY_TO_SPEAK:  path = "/sdcard/media/alert/ready_to_speak.ogg"; break;
-        case ALERT_SESSION_END:     path = "/sdcard/media/alert/session_end.ogg"; break;
-        case ALERT_ERROR:           path = "/sdcard/media/alert/error.ogg"; break;
-        case ALERT_OFFLINE:         path = "/sdcard/media/alert/offline.ogg"; break;
-        default: break;
-    }
-
-    bool custom_played = false;
-    if (path && m_file_decoder) {
-        custom_played = m_file_decoder->playAlertFile(path);
-    }
-
-    if (!custom_played) {
-        switch (type) {
-            case ALERT_WAKE_CONFIRM:
-                playTone(784.0f, 8000, 80, 15);   // G5
-                playTone(987.8f, 8000, 80, 15);   // B5
-                break;
-            case ALERT_READY_TO_SPEAK:
-                playTone(523.3f, 10000, 90, 15);  // C5
-                playTone(659.3f, 10000, 90, 15);  // E5
-                playTone(784.0f, 10000, 130, 20); // G5
-                break;
-            case ALERT_SESSION_END:
-                playTone(659.3f, 7000, 100, 20);  // E5
-                playTone(523.3f, 7000, 120, 20);  // C5
-                break;
-            case ALERT_ERROR:
-                playTone(440.0f, 9000, 60, 10);
-                {
-                    constexpr uint32_t GAP_SAMPLES = (MIXER_SAMPLE_RATE * 40) / 1000;
-                    int16_t silence[GAP_SAMPLES] = {};
-                    BufferManager::getInstance().send(Buffers::ALERT_RX_BUF, silence, GAP_SAMPLES * sizeof(int16_t), pdMS_TO_TICKS(10));
-                }
-                playTone(440.0f, 9000, 60, 10);
-                break;
-            case ALERT_OFFLINE:
-                playTone(146.8f, 8000, 120, 25);  // D3
-                break;
-        }
-    }
+AlertClipPtr AlertPlayer::builtin(AlertType type) const {
+    return type < ALERT_COUNT ? m_builtin[type] : nullptr;
 }
 
-void AlertPlayer::playTone(float freq_hz, int16_t volume, uint32_t duration_ms, uint32_t fade_ms) {
-    constexpr uint32_t SAMPLE_RATE = MIXER_SAMPLE_RATE;
-    const uint32_t total_samples = (SAMPLE_RATE * duration_ms) / 1000;
-    const uint32_t fade_samples  = (SAMPLE_RATE * fade_ms) / 1000;
+void AlertPlayer::setGainDb(AlertType type, float db) {
+    if (type < ALERT_COUNT) m_mixer.setGain(type, powf(10.0f, db / 20.0f));
+}
 
-    constexpr uint32_t BLOCK = SAMPLE_RATE / 50; // 20 ms
-    int16_t buf[BLOCK];
-
-    uint32_t sent = 0;
-    auto& bm = BufferManager::getInstance();
-
-    while (sent < total_samples) {
-        const uint32_t n = (total_samples - sent < BLOCK) ? (total_samples - sent) : BLOCK;
-        for (uint32_t i = 0; i < n; ++i) {
-            const uint32_t s = sent + i;
-            float env = 1.0f;
-            if (s < fade_samples && fade_samples > 0) {
-                env = (float)s / (float)fade_samples;
-            } else if (s >= (total_samples - fade_samples) && fade_samples > 0) {
-                env = (float)(total_samples - s) / (float)fade_samples;
-            }
-            const float angle = 2.0f * 3.14159265f * freq_hz * (float)s / (float)SAMPLE_RATE;
-            buf[i] = (int16_t)(env * (float)volume * sinf(angle));
-        }
-        bm.send(Buffers::ALERT_RX_BUF, buf, n * sizeof(int16_t), pdMS_TO_TICKS(50));
-        sent += n;
-    }
+void AlertPlayer::setEnabled(AlertType type, bool enabled) {
+    if (type < ALERT_COUNT) m_mixer.setEnabled(type, enabled);
 }

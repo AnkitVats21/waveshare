@@ -1,5 +1,6 @@
 #include "audio_core/SpeakerPlayback.h"
 #include "audio_core/AudioOrchestrator.h"
+#include "audio_core/AlertPlayer.h"
 #include "core_sysdb/AppLogger.h"
 #include "audio_core/Resampler.h"
 #include "esp_timer.h"
@@ -8,7 +9,6 @@
 
 // Defines + registers multi-track ring buffers with BufferManager
 DEFINE_BUFFER(VOICE_RX_BUF, "spk_voice", 256 * 1024)
-DEFINE_BUFFER(ALERT_RX_BUF, "spk_alert", 64 * 1024)
 DEFINE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 
 #include "common/thread_config.h"
@@ -42,7 +42,7 @@ void SpeakerPlaybackTask::stop() {
 // ─────────────────────────────────────────────────────────────────────────────
 // run() — Multi-Track Real-Time Audio Mixer & Output Loop
 //
-// Mixes Voice (Gemini 24kHz resampled to the mixer rate), Alert (chimes/tones)
+// Mixes Voice (Gemini 24kHz resampled to the mixer rate), Alert (chimes)
 // and Media (music) with smooth ducking gain interpolation. Every track is
 // produced at MIXER_SAMPLE_RATE, which equals the codec rate, so the mix is
 // written straight to esp_codec_dev_write() with no output resample.
@@ -155,19 +155,9 @@ void SpeakerPlaybackTask::run() {
       m_buffering = true;
     }
 
-    // 2. Alert Track (mixer-rate mono chimes/tones)
-    {
-      size_t target_alert_bytes = target_samples * sizeof(int16_t);
-      size_t rx_bytes = 0;
-      void *rx_ptr = bm.receive(Buffers::ALERT_RX_BUF, &rx_bytes, 0, target_alert_bytes);
-      if (rx_ptr != nullptr && rx_bytes > 0) {
-        num_alert = rx_bytes / sizeof(int16_t);
-        if (num_alert > MAX_AUDIO_CHUNK_SAMPLES) num_alert = MAX_AUDIO_CHUNK_SAMPLES;
-        memcpy(alert_pcm, rx_ptr, num_alert * sizeof(int16_t));
-        bm.returnItem(Buffers::ALERT_RX_BUF, rx_ptr);
-        has_alert = true;
-      }
-    }
+    // 2. Alert Track (mixer-rate mono chimes, pulled from PSRAM clips)
+    num_alert = AlertPlayer::getInstance().render(alert_pcm, target_samples);
+    has_alert = num_alert > 0;
 
     // 3. Media Track (mixer-rate music playback)
     bool is_media_active = AudioOrchestrator::getInstance().isMediaActive();

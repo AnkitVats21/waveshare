@@ -52,6 +52,7 @@ set(srcs
             "services/storage/generated/SystemDb.generated.cpp"
             "services/time/TimeSyncHelper.cpp"
             "services/alarm/AlarmService.cpp"
+            "services/alerts/AlertLibrary.cpp"
 )
 
 if(CONFIG_DISPLAY_ENABLE)

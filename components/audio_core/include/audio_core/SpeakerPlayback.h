@@ -10,13 +10,12 @@
 #include "services/BufferManager.h"
 
 // ---------------------------------------------------------------------------
-// Buffer declarations — dedicated ring buffers for Multi-Track Audio Mixing:
+// Buffer declarations — dedicated ring buffers for Multi-Track Audio Mixing
+// (alerts are mixed from PSRAM clips by AlertPlayer, with no ring buffer):
 //   - VOICE_RX_BUF: Gemini Live voice stream (256 KB PSRAM)
-//   - ALERT_RX_BUF: Chimes, system notifications, tones (64 KB PSRAM)
 //   - MEDIA_RX_BUF: Music playback, local files (512 KB PSRAM)
 // ---------------------------------------------------------------------------
 DECLARE_BUFFER(VOICE_RX_BUF, "spk_voice", 256 * 1024)
-DECLARE_BUFFER(ALERT_RX_BUF, "spk_alert", 64 * 1024)
 DECLARE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 
 #include "common/TaskBase.h"
