@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <random>
 #include <cstring>
-#include <sys/stat.h>
+#include "sd_storage/Fs.h"
 
 static const char* TAG = "MusicPlayback";
 
@@ -339,8 +339,8 @@ void MusicPlaybackService::auxWorkerLoop() {
             } else if (cmd.type == MediaAuxCmdType::FETCH_THUMBNAIL) {
                 char thumbPath[128];
                 snprintf(thumbPath, sizeof(thumbPath), "%s/%s.jpg", CatalogDB::THUMBS_DIR, cmd.targetId);
-                struct stat st;
-                if (stat(thumbPath, &st) != 0 || st.st_size == 0) {
+                sd_storage::PathInfo info;
+                if (!sd_storage::Fs::stat(thumbPath, info) || info.size == 0) {
                     std::string thumbUrl = "https://i.ytimg.com/vi/" + std::string(cmd.targetId) + "/default.jpg";
                     ESP_LOGI(TAG, "Fetching album art thumbnail: %s", thumbUrl.c_str());
 
@@ -353,18 +353,26 @@ void MusicPlaybackService::auxWorkerLoop() {
                         esp_err_t err = esp_http_client_open(client, 0);
                         if (err == ESP_OK) {
                             int64_t clen = esp_http_client_fetch_headers(client);
-                            if (clen > 0 && clen < 65536) {
-                                FILE* tf = fopen(thumbPath, "wb");
-                                if (tf) {
-                                    char tbuf[1024];
-                                    int r = 0;
-                                    while ((r = esp_http_client_read(client, tbuf, sizeof(tbuf))) > 0) {
-                                        fwrite(tbuf, 1, r, tf);
-                                    }
-                                    fclose(tf);
+                            int status = esp_http_client_get_status_code(client);
+                            // Whole image into PSRAM first, so a failed download never
+                            // leaves a truncated file marked as cached.
+                            uint8_t* img = (status == 200 && clen > 0 && clen < 65536)
+                                ? static_cast<uint8_t*>(heap_caps_malloc(clen, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT))
+                                : nullptr;
+                            if (img) {
+                                int64_t got = 0;
+                                int r = 0;
+                                while (got < clen &&
+                                       (r = esp_http_client_read(client, reinterpret_cast<char*>(img) + got, clen - got)) > 0) {
+                                    got += r;
+                                }
+                                if (got == clen && sd_storage::Fs::writeAtomic(thumbPath, img, clen)) {
                                     CatalogDB::getInstance().setThumbnailCached(cmd.targetId, true);
                                     ESP_LOGI(TAG, "Saved album art thumbnail to %s", thumbPath);
+                                } else {
+                                    ESP_LOGW(TAG, "Thumbnail %s not saved (%lld of %lld bytes)", cmd.targetId, got, clen);
                                 }
+                                heap_caps_free(img);
                             }
                         }
                         esp_http_client_cleanup(client);

@@ -17,6 +17,7 @@ idf_component_register(
     REQUIRES
         core_sysdb
         audio_core
+        sd_storage
         esp_http_client
         mbedtls
         freertos
