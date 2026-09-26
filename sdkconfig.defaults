@@ -62,3 +62,10 @@ CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 # (with a 64 KB cache, which saves another ~10% but costs 31 KB internal RAM).
 # CONFIG_ESP32S3_DATA_CACHE_LINE_32B is not set
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+# Keep the 8 KB RTC fast RAM out of the heap. It isn't reachable by the SDMMC
+# DMA, but IDF's SD driver only checks buffer alignment, so a small malloc that
+# lands there (internal RAM is tight during playback) silently reads back zeros
+# and writes zeros to the card. Confirmed with a buffer-address log: every
+# corrupt download used a buffer at 0x600fe180.
+# CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP is not set
