@@ -5,9 +5,23 @@
 #include "esp_log.h"
 #include <cstring>
 #include <algorithm>
+#include <cstdlib>
 #include "app/audio/SpeakerPlayback.h"
 #include "app/audio/AudioOrchestrator.h"
 #include "common/thread_config.h"
+
+namespace {
+// Numeric query parameter from a stream URL (googlevideo carries dur=<seconds> and
+// clen=<bytes>). Returns 0 when absent.
+double urlNumberParam(const char* url, const char* key) {
+    if (!url) return 0;
+    const size_t klen = strlen(key);
+    for (const char* p = strchr(url, '?'); p; p = strchr(p + 1, '&')) {
+        if (strncmp(p + 1, key, klen) == 0 && p[1 + klen] == '=') return strtod(p + 2 + klen, nullptr);
+    }
+    return 0;
+}
+} // namespace
 
 static const char* TAG = "NexusPlayer";
 
@@ -243,13 +257,21 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
         });
     } else {
         auto snap = EmbeddedSysDb::getInstance().snapshot();
-        bool doCache = snap.media.cache_downloads && (startPosMs == 0);
+        // Long tracks (mixes, podcasts) would fill the card; unknown length is treated as long.
+        uint32_t durMs = snap.media.duration_ms;
+        if (durMs == 0) durMs = static_cast<uint32_t>(urlNumberParam(downloadUrl, "dur") * 1000);
+        const bool cacheable = durMs > 0 && durMs <= MAX_CACHE_DURATION_MS;
+        bool doCache = snap.media.cache_downloads && (startPosMs == 0) && cacheable;
+        if (snap.media.cache_downloads && startPosMs == 0 && !cacheable) {
+            ESP_LOGI(TAG, "Not caching %s: duration %u s exceeds the %u s limit or is unknown",
+                     songId, (unsigned)(durMs / 1000), (unsigned)(MAX_CACHE_DURATION_MS / 1000));
+        }
 
         _state = STATE_STREAMING_AND_CACHING;
 
         if (doCache) {
             ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);
-            if (!_storageManager.openFileForCaching(songId)) {
+            if (!_storageManager.openFileForCaching(songId, static_cast<size_t>(urlNumberParam(downloadUrl, "clen")))) {
                 ESP_LOGE(TAG, "Failed to open file for caching");
                 stopActivePipelines();
                 _state = STATE_IDLE;
@@ -401,9 +423,12 @@ void NexusPlayer::stopActivePipelines() {
 
     // 2. Wake a decoder that's parked on an empty input ring so it sees the stop
     //    flag and exits (flush alone does not unblock a blocked reader).
+    //    The SD writer gets ERROR, not EOF: EOF means "download complete" and would
+    //    commit the partial .tmp as the cached track.
     AudioChunkHeader eof_header = {ChunkType::EOF_STREAM, 0};
+    AudioChunkHeader abort_header = {ChunkType::ERROR, 0};
     bm.send(_playbackId, &eof_header, sizeof(eof_header));
-    bm.send(_storageId, &eof_header, sizeof(eof_header));
+    bm.send(_storageId, &abort_header, sizeof(abort_header));
     if (!_audioEngine.waitUntilStopped()) {
         ESP_LOGW(TAG, "Decode task did not stop within timeout");
     }

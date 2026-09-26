@@ -10,8 +10,9 @@ public:
     bool fileExists(const char* songId);
     bool deleteFile(const char* songId);
     
-    // Cache Miss Path (concurrent download, write and progressive read)
-    bool openFileForCaching(const char* songId);
+    // Cache Miss Path (concurrent download, write and progressive read).
+    // expectedBytes (0 = unknown) guards the commit against truncated downloads.
+    bool openFileForCaching(const char* songId, size_t expectedBytes = 0);
     
     // Cache Hit Path (local file read and playback)
     bool openFileForReading(const char* songId);
@@ -37,6 +38,7 @@ private:
     
     volatile bool _downloadComplete = false;
     volatile size_t _bytesWritten = 0;
+    size_t _expectedBytes = 0;
     
     volatile bool _writerTaskRunning = false;
     volatile bool _readerTaskRunning = false;

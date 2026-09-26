@@ -108,6 +108,7 @@ void StreamManager::runStreamLoop() {
     uint8_t* payload = net_buf + sizeof(AudioChunkHeader);
 
     bool error_occurred = false;
+    bool completed = false;
 
     while (_isStreaming && _http.isConnected()) {
         int bytes_read = _http.read(payload, AUDIO_CHUNK_SIZE);
@@ -124,6 +125,7 @@ void StreamManager::runStreamLoop() {
             }
         } else if (bytes_read == 0) {
             ESP_LOGI(TAG, "Network stream completed naturally");
+            completed = true;
             break;
         } else {
             ESP_LOGE(TAG, "Network stream read error!");
@@ -138,11 +140,17 @@ void StreamManager::runStreamLoop() {
     // harmless. A portMAX_DELAY here previously deadlocked shutdown: stopStreaming()
     // busy-waits for this task to exit while the consumer is stopped/flushed only
     // *after* stopStreaming() returns.
-    header->type = error_occurred ? ChunkType::ERROR : ChunkType::EOF_STREAM;
-    header->size = 0;
-    for (int i = 0; i < 50; ++i) {
-        if (_bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader), pdMS_TO_TICKS(20))) break;
-        if (!_isStreaming) break;  // teardown in progress - consumer will flush
+    //
+    // Stopped before the end: send nothing. The consumer is being torn down,
+    // and an EOF would tell StorageManager the download finished, committing a
+    // partial file to the cache as if it were the whole track.
+    if (_isStreaming || completed || error_occurred) {
+        header->type = error_occurred ? ChunkType::ERROR : ChunkType::EOF_STREAM;
+        header->size = 0;
+        for (int i = 0; i < 50; ++i) {
+            if (_bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader), pdMS_TO_TICKS(20))) break;
+            if (!_isStreaming) break;  // teardown in progress - consumer will flush
+        }
     }
 
     ESP_LOGI(TAG, "Network Task wrap-up: error=%d", error_occurred ? 1 : 0);

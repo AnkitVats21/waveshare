@@ -25,6 +25,9 @@ enum PlayerState {
 
 class NexusPlayer : public ReactorTask, public IAudioFocusObserver {
 public:
+    // Streams longer than this are played but never written to the SD cache.
+    static constexpr uint32_t MAX_CACHE_DURATION_MS = 10 * 60 * 1000;
+
     static NexusPlayer& getInstance();
     NexusPlayer(BufferManager::BufferId playbackId, BufferManager::BufferId storageId);
     virtual ~NexusPlayer() override;

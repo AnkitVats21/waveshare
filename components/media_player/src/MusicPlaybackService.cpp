@@ -992,6 +992,11 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
     // Dispatch thumbnail prefetch to background aux task
     postAuxCommand(MediaAuxCmdType::FETCH_THUMBNAIL, track.videoId.c_str(), track.author.c_str(), track.title.c_str());
 
+    // The player reads duration_ms to decide whether the track may be cached.
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.duration_ms = track.durationSeconds * 1000;
+    });
+
     // Call NexusPlayer directly with direct stream URL
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl);
 

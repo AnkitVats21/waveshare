@@ -67,7 +67,7 @@ bool StorageManager::deleteFile(const char* songId) {
     return deleted;
 }
 
-bool StorageManager::openFileForCaching(const char* songId) {
+bool StorageManager::openFileForCaching(const char* songId, size_t expectedBytes) {
     if (!songId || !sd_storage::SdCard::instance().isMounted()) return false;
     closeActiveFile();
 
@@ -87,6 +87,7 @@ bool StorageManager::openFileForCaching(const char* songId) {
     _currentSongId[sizeof(_currentSongId) - 1] = '\0';
     _downloadComplete = false;
     _bytesWritten = 0;
+    _expectedBytes = expectedBytes;
     _isWritingMode = true;
 
     _writerTaskRunning = true;
@@ -185,7 +186,14 @@ void StorageManager::closeActiveFile() {
         snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", _currentSongId);
         snprintf(targetPath, sizeof(targetPath), "/sdcard/music/%s.webm", _currentSongId);
 
-        if (_downloadComplete) {
+        // EOF also arrives when the server closes early; trust it only if the
+        // byte count matches the length the stream URL advertised.
+        const bool truncated = _expectedBytes > 0 && _bytesWritten != _expectedBytes;
+        if (_downloadComplete && truncated) {
+            ESP_LOGW(TAG, "Download ended at %u of %u bytes; discarding %s",
+                     (unsigned)_bytesWritten, (unsigned)_expectedBytes, tempPath);
+            sd_storage::Fs::remove(tempPath);
+        } else if (_downloadComplete) {
             ESP_LOGI(TAG, "Download complete. Committing cache to target: %s", targetPath);
             if (sd_storage::Fs::isFile(targetPath)) {
                 sd_storage::Fs::remove(targetPath);
@@ -206,6 +214,7 @@ void StorageManager::closeActiveFile() {
     _isWritingMode = false;
     _downloadComplete = false;
     _bytesWritten = 0;
+    _expectedBytes = 0;
     _currentSongId[0] = '\0';
 }
 
@@ -248,7 +257,7 @@ void StorageManager::runWriterTaskLoop() {
             _bm.returnItem(_storageId, rx_ptr);
             break;
         } else if (chunk->type == ChunkType::ERROR) {
-            ESP_LOGE(TAG, "Writer Task: Received ERROR signal");
+            ESP_LOGI(TAG, "Writer Task: download aborted (stop or stream error)");
             _bm.returnItem(_storageId, rx_ptr);
             break;
         }
