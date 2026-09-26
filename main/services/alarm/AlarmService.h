@@ -174,6 +174,10 @@ private:
     // Snooze written to the alarm's document, so it survives a reboot.
     int m_snooze_saved_id = 0;
     uint32_t m_snooze_saved_until = 0;
+    // A snooze saved before a restart that has not ended yet; reported as
+    // snoozed, and Stop cancels it. It rings from checkSchedule().
+    int m_waiting_snooze_id = 0;
+    uint32_t m_waiting_snooze_until = 0;
     // Reminders due and not yet delivered (this task only).
     std::vector<int> m_reminders_due;
     enum class Delivery : uint8_t { None, Chime, Speaking, Offline };

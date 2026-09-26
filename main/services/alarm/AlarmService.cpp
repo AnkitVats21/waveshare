@@ -358,6 +358,14 @@ void AlarmService::handle(Command& cmd) {
         break;
     }
     case CmdType::Stop:
+        if (m_ring.state() == AlarmRing::State::Idle && m_waiting_snooze_id) {
+            ESP_LOGI(TAG, "Alarm %d: snooze from before the restart cancelled", m_waiting_snooze_id);
+            AlarmDoc clear;
+            mergeAlarm(m_waiting_snooze_id, clear, AlarmDoc::F_SNOOZE_UNTIL);
+            m_waiting_snooze_id = 0;
+            m_waiting_snooze_until = 0;
+            break;
+        }
         action = m_ring.stop(now);
         if (action == AlarmRing::Action::Finish && !cmd.restore) {
             ESP_LOGI(TAG, "Alarm stopped by a music command");
@@ -499,6 +507,16 @@ void AlarmService::publish() {
     st.ringing_ms = m_ring.ringingMs(now);
     st.snooze_left_ms = m_ring.snoozeLeftMs(now);
     st.snoozes = m_ring.snoozeCount();
+
+    const uint32_t wall = (uint32_t)time(nullptr);
+    persistSnooze(st.state == AlarmRing::State::Snoozed ? st.alarm_id : 0,
+                  st.snooze_left_ms ? wall + st.snooze_left_ms / 1000 : 0);
+    // Reported like a running snooze.
+    if (st.state == AlarmRing::State::Idle && m_waiting_snooze_id) {
+        st.state = AlarmRing::State::Snoozed;
+        st.alarm_id = m_waiting_snooze_id;
+        st.snooze_left_ms = m_waiting_snooze_until > wall ? (m_waiting_snooze_until - wall) * 1000 : 0;
+    }
     {
         std::lock_guard<std::mutex> lock(m_status_mutex);
         m_status = st;
@@ -509,10 +527,9 @@ void AlarmService::publish() {
     const AlarmRingState state = st.state == AlarmRing::State::Ringing ? AlarmRingState::RINGING
                                : st.state == AlarmRing::State::Snoozed ? AlarmRingState::SNOOZED
                                                                        : AlarmRingState::IDLE;
-    const uint32_t snooze_until = st.snooze_left_ms ? (uint32_t)time(nullptr) + st.snooze_left_ms / 1000 : 0;
+    const uint32_t snooze_until = st.snooze_left_ms ? wall + st.snooze_left_ms / 1000 : 0;
     const bool builtin = st.source == AlarmRing::Source::Builtin;
     const int id = state == AlarmRingState::IDLE ? 0 : st.alarm_id;
-    persistSnooze(state == AlarmRingState::SNOOZED ? id : 0, snooze_until);
     EmbeddedSysDb::getInstance().mutate([=](SystemState& s) {
         s.alarm.state = state;
         s.alarm.playing = state == AlarmRingState::RINGING;
@@ -697,11 +714,17 @@ uint32_t AlarmService::checkSchedule() {
 
     int due_id = 0;
     AlarmDoc due;
+    int waiting_id = 0;
+    uint32_t waiting_until = 0;
     for (auto& [id, a] : listAlarms()) {
         // A snooze saved before a reboot (the running one lives in m_ring).
         if (a.snooze_until && id != snoozed_id) {
             if (a.snooze_until > now) {
                 consider(a.snooze_until);
+                if (!waiting_id && !snoozed_id) {
+                    waiting_id = id;
+                    waiting_until = a.snooze_until;
+                }
             } else if (!due_id && !ringing && now - a.snooze_until <= SNOOZE_GRACE_S) {
                 ESP_LOGI(TAG, "Alarm %d: snooze from before the restart ended", id);
                 due_id = id;
@@ -749,6 +772,11 @@ uint32_t AlarmService::checkSchedule() {
     const int64_t next_reminder = checkReminders(now);
     if (next_reminder) consider(next_reminder);
     m_checked_until = now;
+    if (waiting_id != m_waiting_snooze_id || waiting_until != m_waiting_snooze_until) {
+        m_waiting_snooze_id = waiting_id;
+        m_waiting_snooze_until = waiting_until;
+        publish();
+    }
 
     if (due_id) {
         Command c{CmdType::Ring};
