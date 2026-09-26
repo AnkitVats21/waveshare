@@ -4,7 +4,7 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
-#include "common/storage/IStorageService.h"
+#include "sd_storage/Fs.h"
 #include <ArduinoJson.h>
 #include "sdkconfig.h"
 #include "esp_timer.h"
@@ -112,8 +112,7 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
 
 bool GeminiProtocol::readConfig(JsonDocument& out) {
     out.clear();
-    if (!m_storage || !m_storage->isMounted() || !m_storage->fileExists(GEMINI_CONFIG_PATH)) return false;
-    std::string content = m_storage->readFile(GEMINI_CONFIG_PATH);
+    std::string content = sd_storage::Fs::readText(GEMINI_CONFIG_PATH);
     if (content.empty()) return false;
     DeserializationError err = deserializeJson(out, content);
     if (err || !out.is<JsonObject>()) {
@@ -254,14 +253,12 @@ void GeminiProtocol::transmitSetupHandshake() {
     }
 
     std::string instruction = cfg["system_prompt"] | "";
-    if (m_storage && m_storage->isMounted() && m_storage->fileExists("/sdcard/gemini_memory.txt")) {
-        std::string memory = m_storage->readFile("/sdcard/gemini_memory.txt");
-        if (!memory.empty()) {
-            if (!instruction.empty()) instruction += "\n\n";
-            instruction += "You have access to the following long-term memory context containing facts, notes, "
-                           "or preferences about the user from previous conversations. Use it to inform your responses:\n";
-            instruction += memory;
-        }
+    std::string memory = sd_storage::Fs::readText("/sdcard/gemini_memory.txt");
+    if (!memory.empty()) {
+        if (!instruction.empty()) instruction += "\n\n";
+        instruction += "You have access to the following long-term memory context containing facts, notes, "
+                       "or preferences about the user from previous conversations. Use it to inform your responses:\n";
+        instruction += memory;
     }
     if (!instruction.empty()) {
         JsonArray parts = setup["systemInstruction"]["parts"].to<JsonArray>();

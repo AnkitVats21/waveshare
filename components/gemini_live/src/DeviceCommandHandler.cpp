@@ -3,8 +3,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "esp_log.h"
 #include "freertos/task.h"
-#include <cerrno>
-#include <sys/stat.h>
+#include "sd_storage/Fs.h"
 
 static const char* TAG = "DeviceCmd";
 
@@ -61,20 +60,15 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Null write file arguments";
                 return true;
             }
-            if (!s_delegate) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Storage service unavailable";
-                return true;
-            }
             std::string path;
             if (!resolveNotePath(args->path, path)) {
                 rejectPath(response_doc);
                 return true;
             }
-            if (mkdir(NOTES_DIR, 0775) != 0 && errno != EEXIST) {
-                ESP_LOGW(TAG, "Could not create %s (errno %d)", NOTES_DIR, errno);
+            if (!sd_storage::Fs::mkdirs(NOTES_DIR)) {
+                ESP_LOGW(TAG, "Could not create %s", NOTES_DIR);
             }
-            bool ok = s_delegate->writeFile(path.c_str(), args->content.c_str());
+            bool ok = sd_storage::Fs::writeAtomic(path.c_str(), args->content.c_str());
             response_doc["status"] = ok ? "success" : "error";
             response_doc["message"] = ok ? "Note saved" : "Failed to save note";
             return true;
@@ -87,22 +81,17 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Null read file arguments";
                 return true;
             }
-            if (!s_delegate) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Storage service unavailable";
-                return true;
-            }
             std::string path;
             if (!resolveNotePath(args->path, path)) {
                 rejectPath(response_doc);
                 return true;
             }
-            if (!s_delegate->fileExists(path.c_str())) {
+            if (!sd_storage::Fs::isFile(path.c_str())) {
                 response_doc["status"] = "error";
                 response_doc["message"] = "Note not found";
                 return true;
             }
-            std::string content = s_delegate->readFile(path.c_str());
+            std::string content = sd_storage::Fs::readText(path.c_str());
             if (content.size() > NOTE_READ_MAX) {
                 content.resize(NOTE_READ_MAX);
                 response_doc["truncated"] = true;
@@ -173,20 +162,10 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                 response_doc["message"] = "Null save to memory arguments";
                 return true;
             }
-            if (!s_delegate) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Storage service unavailable";
-                return true;
-            }
 
-            std::string path = "/sdcard/gemini_memory.txt";
-            bool too_large = false;
-            if (s_delegate->fileExists(path.c_str())) {
-                std::string current = s_delegate->readFile(path.c_str());
-                if (current.length() >= 16384) {
-                    too_large = true;
-                }
-            }
+            const char* path = "/sdcard/gemini_memory.txt";
+            sd_storage::PathInfo info;
+            bool too_large = sd_storage::Fs::stat(path, info) && info.size >= 16384;
 
             if (too_large) {
                 response_doc["status"] = "error";
@@ -195,7 +174,7 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             }
 
             std::string line = args->text + "\n";
-            bool ok = s_delegate->appendFile(path.c_str(), line.c_str());
+            bool ok = sd_storage::Fs::append(path, line.data(), line.size());
             response_doc["status"] = ok ? "success" : "error";
             response_doc["message"] = ok ? "Information successfully saved to long-term memory." : "Failed to write to memory file.";
             return true;

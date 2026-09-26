@@ -7,7 +7,6 @@
 #include "gemini_live/MediaCommandHandler.h"
 #include "gemini_live/DeviceCommandHandler.h"
 #include "services/time/TimeSyncHelper.h"
-#include "services/storage/StorageService.h"
 #include "services/alarm/AlarmService.h"
 
 #include "common/AppLogger.h"
@@ -132,22 +131,6 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
 // ─────────────────────────────────────────────────────────────────────────────
 // IDeviceCommandDelegate Implementation
 // ─────────────────────────────────────────────────────────────────────────────
-
-bool AppController::writeFile(const char* path, const char* content) {
-    return Services::StorageService::getInstance().writeFile(path, content);
-}
-
-std::string AppController::readFile(const char* path) {
-    return Services::StorageService::getInstance().readFile(path);
-}
-
-bool AppController::fileExists(const char* path) {
-    return Services::StorageService::getInstance().fileExists(path);
-}
-
-bool AppController::appendFile(const char* path, const char* content) {
-    return Services::StorageService::getInstance().appendFile(path, content);
-}
 
 bool AppController::setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) {
     auto alarms = Services::AlarmService::getInstance().getAlarms();

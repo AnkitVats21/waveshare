@@ -1,5 +1,5 @@
 #include "AlarmService.h"
-#include "services/storage/StorageService.h"
+#include "sd_storage/Fs.h"
 #include "services/BufferManager.h"
 #include "app/audio/SpeakerPlayback.h"
 #include "app/audio/AudioOrchestrator.h"
@@ -49,12 +49,12 @@ void AlarmService::loadAlarms() {
     std::lock_guard<std::mutex> lock(m_alarms_mutex);
     m_alarms.clear();
     
-    if (!StorageService::getInstance().fileExists("/sdcard/alarms.json")) {
+    if (!sd_storage::Fs::isFile("/sdcard/alarms.json")) {
         ESP_LOGI(TAG, "No alarms.json found on SD card. Creating default empty.");
         return;
     }
     
-    std::string content = StorageService::getInstance().readFile("/sdcard/alarms.json");
+    std::string content = sd_storage::Fs::readText("/sdcard/alarms.json");
     if (content.empty()) return;
     
     JsonDocument doc;
@@ -91,7 +91,7 @@ void AlarmService::saveAlarms() {
     }
     std::string content;
     serializeJson(doc, content);
-    StorageService::getInstance().writeFile("/sdcard/alarms.json", content.c_str());
+    sd_storage::Fs::writeAtomic("/sdcard/alarms.json", content.c_str());
 }
 
 void AlarmService::addOrUpdateAlarm(const Alarm& alarm) {

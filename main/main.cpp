@@ -14,7 +14,6 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "hal/Board.h"
 #include "services/alarm/AlarmService.h"
-#include "services/storage/StorageService.h"
 #include "services/storage/SysDbSyncReactor.h"
 #include "services/storage/AlertFileDecoder.h"
 #include "hal/input/ExpanderKeyInput.h"
@@ -116,7 +115,6 @@ extern "C" void app_main(void) {
     AlertPlayer::getInstance().setFileDecoder(&AlertFileDecoder::getInstance());
     AlertPlayer::getInstance().begin();
     assistant_svc.begin();
-    GeminiProtocol::getInstance().setStorageService(&Services::StorageService::getInstance());
     NexusPlayer::getInstance().begin();
     MusicPlaybackService::getInstance().begin();
     gemini_pump.start();

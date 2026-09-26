@@ -1,5 +1,6 @@
 #include "SysDbSyncReactor.h"
-#include "services/storage/StorageService.h"
+#include "sd_storage/Fs.h"
+#include "sd_storage/SdCard.h"
 #include "common/thread_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -53,12 +54,12 @@ bool SysDbSyncReactor::begin() {
 }
 
 bool SysDbSyncReactor::loadPersistentState() {
-    if (!StorageService::getInstance().isMounted() ||
-        !StorageService::getInstance().fileExists("/sdcard/state_sync.txt")) {
+    if (!sd_storage::SdCard::instance().isMounted() ||
+        !sd_storage::Fs::isFile("/sdcard/state_sync.txt")) {
         return false;
     }
 
-    std::string content = StorageService::getInstance().readFile("/sdcard/state_sync.txt");
+    std::string content = sd_storage::Fs::readText("/sdcard/state_sync.txt");
     if (content.empty()) {
         return false;
     }
@@ -124,7 +125,7 @@ void SysDbSyncReactor::run() {
 }
 
 void SysDbSyncReactor::writeStateToSD() {
-    if (!StorageService::getInstance().isMounted()) {
+    if (!sd_storage::SdCard::instance().isMounted()) {
         return;
     }
 
@@ -139,7 +140,7 @@ void SysDbSyncReactor::writeStateToSD() {
              snap.media.autoplay_enabled ? 1 : 0,
              snap.media.cache_downloads ? 1 : 0);
 
-    if (StorageService::getInstance().writeFile("/sdcard/state_sync.txt", buf)) {
+    if (sd_storage::Fs::writeAtomic("/sdcard/state_sync.txt", buf)) {
         ESP_LOGI(TAG, "Persistent state successfully synchronized to /sdcard/state_sync.txt");
     } else {
         ESP_LOGE(TAG, "Failed to write persistent state to SD card");

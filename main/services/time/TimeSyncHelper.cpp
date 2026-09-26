@@ -1,5 +1,6 @@
 #include "TimeSyncHelper.h"
-#include "services/storage/StorageService.h"
+#include "sd_storage/Fs.h"
+#include "sd_storage/SdCard.h"
 #include "common/ParserUtils.h"
 #include "esp_sntp.h"
 #include "esp_log.h"
@@ -59,8 +60,8 @@ bool TimeSyncHelper::synchronizeTimeAndCleanup(uint32_t timeout_ms) {
 
         // Load timezone from settings.txt
         std::string tz = "UTC"; // default
-        if (StorageService::getInstance().isMounted()) {
-            std::string config = StorageService::getInstance().readFile("/sdcard/settings.txt");
+        if (sd_storage::SdCard::instance().isMounted()) {
+            std::string config = sd_storage::Fs::readText("/sdcard/settings.txt");
             if (!config.empty()) {
                 Utils::ParserUtils::parseKeyValueStream(config, onTimeSyncConfigPair, &tz);
                 if (tz != "UTC") {

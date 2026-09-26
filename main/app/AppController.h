@@ -15,10 +15,6 @@ public:
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
     // IDeviceCommandDelegate interface
-    bool writeFile(const char* path, const char* content) override;
-    std::string readFile(const char* path) override;
-    bool fileExists(const char* path) override;
-    bool appendFile(const char* path, const char* content) override;
     bool setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) override;
     bool stopActiveAlarm() override;
 

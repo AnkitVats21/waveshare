@@ -2,7 +2,8 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/AppLogger.h"
 #include "common/thread_config.h"
-#include "services/storage/StorageService.h"
+#include "sd_storage/Fs.h"
+#include "sd_storage/SdCard.h"
 #include "services/network/CaptiveDnsServer.h"
 #include "ArduinoJson.h"
 #include "esp_event.h"
@@ -61,9 +62,9 @@ bool WifiService::clearStoredCredentials() {
 
 bool WifiService::loadCredentials(std::string& outSsid, std::string& outPassword) {
     // 1. Tier 1: SD card JSON override (/sdcard/wifi_config.json)
-    if (Services::StorageService::getInstance().isMounted() &&
-        Services::StorageService::getInstance().fileExists("/sdcard/wifi_config.json")) {
-        std::string content = Services::StorageService::getInstance().readFile("/sdcard/wifi_config.json");
+    if (sd_storage::SdCard::instance().isMounted() &&
+        sd_storage::Fs::isFile("/sdcard/wifi_config.json")) {
+        std::string content = sd_storage::Fs::readText("/sdcard/wifi_config.json");
         if (!content.empty()) {
             JsonDocument doc;
             DeserializationError err = deserializeJson(doc, content);

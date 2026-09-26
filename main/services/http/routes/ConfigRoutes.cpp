@@ -1,9 +1,7 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
-#include "services/storage/StorageService.h"
+#include "sd_storage/Fs.h"
 #include "gemini_live/gemini_skills_generated.h"
-
-using Services::StorageService;
 
 namespace {
 
@@ -12,7 +10,7 @@ constexpr const char* SETTINGS_FILE = "/sdcard/settings.txt";
 
 // settings.txt: raw text passthrough.
 esp_err_t getSettingsHandler(httpd_req_t* req) {
-    std::string content = StorageService::getInstance().readFile(SETTINGS_FILE);
+    std::string content = sd_storage::Fs::readText(SETTINGS_FILE);
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_send(req, content.c_str(), content.length());
@@ -23,7 +21,7 @@ esp_err_t setSettingsHandler(httpd_req_t* req) {
     if (req->content_len > 0 && !Http::readBody(req, body, req->content_len)) {
         return Http::sendError(req, 500, "Socket receive failed");
     }
-    if (!StorageService::getInstance().writeFile(SETTINGS_FILE, body.c_str())) {
+    if (!sd_storage::Fs::writeAtomic(SETTINGS_FILE, body.c_str())) {
         return Http::sendError(req, 500, "Failed to write config file to SD");
     }
     return Http::sendOk(req, "Config updated successfully");
@@ -55,7 +53,7 @@ void addDefaults(JsonDocument& doc) {
 // key unless the body carries a new one.
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     JsonDocument doc;
-    std::string content = StorageService::getInstance().readFile(GEMINI_CONFIG);
+    std::string content = sd_storage::Fs::readText(GEMINI_CONFIG);
     if (content.empty() || deserializeJson(doc, content) || !doc.is<JsonObject>()) {
         doc.to<JsonObject>();
         if (!content.empty()) {
@@ -86,7 +84,7 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     const char* new_key = doc["api_key"] | "";
     if (new_key[0] == '\0') {
         JsonDocument current;
-        std::string content = StorageService::getInstance().readFile(GEMINI_CONFIG);
+        std::string content = sd_storage::Fs::readText(GEMINI_CONFIG);
         std::string key;
         if (!content.empty() && !deserializeJson(current, content)) {
             key = current["api_key"] | "";
@@ -102,7 +100,7 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
 
     std::string out;
     serializeJson(doc, out);
-    if (!StorageService::getInstance().writeFile(GEMINI_CONFIG, out.c_str())) {
+    if (!sd_storage::Fs::writeAtomic(GEMINI_CONFIG, out.c_str())) {
         return Http::sendError(req, 500, "Failed to write config file to SD");
     }
     return Http::sendOk(req, "Gemini config updated; applies to the next session");
