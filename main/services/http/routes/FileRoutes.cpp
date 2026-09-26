@@ -1,24 +1,44 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
-#include "services/storage/StorageService.h"
+#include "sd_storage/File.h"
+#include "sd_storage/Fs.h"
+#include "sd_storage/PathPolicy.h"
+#include "sd_storage/SdCard.h"
+#include "esp_heap_caps.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <strings.h>
 #include <vector>
 
-using Services::StorageService;
+using namespace sd_storage;
 
 namespace {
 
 constexpr const char* BASE_PATH = CONFIG_WAVESHARE_HTTP_FILE_SERVER_BASE_PATH;
 constexpr size_t CHUNK_SIZE = 4096;
 
+// Files holding secrets (API key, Wi-Fi password). They are managed through
+// /api/config/gemini and /api/wifi/configure, never read or replaced here.
+// PathPolicy also refuses "." segments and FAT 8.3 aliases (GEMINI~1.JSO).
+const char* const PROTECTED[] = { "/sdcard/gemini_config.json", "/sdcard/wifi_config.json" };
+
+struct CapsFree { void operator()(void* p) const { heap_caps_free(p); } };
+
+// Transfer buffer in PSRAM: a 4 KB vector would land in scarce internal RAM.
+std::unique_ptr<char, CapsFree> chunkBuffer() {
+    return std::unique_ptr<char, CapsFree>(
+        static_cast<char*>(heap_caps_malloc(CHUNK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+}
+
 const char* mimeType(const std::string& path) {
     const char* ext = strrchr(path.c_str(), '.');
     if (!ext) return "application/octet-stream";
     if (strcasecmp(ext, ".wav") == 0) return "audio/wav";
     if (strcasecmp(ext, ".mp3") == 0) return "audio/mpeg";
+    if (strcasecmp(ext, ".opus") == 0 || strcasecmp(ext, ".ogg") == 0) return "audio/ogg";
     if (strcasecmp(ext, ".json") == 0) return "application/json";
     if (strcasecmp(ext, ".txt") == 0) return "text/plain";
     if (strcasecmp(ext, ".html") == 0) return "text/html";
@@ -40,29 +60,15 @@ bool paramOrBodyField(httpd_req_t* req, const char* field, std::string& out, siz
 }
 
 bool sanitize(const std::string& raw, std::string& out) {
-    return StorageService::sanitizePath(raw.c_str(), out, BASE_PATH);
+    return PathPolicy::sanitize(raw.c_str(), out, BASE_PATH);
 }
 
-// Files holding secrets (API key, Wi-Fi password). They are managed through
-// /api/config/gemini and /api/wifi/configure, never read or replaced here.
-// Also refuses "." segments and FAT 8.3 aliases (GEMINI~1.JSO) that would
-// otherwise reach the same file under a different name.
 bool isProtected(const std::string& path) {
-    if (path.find("/./") != std::string::npos ||
-        (path.size() >= 2 && path.compare(path.size() - 2, 2, "/.") == 0)) {
-        return true;
-    }
-    static const char* const PROTECTED[] = { "/sdcard/gemini_config.json", "/sdcard/wifi_config.json" };
-    static const char* const ALIAS_PREFIX[] = { "/sdcard/gemini", "/sdcard/wifi_c" };
-    for (const char* p : PROTECTED) {
-        if (strcasecmp(path.c_str(), p) == 0) return true;
-    }
-    if (path.find('~') != std::string::npos) {
-        for (const char* p : ALIAS_PREFIX) {
-            if (strncasecmp(path.c_str(), p, strlen(p)) == 0) return true;
-        }
-    }
-    return false;
+    return PathPolicy::isProtected(path.c_str());
+}
+
+bool mounted() {
+    return SdCard::instance().isMounted();
 }
 
 esp_err_t sendProtected(httpd_req_t* req) {
@@ -71,19 +77,19 @@ esp_err_t sendProtected(httpd_req_t* req) {
 
 esp_err_t storageInfoHandler(httpd_req_t* req) {
     uint64_t total_bytes = 0, free_bytes = 0;
-    bool mounted = StorageService::getInstance().isMounted();
-    if (mounted) {
-        StorageService::getInstance().getStorageInfo(BASE_PATH, total_bytes, free_bytes);
+    bool is_mounted = mounted();
+    if (is_mounted) {
+        Fs::info(total_bytes, free_bytes);
     }
     JsonDocument doc;
-    doc["mounted"] = mounted;
+    doc["mounted"] = is_mounted;
     doc["total_bytes"] = total_bytes;
     doc["free_bytes"] = free_bytes;
     return Http::sendJson(req, 200, doc);
 }
 
 esp_err_t listHandler(httpd_req_t* req) {
-    if (!StorageService::getInstance().isMounted()) return Http::sendError(req, 500, "SD Card not mounted");
+    if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
     std::string raw_path;
     if (!Http::queryParam(req, "path", raw_path) || raw_path.empty()) {
@@ -92,8 +98,23 @@ esp_err_t listHandler(httpd_req_t* req) {
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
 
-    std::vector<StorageService::FileEntryInfo> entries =
-        StorageService::getInstance().listDirectoryDetailed(path.c_str());
+    struct Entry {
+        std::string name;
+        size_t size;
+        bool is_dir;
+        time_t mtime;
+    };
+    std::vector<Entry> entries;
+    if (!Fs::list(path.c_str(), nullptr, true, [](const DirEntry& e, void* ctx) {
+            static_cast<std::vector<Entry>*>(ctx)->push_back({e.name, e.size, e.is_dir, e.mtime});
+            return true;
+        }, &entries)) {
+        return Http::sendError(req, 404, "Directory not found");
+    }
+    // Folders first, then by name.
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+        return a.is_dir != b.is_dir ? a.is_dir : a.name < b.name;
+    });
 
     JsonDocument doc;
     doc["path"] = path;
@@ -109,7 +130,7 @@ esp_err_t listHandler(httpd_req_t* req) {
 }
 
 esp_err_t downloadHandler(httpd_req_t* req) {
-    if (!StorageService::getInstance().isMounted()) return Http::sendError(req, 500, "SD Card not mounted");
+    if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
     std::string raw_path;
     if (!Http::queryParam(req, "path", raw_path) || raw_path.empty()) return Http::sendError(req, 400, "Missing path");
@@ -117,8 +138,10 @@ esp_err_t downloadHandler(httpd_req_t* req) {
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
     if (isProtected(path)) return sendProtected(req);
 
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return Http::sendError(req, 404, "File not found");
+    File f = File::open(path.c_str(), Mode::Read);
+    if (!f) return Http::sendError(req, 404, "File not found or busy");
+    auto chunk = chunkBuffer();
+    if (!chunk) return Http::sendError(req, 500, "Out of memory");
 
     httpd_resp_set_type(req, mimeType(path));
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -129,26 +152,15 @@ esp_err_t downloadHandler(httpd_req_t* req) {
     snprintf(disp_hdr, sizeof(disp_hdr), "inline; filename=\"%s\"", filename);
     httpd_resp_set_hdr(req, "Content-Disposition", disp_hdr);
 
-    std::vector<char> chunk(CHUNK_SIZE);
-    auto& storage = StorageService::getInstance();
-    while (true) {
-        storage.lock();
-        size_t n = fread(chunk.data(), 1, CHUNK_SIZE, f);
-        storage.unlock();
-        if (n == 0) break;
-
-        esp_err_t err = httpd_resp_send_chunk(req, chunk.data(), n);
-        if (err != ESP_OK) {
-            fclose(f);
-            return err;
-        }
+    while (size_t n = f.read(chunk.get(), CHUNK_SIZE)) {
+        esp_err_t err = httpd_resp_send_chunk(req, chunk.get(), n);
+        if (err != ESP_OK) return err;
     }
-    fclose(f);
     return httpd_resp_send_chunk(req, nullptr, 0);
 }
 
 esp_err_t uploadHandler(httpd_req_t* req) {
-    if (!StorageService::getInstance().isMounted()) return Http::sendError(req, 500, "SD Card not mounted");
+    if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
     std::string raw_path;
     if (!Http::queryParam(req, "path", raw_path) || raw_path.empty()) return Http::sendError(req, 400, "Missing path");
@@ -156,38 +168,34 @@ esp_err_t uploadHandler(httpd_req_t* req) {
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
     if (isProtected(path)) return sendProtected(req);
 
-    auto& storage = StorageService::getInstance();
     size_t last_slash = path.rfind('/');
     if (last_slash != std::string::npos && last_slash > 0) {
-        storage.createDirectory(path.substr(0, last_slash).c_str());
+        Fs::mkdirs(path.substr(0, last_slash).c_str());
     }
 
-    FILE* f = fopen(path.c_str(), "wb");
-    if (!f) return Http::sendError(req, 500, "Cannot open target file for writing");
+    auto chunk = chunkBuffer();
+    if (!chunk) return Http::sendError(req, 500, "Out of memory");
+    File f = File::open(path.c_str(), Mode::Write);
+    if (!f) return Http::sendError(req, 500, "Cannot open target file for writing (missing folder or file busy)");
 
-    std::vector<char> chunk(CHUNK_SIZE);
     int remaining = req->content_len;
     while (remaining > 0) {
         int to_read = (remaining < static_cast<int>(CHUNK_SIZE)) ? remaining : static_cast<int>(CHUNK_SIZE);
-        int received = httpd_req_recv(req, chunk.data(), to_read);
+        int received = httpd_req_recv(req, chunk.get(), to_read);
         if (received <= 0) {
             if (received == HTTPD_SOCK_ERR_TIMEOUT) continue;
-            fclose(f);
-            remove(path.c_str());
+            f.close();
+            Fs::remove(path.c_str());
             return Http::sendError(req, 500, "Upload socket transfer failed");
         }
-
-        storage.lock();
-        size_t written = fwrite(chunk.data(), 1, received, f);
-        storage.unlock();
-        if (written != static_cast<size_t>(received)) {
-            fclose(f);
-            remove(path.c_str());
+        if (!f.writeAll(chunk.get(), received)) {
+            f.close();
+            Fs::remove(path.c_str());
             return Http::sendError(req, 507, "Disk full or write failed");
         }
         remaining -= received;
     }
-    fclose(f);
+    f.close();
 
     JsonDocument doc;
     doc["status"] = "ok";
@@ -198,7 +206,7 @@ esp_err_t uploadHandler(httpd_req_t* req) {
 }
 
 esp_err_t mkdirHandler(httpd_req_t* req) {
-    if (!StorageService::getInstance().isMounted()) return Http::sendError(req, 500, "SD Card not mounted");
+    if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
     std::string raw_path;
     if (!paramOrBodyField(req, "path", raw_path, 512) || raw_path.empty()) {
@@ -207,7 +215,7 @@ esp_err_t mkdirHandler(httpd_req_t* req) {
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
 
-    if (!StorageService::getInstance().createDirectory(path.c_str())) {
+    if (!Fs::mkdirs(path.c_str())) {
         return Http::sendError(req, 500, "Failed to create directory");
     }
 
@@ -219,7 +227,7 @@ esp_err_t mkdirHandler(httpd_req_t* req) {
 }
 
 esp_err_t renameHandler(httpd_req_t* req) {
-    if (!StorageService::getInstance().isMounted()) return Http::sendError(req, 500, "SD Card not mounted");
+    if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
     std::string old_path, new_path;
     if (!Http::queryParam(req, "old_path", old_path) || !Http::queryParam(req, "new_path", new_path)) {
@@ -237,14 +245,14 @@ esp_err_t renameHandler(httpd_req_t* req) {
         return Http::sendError(req, 400, "Invalid path traversal");
     }
     if (isProtected(sanitized_old) || isProtected(sanitized_new)) return sendProtected(req);
-    if (!StorageService::getInstance().renamePath(sanitized_old.c_str(), sanitized_new.c_str())) {
+    if (!Fs::rename(sanitized_old.c_str(), sanitized_new.c_str())) {
         return Http::sendError(req, 500, "Failed to rename path");
     }
     return Http::sendOk(req, "Renamed successfully");
 }
 
 esp_err_t deleteHandler(httpd_req_t* req) {
-    if (!StorageService::getInstance().isMounted()) return Http::sendError(req, 500, "SD Card not mounted");
+    if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
     std::string raw_path;
     if (!Http::queryParam(req, "path", raw_path) || raw_path.empty()) return Http::sendError(req, 400, "Missing path");
@@ -255,7 +263,7 @@ esp_err_t deleteHandler(httpd_req_t* req) {
     if (path == BASE_PATH || path == std::string(BASE_PATH) + "/") {
         return Http::sendError(req, 403, "Cannot delete root SD mount point");
     }
-    if (!StorageService::getInstance().deletePath(path.c_str())) {
+    if (!Fs::removePath(path.c_str())) {
         return Http::sendError(req, 500, "Failed to delete target");
     }
     return Http::sendOk(req, "Deleted successfully");
@@ -264,6 +272,7 @@ esp_err_t deleteHandler(httpd_req_t* req) {
 } // namespace
 
 void Routes::registerFiles(Http::Server& server) {
+    PathPolicy::setProtected(PROTECTED, sizeof(PROTECTED) / sizeof(PROTECTED[0]));
     server.on("/api/storage/info", HTTP_GET, storageInfoHandler);
     server.on("/api/files", HTTP_GET, listHandler);
     server.on("/api/files/download", HTTP_GET, downloadHandler);
