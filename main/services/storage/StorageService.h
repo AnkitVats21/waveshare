@@ -16,10 +16,10 @@ class StorageService : public IStorageService {
 public:
     static StorageService& getInstance();
 
-    // Check if the filesystem is mounted (bound to Board's SdCardManager)
+    // Check if the SD card is mounted
     bool isMounted() const;
 
-    // File operation APIs (thread-safe via internal mutex)
+    // Whole-file APIs (forwarded to sd_storage, which guards conflicting opens)
     bool writeFile(const char* path, const char* content);
     bool appendFile(const char* path, const char* content);
     std::string readFile(const char* path);

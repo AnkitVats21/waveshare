@@ -1,0 +1,16 @@
+menu "SD storage"
+
+    config SD_STORAGE_DMA_BUFFER_SIZE
+        int "Persistent SDMMC DMA bounce buffer (bytes)"
+        range 0 32768
+        default 0
+        help
+            Internal DMA-capable buffer handed to the SDMMC driver at mount
+            (sdmmc_host_t::dma_aligned_buffer). The driver copies every
+            transfer to or from a PSRAM buffer through it. With 0 the driver
+            instead mallocs and frees a buffer (up to 8 KB) on every such call.
+            Off by default: measured 2026-09-26, 8 KB here cost 8 KB of idle
+            internal RAM and did not raise the playback low-water mark
+            (10.6 KB vs 11.3 KB without it). Must be a multiple of 512.
+
+endmenu

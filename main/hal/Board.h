@@ -8,7 +8,7 @@
 #include "hal/io/I2CBus.h"
 #include "hal/io/IoExpander.h"
 #include "hal/led/LedStripManager.h"
-#include "hal/storage/SdCardManager.h"
+#include "sd_storage/SdCard.h"
 #if CONFIG_DISPLAY_ENABLE
 #include "hal/display/LcdManager.h"
 #endif
@@ -58,9 +58,6 @@ public:
     /** @brief Direct reference to the I/O expander (inject into KeyService). */
     IoExpander&      getIoExpanderInstance()  { return m_io; }
 
-    /** @brief Direct reference to SD card storage (inject into storage consumers). */
-    SdCardManager&   getStorage()             { return m_storage; }
-
 #if CONFIG_DISPLAY_ENABLE
     LcdManager&      getDisplay()             { return LcdManager::getInstance(); }
 #endif
@@ -80,7 +77,18 @@ public:
 
     // ── Storage ───────────────────────────────────────────────────────────────
     esp_err_t initSdCard(const char* mount_point, size_t max_files) {
-        return m_storage.mount(mount_point, max_files);
+        sd_storage::SdCardConfig cfg;
+        cfg.mount_point = mount_point;
+        cfg.max_files   = static_cast<int>(max_files);
+        cfg.bus_width   = SDMMC_BUS_WIDTH;
+        cfg.clk         = GPIO_SDMMC_CLK;
+        cfg.cmd         = GPIO_SDMMC_CMD;
+        cfg.d0          = GPIO_SDMMC_D0;
+        cfg.d1          = GPIO_SDMMC_D1;
+        cfg.d2          = GPIO_SDMMC_D2;
+        cfg.d3          = GPIO_SDMMC_D3;
+        cfg.cd          = GPIO_SDMMC_DET;
+        return sd_storage::SdCard::instance().mount(cfg);
     }
 
 private:
@@ -94,7 +102,6 @@ private:
     IoExpander      m_io;
     AudioHal        m_audio;
     LedStripManager m_leds;
-    SdCardManager   m_storage;
 
     // Pre-init settings (forwarded to AudioHal::Config on begin())
     uint32_t m_sample_rate    = LOCAL_SAMPLE_RATE;

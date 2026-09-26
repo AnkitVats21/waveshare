@@ -1,0 +1,20 @@
+idf_component_register(
+    SRCS
+        "src/SdCard.cpp"
+        "src/File.cpp"
+        "src/OpenFileTable.cpp"
+        "src/Fs.cpp"
+        "src/PathPolicy.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        fatfs
+        vfs
+        sdmmc
+        esp_driver_sdmmc
+        esp_driver_gpio
+        esp_hw_support
+        freertos
+        heap
+        log
+)

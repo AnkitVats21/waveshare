@@ -18,9 +18,6 @@ set(srcs
             # HAL — LED
             "hal/led/LedStripManager.cpp"
 
-            # HAL — Storage
-            "hal/storage/SdCardManager.cpp"
-
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
@@ -73,7 +70,6 @@ idf_component_register(
             "hal"
             "hal/io"
             "hal/led"
-            "hal/storage"
             "hal/audio"
             "hal/network"
             "hal/input"
@@ -91,6 +87,7 @@ idf_component_register(
             audio_core
             media_player
             gemini_live
+            sd_storage
             ${DISPLAY_REQUIRES}
             nvs_flash
             esp_wifi
