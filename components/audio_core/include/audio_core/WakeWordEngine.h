@@ -86,9 +86,11 @@ public:
     void setWakeWordSuppressed(bool suppressed);
     bool isWakeWordSuppressed() const { return m_wake_word_suppressed; }
 
-    /** Recording taps — mutually exclusive, driven by AudioRecorder. */
-    enum class RecordChannels { ALL, MIC1_ONLY };
-    void startRawRecording(RecordChannels channels);
+    /** Recording taps — mutually exclusive, driven by AudioRecorder.
+     *  Stereo: the two mic channels (the 'M's of the feed format) before AFE
+     *  processing, at the hardware rate. Resampled: the AFE's processed
+     *  16 kHz mono output. */
+    void startStereoRecording();
     void startResampledRecording();
     void stopRecordingTap();
     uint32_t recordingDropCount() const { return m_recording_drop_count; }
@@ -123,17 +125,16 @@ private:
     volatile bool m_wake_word_suppressed   = false;
 
     // Recording tap state — set by AudioRecorder, read by feedTask/detectTask.
-    volatile bool          m_recording_raw_active        = false;
+    volatile bool          m_recording_stereo_active     = false;
     volatile bool          m_recording_resampled_active  = false;
-    RecordChannels         m_recording_raw_channels      = RecordChannels::ALL;
     volatile uint32_t       m_recording_drop_count       = 0;
     // Scratch buffers for framing recorded chunks — allocated once per task
     // (in feedTask/detectTask, alongside their existing SPIRAM buffers) the
     // first time each tap is actually needed, sized to that task's own
     // known worst case. Not touched outside feedTask/detectTask.
-    uint8_t *m_raw_tap_scratch        = nullptr;
+    uint8_t *m_stereo_tap_scratch     = nullptr;
     uint8_t *m_resampled_tap_scratch  = nullptr;
-    uint32_t m_raw_tap_seq            = 0;
+    uint32_t m_stereo_tap_seq         = 0;
     uint32_t m_resampled_tap_seq      = 0;
 
     static constexpr int VAD_SILENCE_TIMEOUT_MS = 3000;

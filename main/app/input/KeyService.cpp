@@ -87,8 +87,8 @@ void KeyService::run() {
                             MusicPlaybackService::getInstance().postCommand(MediaCmdType::PREVIOUS);
                         } else if (keys[i] == KeyId::KEY_2) {
                             if (!m_key2StopConsumedThisPress) {
-                                ESP_LOGI(TAG, "Key 2 long press: starting RAW recording");
-                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::RAW);
+                                ESP_LOGI(TAG, "Key 2 long press: starting STEREO recording");
+                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::STEREO);
                             }
                         }
                     }
@@ -114,8 +114,8 @@ void KeyService::run() {
                             });
                         } else if (keys[i] == KeyId::KEY_2) {
                             if (!m_key2StopConsumedThisPress) {
-                                ESP_LOGI(TAG, "Key 2 short press: starting RESAMPLED recording");
-                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::RESAMPLED);
+                                ESP_LOGI(TAG, "Key 2 short press: starting PROCESSED recording");
+                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::PROCESSED);
                             }
                         }
                     }

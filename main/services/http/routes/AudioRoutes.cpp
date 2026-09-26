@@ -81,8 +81,20 @@ esp_err_t recordHandler(httpd_req_t* req) {
     auto& recorder = AudioRecorder::getInstance();
     bool is_start = std::string(req->uri).find("/start") != std::string::npos;
     if (is_start) {
-        if (!recorder.startRecording(AudioRecorder::RecordMode::RAW)) {
+        // ?mode=stereo (default: both mics; 24 kHz, or 16 kHz while music plays)
+        // or ?mode=processed (AFE output, 16 kHz mono)
+        std::string mode;
+        Http::queryParam(req, "mode", mode);
+        if (!mode.empty() && mode != "stereo" && mode != "processed") {
+            return Http::sendError(req, 400, "mode must be 'stereo' or 'processed'");
+        }
+        if (recorder.isRecording()) {
             return Http::sendError(req, 409, "Recording is already active");
+        }
+        auto rec_mode = mode == "processed" ? AudioRecorder::RecordMode::PROCESSED
+                                            : AudioRecorder::RecordMode::STEREO;
+        if (!recorder.startRecording(rec_mode)) {
+            return Http::sendError(req, 500, "Could not start recording");
         }
     } else {
         recorder.stopRecording(AudioRecorder::StopReason::MANUAL);
@@ -91,6 +103,8 @@ esp_err_t recordHandler(httpd_req_t* req) {
     JsonDocument doc;
     doc["status"] = "ok";
     doc["is_recording"] = recorder.isRecording();
+    doc["path"] = recorder.activePath();
+    if (recorder.isRecording()) doc["sample_rate"] = recorder.encodeRate();
     return Http::sendJson(req, 200, doc);
 }
 

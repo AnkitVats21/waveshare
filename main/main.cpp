@@ -47,7 +47,6 @@ extern "C" void app_main(void) {
             s.audio.sample_rate       = LOCAL_SAMPLE_RATE;
             s.audio.speaker_volume    = 80;
             s.audio.mic_gain_db       = 60.0f;
-            s.audio.record_all_mic_channels = true;
         }
     );
 

@@ -21,7 +21,8 @@ set(srcs
             # Application layer
             "app/AppController.cpp"
             "app/audio/AudioService.cpp"
-            "app/audio/recording/WavPcmEncoder.cpp"
+            "app/audio/recording/OggOpusEncoder.cpp"
+            "app/audio/recording/PolyphaseResampler.cpp"
             "app/audio/recording/AudioRecorder.cpp"
             "app/input/KeyService.cpp"
 

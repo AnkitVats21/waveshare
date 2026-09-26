@@ -506,7 +506,7 @@ async function navigateTo(path) {
     data.entries.forEach(entry => {
       const tr = document.createElement('tr');
       const itemPath = currentPath + '/' + entry.name;
-      const isAudio = entry.name.endsWith('.wav') || entry.name.endsWith('.mp3');
+      const isAudio = /\.(wav|mp3|opus|ogg)$/i.test(entry.name);
 
       let icon = entry.is_dir ? '📁' : (isAudio ? '🎵' : (entry.name.endsWith('.json') || entry.name.endsWith('.txt') ? '📝' : '📄'));
       let typeLabel = entry.is_dir ? 'Folder' : (isAudio ? 'Audio' : 'File');
@@ -710,7 +710,7 @@ async function toggleRecording() {
       isRecordingActive = true;
       btn.innerText = '⏹ Stop Recording';
       btn.className = 'btn btn-secondary';
-      txt.innerText = 'Recording Active (RAW 32kHz)';
+      txt.innerText = 'Recording Active (stereo Opus)';
       badge.style.display = 'inline-flex';
       showToast('Recording started');
     }

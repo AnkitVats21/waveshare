@@ -29,7 +29,6 @@ component Audio id=1 mask=0x00020000 {
     field assistant_speaking: bool = false [readonly, bit=4:ASST_SPEAKING]
     field session_active: bool = false [readonly, bit=5:SESSION_ACTIVE]
     field turn_complete_pending: bool = false [readonly, bit=6:TURN_COMPLETE]
-    field record_all_mic_channels: bool = true [writable, bit=10:RECORD_CHANNELS]
 }
 
 component Pipeline id=2 mask=0x00040000 {

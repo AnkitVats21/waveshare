@@ -82,11 +82,10 @@ void WakeWordEngine::setWakeWordSuppressed(bool suppressed) {
 // Recording tap control — driven by AudioRecorder, consumed by feedTask/detectTask.
 // ============================================================================
 
-void WakeWordEngine::startRawRecording(RecordChannels channels) {
-    m_recording_raw_channels = channels;
-    m_recording_drop_count   = 0;
-    m_raw_tap_seq            = 0;
-    m_recording_raw_active   = true;
+void WakeWordEngine::startStereoRecording() {
+    m_recording_drop_count    = 0;
+    m_stereo_tap_seq          = 0;
+    m_recording_stereo_active = true;
 }
 
 void WakeWordEngine::startResampledRecording() {
@@ -96,7 +95,7 @@ void WakeWordEngine::startResampledRecording() {
 }
 
 void WakeWordEngine::stopRecordingTap() {
-    m_recording_raw_active       = false;
+    m_recording_stereo_active    = false;
     m_recording_resampled_active = false;
 }
 
@@ -263,15 +262,26 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
     ESP_LOGI(TAG, "feedTask: %luHz→16kHz downsample active (hw_chunk=%d, afe_chunk=%d, ch=%d)",
              (unsigned long)HW_RATE, hw_chunksize, afe_chunksize, feed_channel);
 
-    // Scratch for the RAW recording tap — sized for the worst case (all
-    // feed_channel channels at hw_chunksize frames). Allocated unconditionally
-    // (cheap, SPIRAM) so a recording can start on demand without a task restart.
-    size_t raw_tap_scratch_bytes = sizeof(RecordChunkHeader) + (size_t)hw_buf_bytes;
-    m_raw_tap_scratch = static_cast<uint8_t *>(
-        heap_caps_malloc(raw_tap_scratch_bytes, MALLOC_CAP_SPIRAM));
-    if (!m_raw_tap_scratch) {
-        ESP_LOGW(TAG, "feedTask: failed to allocate raw recording tap scratch (%u bytes)",
-                 (unsigned)raw_tap_scratch_bytes);
+    // The two mic channels of the feed format (e.g. "RMNM" -> 1 and 3) for
+    // the stereo recording tap.
+    int mic_ch[2] = {-1, -1};
+    {
+        const char *fmt = m_feed_source->feedInputFormat();
+        for (int i = 0, n = 0; fmt[i] && i < feed_channel && n < 2; ++i) {
+            if (fmt[i] == 'M') mic_ch[n++] = i;
+        }
+        if (mic_ch[1] < 0) mic_ch[1] = mic_ch[0];
+    }
+
+    // Scratch for the stereo recording tap (2 channels at hw_chunksize
+    // frames). Allocated unconditionally (cheap, SPIRAM) so a recording can
+    // start on demand without a task restart.
+    size_t stereo_tap_scratch_bytes = sizeof(RecordChunkHeader) + (size_t)hw_chunksize * 2 * sizeof(int16_t);
+    m_stereo_tap_scratch = mic_ch[0] < 0 ? nullptr : static_cast<uint8_t *>(
+        heap_caps_malloc(stereo_tap_scratch_bytes, MALLOC_CAP_SPIRAM));
+    if (!m_stereo_tap_scratch) {
+        ESP_LOGW(TAG, "feedTask: no stereo recording tap (%u bytes, mics %d/%d)",
+                 (unsigned)stereo_tap_scratch_bytes, mic_ch[0], mic_ch[1]);
     }
 
     esp_task_wdt_add(nullptr);
@@ -317,30 +327,24 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         // Feed 16kHz data to AFE SR engine
         m_afe_handle->feed(afe_data, afe_buff);
 
-        // ── RAW recording tap (pre-resample, native hw_chunksize/rate) ──────
+        // ── Stereo recording tap (pre-AFE mics, native hw_chunksize/rate) ──
         // Bounded (not indefinite) wait: a few ms of backpressure tolerance
         // absorbs brief SD-write stalls without risking a real stall of this
         // already-starved task. seq is incremented every attempt (even on
         // drop) so the writer can detect exactly how many chunks were lost
         // and pad with silence instead of splicing non-adjacent audio.
-        if (m_recording_raw_active && m_raw_tap_scratch) {
-            int rec_channels = (m_recording_raw_channels == RecordChannels::ALL)
-                                    ? feed_channel : 1;
-            size_t frame_bytes = (size_t)hw_chunksize * rec_channels * sizeof(int16_t);
-            auto *hdr = reinterpret_cast<RecordChunkHeader *>(m_raw_tap_scratch);
+        if (m_recording_stereo_active && m_stereo_tap_scratch) {
+            size_t frame_bytes = (size_t)hw_chunksize * 2 * sizeof(int16_t);
+            auto *hdr = reinterpret_cast<RecordChunkHeader *>(m_stereo_tap_scratch);
             hdr->type = RecordChunkType::DATA;
             hdr->size = (uint32_t)frame_bytes;
-            hdr->seq  = m_raw_tap_seq++;
-            int16_t *payload = reinterpret_cast<int16_t *>(m_raw_tap_scratch + sizeof(RecordChunkHeader));
-            if (rec_channels == feed_channel) {
-                std::memcpy(payload, hw_buff, frame_bytes);
-            } else {
-                // De-interleave channel index 1 (Mic1) out of the 4-ch hw_buff.
-                for (int f = 0; f < hw_chunksize; ++f) {
-                    payload[f] = hw_buff[f * feed_channel + 1];
-                }
+            hdr->seq  = m_stereo_tap_seq++;
+            int16_t *payload = reinterpret_cast<int16_t *>(m_stereo_tap_scratch + sizeof(RecordChunkHeader));
+            for (int f = 0; f < hw_chunksize; ++f) {
+                payload[2 * f]     = hw_buff[f * feed_channel + mic_ch[0]];
+                payload[2 * f + 1] = hw_buff[f * feed_channel + mic_ch[1]];
             }
-            if (!BufferManager::getInstance().send(Buffers::RECORD_TX_BUF, m_raw_tap_scratch,
+            if (!BufferManager::getInstance().send(Buffers::RECORD_TX_BUF, m_stereo_tap_scratch,
                                                     sizeof(RecordChunkHeader) + frame_bytes,
                                                     pdMS_TO_TICKS(5))) {
                 m_recording_drop_count = m_recording_drop_count + 1;
@@ -352,9 +356,9 @@ void WakeWordEngine::feedTask(esp_afe_sr_data_t *afe_data) {
         esp_task_wdt_reset();
     }
 
-    if (m_raw_tap_scratch) {
-        heap_caps_free(m_raw_tap_scratch);
-        m_raw_tap_scratch = nullptr;
+    if (m_stereo_tap_scratch) {
+        heap_caps_free(m_stereo_tap_scratch);
+        m_stereo_tap_scratch = nullptr;
     }
     heap_caps_free(hw_buff);
     heap_caps_free(afe_buff);
