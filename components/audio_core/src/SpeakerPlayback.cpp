@@ -103,6 +103,12 @@ void SpeakerPlaybackTask::run() {
 
   uint32_t sustained_empty = 0;
 
+  // The amplifier is on from boot. It goes off after a stretch of silence
+  // and comes back the moment any track has audio.
+  AmpControl amp_control = m_amp_control;
+  bool amp_on = true;
+  TickType_t last_audio = xTaskGetTickCount();
+
   constexpr uint32_t NATIVE_RATE = MIXER_SAMPLE_RATE;
   constexpr uint32_t LOCAL_RATE = LOCAL_SAMPLE_RATE;
   static_assert(NATIVE_RATE == LOCAL_RATE,
@@ -177,6 +183,21 @@ void SpeakerPlaybackTask::run() {
     // ── Multi-Track Mixing & Saturation Clamping ──────────────────────────────
     if (has_voice || has_alert || has_media) {
       sustained_empty = 0;
+      last_audio = xTaskGetTickCount();
+
+      if (!amp_on && amp_control != nullptr) {
+        amp_control(true);
+        amp_on = true;
+        LOGI_HAL("Speaker amp on.");
+        // A few ms of zeros while the amp powers up, so the first syllable
+        // or chime note isn't clipped.
+        size_t n = samplesForDurationMs(LOCAL_RATE, AMP_WAKE_SILENCE_MS);
+        while (n > 0) {
+          size_t chunk = std::min(n, MAX_SILENCE_SAMPLES);
+          writeAudio(silence_buffer, chunk * 2 * sizeof(int32_t));
+          n -= chunk;
+        }
+      }
 
       // Determine actual frames to write based on active sources
       size_t frames_to_write = target_samples;
@@ -247,6 +268,13 @@ void SpeakerPlaybackTask::run() {
       }
       sustained_empty++;
 
+      if (amp_on && amp_control != nullptr &&
+          xTaskGetTickCount() - last_audio >= pdMS_TO_TICKS(AMP_IDLE_OFF_MS)) {
+        amp_control(false);
+        amp_on = false;
+        LOGI_HAL("Speaker amp off after %u s of silence.", (unsigned)(AMP_IDLE_OFF_MS / 1000));
+      }
+
       if (asst_speaking && sustained_empty >= 2 && !turn_pending) {
         m_buffering = true;
       }
@@ -267,6 +295,7 @@ void SpeakerPlaybackTask::run() {
     }
   }
 
+  if (!amp_on && amp_control != nullptr) amp_control(true);
   LOGI_HAL("SpeakerPlaybackTask exiting.");
   heap_caps_free(silence_buffer);
   heap_caps_free(expanded_buffer);

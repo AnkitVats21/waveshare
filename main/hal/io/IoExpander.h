@@ -54,7 +54,12 @@ public:
   // -- Board-level convenience wrappers --
 
   /** @brief Enable or disable the on-board power amplifier rail. */
-  esp_err_t setPowerRail(bool enable) { return setOutput(PA_EN, enable); }
+  esp_err_t setPowerRail(bool enable) {
+    esp_err_t ret = setOutput(PA_EN, enable);
+    if (ret == ESP_OK) m_pa_on = enable;
+    return ret;
+  }
+  bool isPowerRailOn() const { return m_pa_on; }
 
   /** @brief Control the LCD backlight. */
   esp_err_t setLcdBacklight(bool on) { return setOutput(LCD_BL, on); }
@@ -83,6 +88,7 @@ public:
 private:
   i2c_master_dev_handle_t m_dev_handle = nullptr;
   esp_io_expander_handle_t m_expander = nullptr;
+  bool m_pa_on = true;   // Board::begin() powers the PA up with the other rails
 
   uint16_t m_output_state = 0xFFFF;
   uint16_t m_config_state = 0xFFFF; // default all inputs

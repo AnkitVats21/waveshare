@@ -8,6 +8,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "gemini_live/GeminiProtocol.h"
+#include "hal/Board.h"
 #include "hal/audio/AudioHal.h"
 #include "services/BufferManager.h"
 
@@ -53,6 +54,9 @@ bool AudioService::begin() {
     }
 
     m_speaker_task = std::make_unique<SpeakerPlaybackTask>();
+    m_speaker_task->setAmpControl([](bool on) {
+        Board::getInstance().getIoExpanderInstance().setPowerRail(on);
+    });
     m_speaker_task->start(m_handles.play_dev);
     AudioOrchestrator::getInstance().setSpeakerPlayback(m_speaker_task.get());
 

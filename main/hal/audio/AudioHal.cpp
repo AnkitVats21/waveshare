@@ -133,7 +133,9 @@ esp_err_t AudioHal::setHardwareSampleRate(uint32_t sample_rate) {
   if (!m_initialized) return ESP_FAIL;
 
   // 1. Turn off Power Amplifier via IO Expander to completely block DAC bias ramp clicks/pops
-  Board::getInstance().getIoExpanderInstance().setPowerRail(false);
+  auto &io = Board::getInstance().getIoExpanderInstance();
+  const bool amp_was_on = io.isPowerRailOn();   // the mixer may have it off
+  io.setPowerRail(false);
   vTaskDelay(pdMS_TO_TICKS(10)); // Allow PA output capacitors to fully discharge
 
   // 2. Digitally mute playback
@@ -172,8 +174,8 @@ esp_err_t AudioHal::setHardwareSampleRate(uint32_t sample_rate) {
   // 6. Wait for DAC internal bias voltage to fully ramp up and stabilize (while PA is disabled)
   vTaskDelay(pdMS_TO_TICKS(50));
 
-  // 7. Enable the Power Amplifier now that bias is stable (completely click-free!)
-  Board::getInstance().getIoExpanderInstance().setPowerRail(true);
+  // 7. Restore the Power Amplifier now that bias is stable (completely click-free!)
+  io.setPowerRail(amp_was_on);
 
   m_sample_rate = sample_rate;
   ESP_LOGI(TAG, "I2S hardware clock and codec states successfully switched to %lu Hz", (unsigned long)sample_rate);

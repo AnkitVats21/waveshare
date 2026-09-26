@@ -51,6 +51,14 @@ public:
   void start(esp_codec_dev_handle_t device, IAudioSink* customSink = nullptr);
 
   /**
+   * @brief Switches the speaker amplifier. Called from the mixer task: on as
+   * soon as any track has audio, off after AMP_IDLE_OFF_MS of silence.
+   * Set before start(); without it the amplifier is left as it is.
+   */
+  using AmpControl = void (*)(bool on);
+  void setAmpControl(AmpControl fn) { m_amp_control = fn; }
+
+  /**
    * @brief Cleanly stop the task
    */
   void stop() override;
@@ -89,6 +97,10 @@ private:
   static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 15;
   static constexpr size_t   MIN_JITTER_CUSHION_BYTES  = 7200; // ~150ms of 24kHz 16-bit mono
 
+  // ── Speaker amplifier ────────────────────────────────────────────────────
+  static constexpr uint32_t AMP_IDLE_OFF_MS           = 30000; // silence before the amp goes off
+  static constexpr uint32_t AMP_WAKE_SILENCE_MS       = 20;    // zeros written while it powers up
+
   // ── I/O chunk sizing ─────────────────────────────────────────────────────
   static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 2048;
   static constexpr size_t   MAX_AUDIO_CHUNK_BYTES     = MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t);
@@ -99,6 +111,7 @@ private:
   bool                      m_buffering         = true;
   esp_codec_dev_handle_t    m_device            = nullptr;
   IAudioSink*               m_custom_sink       = nullptr;
+  AmpControl                m_amp_control       = nullptr;
 
   // ── Mixer Gains ───────────────────────────────────────────────────────────
   volatile float            m_media_gain        = 1.0f;
