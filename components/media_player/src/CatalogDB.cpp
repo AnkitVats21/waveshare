@@ -2,17 +2,31 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_rom_crc.h"
-#include <sys/stat.h>
-#include <sys/unistd.h>
-#include <dirent.h>
+#include "sd_storage/File.h"
+#include "sd_storage/Fs.h"
 #include <cstring>
 #include <algorithm>
-#include <cerrno>
 #include <ctime>
 #include <memory>
 #include "cJSON.h"
 
 static const char* TAG = "CatalogDB";
+
+using sd_storage::File;
+using sd_storage::Mode;
+namespace Fs = sd_storage::Fs;
+
+namespace {
+constexpr size_t kScanChunk = 4 * sizeof(TrackRecord);
+
+struct CapsFree { void operator()(void* p) const { heap_caps_free(p); } };
+
+// Whole-file scans read several records per call into PSRAM.
+std::unique_ptr<uint8_t, CapsFree> scanBuffer() {
+    return std::unique_ptr<uint8_t, CapsFree>(
+        static_cast<uint8_t*>(heap_caps_malloc(kScanChunk, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)));
+}
+} // namespace
 
 CatalogDB& CatalogDB::getInstance() {
     static CatalogDB instance;
@@ -92,8 +106,7 @@ bool CatalogDB::begin() {
         return true;
     }
 
-    mkdir(MUSIC_DIR, 0777);
-    mkdir(THUMBS_DIR, 0777);
+    Fs::mkdirs(THUMBS_DIR);  // and MUSIC_DIR above it
 
     // Allocate PSRAM index (1024 slots * 24B = 24.5 KB)
     _indexCap = 1024;
@@ -129,13 +142,19 @@ void CatalogDB::buildIndex() {
     _freeRecords.clear();
     memset(_index, 0, _indexCap * sizeof(IdxEntry));
 
-    FILE* f = fopen(DB_PATH, "rb");
+    File f = File::open(DB_PATH, Mode::Read);
     if (!f) return;
+    auto buf = scanBuffer();
+    if (!buf) {
+        ESP_LOGE(TAG, "buildIndex: out of PSRAM");
+        return;
+    }
 
-    auto rec = std::make_unique<TrackRecord>();
     uint16_t recordNum = 0;
-
-    while (fread(rec.get(), sizeof(TrackRecord), 1, f) == 1) {
+    size_t n;
+    while ((n = f.read(buf.get(), kScanChunk)) >= sizeof(TrackRecord)) {
+      for (size_t off = 0; off + sizeof(TrackRecord) <= n; off += sizeof(TrackRecord)) {
+        const auto* rec = reinterpret_cast<const TrackRecord*>(buf.get() + off);
         if (rec->magic == MAGIC_SENTINEL && (rec->flags & TRACK_FLAG_VALID) && rec->videoId[0] != '\0') {
             uint32_t h = hashVideoId(rec->videoId);
             int16_t slot = findInsertSlot(rec->videoId, h);
@@ -151,10 +170,10 @@ void CatalogDB::buildIndex() {
             _freeRecords.push_back(recordNum);
         }
         recordNum++;
+      }
     }
 
     _recordCount = recordNum;
-    fclose(f);
 }
 
 // A slot for a new track: a hole left by a removed one, else the end of the
@@ -170,41 +189,22 @@ uint16_t CatalogDB::allocRecord() {
 }
 
 bool CatalogDB::readRecord(uint16_t recordNum, TrackRecord& out) {
-    FILE* f = fopen(DB_PATH, "rb");
-    if (!f) return false;
-
-    if (fseek(f, static_cast<long>(recordNum) * sizeof(TrackRecord), SEEK_SET) != 0) {
-        fclose(f);
-        return false;
-    }
-
-    size_t r = fread(&out, sizeof(TrackRecord), 1, f);
-    fclose(f);
-    return (r == 1 && out.magic == MAGIC_SENTINEL && (out.flags & TRACK_FLAG_VALID));
+    File f = File::open(DB_PATH, Mode::Read);
+    if (!f || !f.seek(static_cast<long>(recordNum) * sizeof(TrackRecord))) return false;
+    return f.readExact(&out, sizeof(TrackRecord)) && out.magic == MAGIC_SENTINEL && (out.flags & TRACK_FLAG_VALID);
 }
 
 bool CatalogDB::writeRecord(uint16_t recordNum, const TrackRecord& rec) {
-    // "w+b" truncates, so it is only for creating the file. Falling back to it
-    // on any open failure (e.g. out of file handles) wiped the catalog.
-    FILE* f = fopen(DB_PATH, "r+b");
-    if (!f && errno == ENOENT) {
-        f = fopen(DB_PATH, "w+b");
-    }
+    // Never truncates: an earlier "w+b" fallback on any open failure wiped
+    // the catalog.
+    File f = File::open(DB_PATH, Mode::UpdateOrCreate);
     if (!f) {
-        ESP_LOGW(TAG, "writeRecord %u: open failed (errno %d)", recordNum, errno);
+        ESP_LOGW(TAG, "writeRecord %u: open failed", recordNum);
         return false;
     }
-
-    if (fseek(f, static_cast<long>(recordNum) * sizeof(TrackRecord), SEEK_SET) != 0) {
-        ESP_LOGW(TAG, "writeRecord %u: seek failed (errno %d)", recordNum, errno);
-        fclose(f);
-        return false;
-    }
-
-    size_t w = fwrite(&rec, sizeof(TrackRecord), 1, f);
-    bool ok = (w == 1) && fflush(f) == 0;
-    if (fclose(f) != 0) ok = false;
-    if (!ok) ESP_LOGW(TAG, "writeRecord %u: write failed (errno %d)", recordNum, errno);
+    bool ok = f.seek(static_cast<long>(recordNum) * sizeof(TrackRecord)) &&
+              f.writeAll(&rec, sizeof(TrackRecord)) && f.sync();
+    if (!ok) ESP_LOGW(TAG, "writeRecord %u: write failed", recordNum);
     return ok;
 }
 
@@ -220,23 +220,17 @@ bool CatalogDB::walAppend(WalOpType op, const TrackRecord& rec) {
     size_t len = sizeof(WalEntry) - sizeof(uint32_t);
     entry->crc32 = esp_rom_crc32_le(0, p, len);
 
-    FILE* f = fopen(WAL_PATH, "ab");
-    if (!f) return false;
-
-    size_t w = fwrite(entry.get(), sizeof(WalEntry), 1, f);
-    fflush(f);
-    fclose(f);
-    return (w == 1);
+    return Fs::append(WAL_PATH, entry.get(), sizeof(WalEntry));
 }
 
 bool CatalogDB::replayWal() {
-    FILE* f = fopen(WAL_PATH, "rb");
+    File f = File::open(WAL_PATH, Mode::Read);
     if (!f) return false;
 
     auto entry = std::make_unique<WalEntry>();
     bool replayedAny = false;
 
-    while (fread(entry.get(), sizeof(WalEntry), 1, f) == 1) {
+    while (f.readExact(entry.get(), sizeof(WalEntry))) {
         const uint8_t* p = reinterpret_cast<const uint8_t*>(entry.get()) + sizeof(uint32_t);
         size_t len = sizeof(WalEntry) - sizeof(uint32_t);
         uint32_t expectedCrc = esp_rom_crc32_le(0, p, len);
@@ -260,8 +254,8 @@ bool CatalogDB::replayWal() {
         }
     }
 
-    fclose(f);
-    unlink(WAL_PATH); // Truncate WAL after replay
+    f.close();
+    Fs::remove(WAL_PATH); // Truncate WAL after replay
     return replayedAny;
 }
 
@@ -296,8 +290,8 @@ bool CatalogDB::upsert(const TrackRecord& record) {
     // Check thumbnail presence
     char thumbPath[128];
     snprintf(thumbPath, sizeof(thumbPath), "%s/%s.jpg", THUMBS_DIR, record.videoId);
-    struct stat st;
-    if (stat(thumbPath, &st) == 0 && st.st_size > 0) {
+    sd_storage::PathInfo thumb;
+    if (Fs::stat(thumbPath, thumb) && thumb.size > 0) {
         toWrite->flags |= TRACK_FLAG_HAS_THUMBNAIL;
     }
 
@@ -312,7 +306,7 @@ bool CatalogDB::upsert(const TrackRecord& record) {
         strncpy(_index[slot].videoId, record.videoId, sizeof(_index[slot].videoId) - 1);
         _index[slot].videoId[sizeof(_index[slot].videoId) - 1] = '\0';
         if (!existed) _indexCount++;
-        unlink(WAL_PATH);
+        Fs::remove(WAL_PATH);
     }
 
     xSemaphoreGiveRecursive(_mutex);
@@ -346,18 +340,18 @@ bool CatalogDB::remove(const char* videoId) {
     _index[slot].videoId[0] = '\0';
     if (_indexCount > 0) _indexCount--;
 
-    unlink(WAL_PATH);
+    Fs::remove(WAL_PATH);
 
     // Remove local audio files and thumbnail
     const char* exts[] = { ".webm", ".opus", ".ogg" };
     for (const char* ext : exts) {
         char p[128];
         snprintf(p, sizeof(p), "%s/%s%s", MUSIC_DIR, videoId, ext);
-        unlink(p);
+        Fs::remove(p);
     }
     char thumbP[128];
     snprintf(thumbP, sizeof(thumbP), "%s/%s.jpg", THUMBS_DIR, videoId);
-    unlink(thumbP);
+    Fs::remove(thumbP);
 
     xSemaphoreGiveRecursive(_mutex);
     return true;
@@ -393,41 +387,23 @@ std::vector<TrackRecord> CatalogDB::getAll() {
     std::vector<TrackRecord> result;
     xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
 
-    FILE* f = fopen(DB_PATH, "rb");
-    if (!f) {
-        ESP_LOGW(TAG, "getAll: open %s failed (errno %d)", DB_PATH, errno);
-        xSemaphoreGiveRecursive(_mutex);
-        return result;
-    }
-
-    size_t chunk_size = 4096;
-    uint8_t* chunk = static_cast<uint8_t*>(heap_caps_malloc(chunk_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
-    if (!chunk) {
-        chunk_size = sizeof(TrackRecord);
-        chunk = static_cast<uint8_t*>(heap_caps_malloc(chunk_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
-    }
-    if (!chunk) {
-        ESP_LOGW(TAG, "getAll: no internal RAM for the read buffer");
-        fclose(f);
+    File f = File::open(DB_PATH, Mode::Read);
+    auto buf = scanBuffer();
+    if (!f || !buf) {
+        ESP_LOGW(TAG, "getAll: cannot read %s", DB_PATH);
         xSemaphoreGiveRecursive(_mutex);
         return result;
     }
     result.reserve(_indexCount);
     size_t n;
-    while ((n = fread(chunk, 1, chunk_size, f)) >= sizeof(TrackRecord)) {
+    while ((n = f.read(buf.get(), kScanChunk)) >= sizeof(TrackRecord)) {
         for (size_t off = 0; off + sizeof(TrackRecord) <= n; off += sizeof(TrackRecord)) {
-            const auto* rec = reinterpret_cast<const TrackRecord*>(chunk + off);
+            const auto* rec = reinterpret_cast<const TrackRecord*>(buf.get() + off);
             if (rec->magic == MAGIC_SENTINEL && (rec->flags & TRACK_FLAG_VALID)) {
                 result.push_back(*rec);
             }
         }
     }
-    heap_caps_free(chunk);
-
-    if (ferror(f)) {
-        ESP_LOGW(TAG, "getAll: read error after %u records (errno %d)", (unsigned)result.size(), errno);
-    }
-    fclose(f);
     xSemaphoreGiveRecursive(_mutex);
     return result;
 }
@@ -560,35 +536,27 @@ std::string CatalogDB::cleanTitleFromFilename(const std::string& filename) {
 size_t CatalogDB::scanAndSync() {
     xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
 
-    DIR* dir = opendir(MUSIC_DIR);
-    if (!dir) {
-        xSemaphoreGiveRecursive(_mutex);
-        return 0;
-    }
+    struct ScanCtx {
+        CatalogDB* db;
+        size_t indexed;
+    } ctx{this, 0};
 
-    struct dirent* ent;
-    size_t indexed = 0;
-
-    while ((ent = readdir(dir)) != nullptr) {
-        if (ent->d_name[0] == '.') continue;
-        std::string fname = ent->d_name;
+    Fs::list(MUSIC_DIR, nullptr, true, [](const sd_storage::DirEntry& ent, void* p) {
+        auto* c = static_cast<ScanCtx*>(p);
+        if (ent.is_dir || ent.name[0] == '.' || ent.size < 1024) return true;
+        std::string fname = ent.name;
 
         bool isWebm = (fname.size() > 5 && fname.substr(fname.size() - 5) == ".webm");
         bool isOpus = (fname.size() > 5 && fname.substr(fname.size() - 5) == ".opus");
         bool isOgg  = (fname.size() > 4 && fname.substr(fname.size() - 4) == ".ogg");
-
-        if (!isWebm && !isOpus && !isOgg) continue;
+        if (!isWebm && !isOpus && !isOgg) return true;
 
         size_t lastDot = fname.find_last_of('.');
         std::string baseId = fname.substr(0, lastDot);
-        if (baseId.empty()) continue;
-
-        std::string fullPath = std::string(MUSIC_DIR) + "/" + fname;
-        struct stat st;
-        if (stat(fullPath.c_str(), &st) != 0 || st.st_size < 1024) continue;
+        if (baseId.empty()) return true;
 
         auto rec = std::make_unique<TrackRecord>();
-        bool existing = get(baseId.c_str(), *rec);
+        bool existing = c->db->get(baseId.c_str(), *rec);
 
         if (!existing) {
             strncpy(rec->videoId, baseId.c_str(), sizeof(rec->videoId) - 1);
@@ -598,81 +566,72 @@ size_t CatalogDB::scanAndSync() {
             rec->sampleRate = 48000;
             rec->channels = 2;
             rec->codecId = isWebm ? 0 : 2;
-            rec->cachedAt = static_cast<uint32_t>(st.st_mtime);
+            rec->cachedAt = static_cast<uint32_t>(ent.mtime);
         }
 
-        rec->fileSizeBytes = static_cast<uint32_t>(st.st_size);
+        rec->fileSizeBytes = static_cast<uint32_t>(ent.size);
 
         // Check thumbnail
         char thumbPath[128];
         snprintf(thumbPath, sizeof(thumbPath), "%s/%s.jpg", THUMBS_DIR, baseId.c_str());
-        struct stat thumbSt;
-        if (stat(thumbPath, &thumbSt) == 0 && thumbSt.st_size > 0) {
+        sd_storage::PathInfo thumb;
+        if (Fs::stat(thumbPath, thumb) && thumb.size > 0) {
             rec->flags |= TRACK_FLAG_HAS_THUMBNAIL;
         }
 
-        upsert(*rec);
-        indexed++;
-    }
+        c->db->upsert(*rec);
+        c->indexed++;
+        return true;
+    }, &ctx);
 
-    closedir(dir);
     xSemaphoreGiveRecursive(_mutex);
-    return indexed;
+    return ctx.indexed;
 }
 
 bool CatalogDB::compact() {
     xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
 
     std::string tempPath = std::string(DB_PATH) + ".tmp";
-    FILE* src = fopen(DB_PATH, "rb");
-    if (!src) {
-        xSemaphoreGiveRecursive(_mutex);
-        return false;
-    }
-
-    FILE* dst = fopen(tempPath.c_str(), "wb");
-    if (!dst) {
-        fclose(src);
-        xSemaphoreGiveRecursive(_mutex);
-        return false;
-    }
-
-    auto rec = std::make_unique<TrackRecord>();
-    while (fread(rec.get(), sizeof(TrackRecord), 1, src) == 1) {
-        if (rec->magic == MAGIC_SENTINEL && (rec->flags & TRACK_FLAG_VALID)) {
-            fwrite(rec.get(), sizeof(TrackRecord), 1, dst);
+    bool ok = false;
+    {
+        File src = File::open(DB_PATH, Mode::Read);
+        File dst = src ? File::open(tempPath.c_str(), Mode::Write) : File();
+        auto rec = std::make_unique<TrackRecord>();
+        ok = src && dst;
+        while (ok && src.readExact(rec.get(), sizeof(TrackRecord))) {
+            if (rec->magic == MAGIC_SENTINEL && (rec->flags & TRACK_FLAG_VALID)) {
+                ok = dst.writeAll(rec.get(), sizeof(TrackRecord));
+            }
         }
+        ok = ok && dst.sync();
     }
-
-    fclose(src);
-    fclose(dst);
-
-    unlink(DB_PATH);
-    rename(tempPath.c_str(), DB_PATH);
+    // Swap in the compacted file only if it was fully written and the old one
+    // could be removed (not open elsewhere, e.g. a dashboard download).
+    ok = ok && Fs::remove(DB_PATH) && Fs::rename(tempPath.c_str(), DB_PATH);
+    if (!ok) {
+        ESP_LOGW(TAG, "compact failed; catalog left as it was");
+        Fs::remove(tempPath.c_str());
+    }
 
     buildIndex();
     xSemaphoreGiveRecursive(_mutex);
-    return true;
+    return ok;
 }
 
 bool CatalogDB::migrateFromLibraryJson() {
-    struct stat st;
-    if (stat(LEGACY_JSON, &st) != 0 || st.st_size == 0) {
+    sd_storage::PathInfo legacy, db;
+    if (!Fs::stat(LEGACY_JSON, legacy) || legacy.size == 0) {
         return false; // No library.json to migrate
     }
 
-    if (stat(DB_PATH, &st) == 0 && st.st_size >= sizeof(TrackRecord)) {
+    if (Fs::stat(DB_PATH, db) && db.size >= sizeof(TrackRecord)) {
         return false; // catalog.db already exists
     }
 
-    ESP_LOGI(TAG, "Migrating legacy library.json to catalog.db (%ld bytes)", (long)st.st_size);
+    ESP_LOGI(TAG, "Migrating legacy library.json to catalog.db (%ld bytes)", (long)legacy.size);
 
-    FILE* f = fopen(LEGACY_JSON, "rb");
-    if (!f) return false;
-
-    std::string content(st.st_size, '\0');
-    fread(&content[0], 1, st.st_size, f);
-    fclose(f);
+    std::string content = Fs::readText(LEGACY_JSON, 1024 * 1024);
+    if (content.empty()) return false;
 
     cJSON* root = cJSON_Parse(content.c_str());
     if (!root) {
@@ -727,7 +686,7 @@ bool CatalogDB::migrateFromLibraryJson() {
 
     // Rename library.json to library.json.bak
     std::string bak = std::string(LEGACY_JSON) + ".bak";
-    rename(LEGACY_JSON, bak.c_str());
+    Fs::rename(LEGACY_JSON, bak.c_str());
     ESP_LOGI(TAG, "Migrated %d tracks to catalog.db; renamed library.json to %s", count, bak.c_str());
     return true;
 }
