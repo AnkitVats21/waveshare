@@ -235,6 +235,11 @@ void GeminiProtocol::transmitSetupHandshake() {
     if (!cfg.voice.empty()) {
         setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] = cfg.voice;
     }
+    if (!cfg.transcripts) {
+        setup.remove("inputAudioTranscription");
+        setup.remove("outputAudioTranscription");
+    }
+    TranscriptLog::instance().setLogging(cfg.transcripts && cfg.transcript_log);
 
     std::string instruction = cfg.system_prompt;
     std::string memory = sd_storage::Fs::readText("/sdcard/gemini_memory.txt");
@@ -251,9 +256,10 @@ void GeminiProtocol::transmitSetupHandshake() {
 
     std::string payload;
     serializeJson(doc, payload);
-    LOGI_NET("Uplinking setup: model=%s voice=%s instruction=%zu bytes (payload %zu bytes)",
+    LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s instruction=%zu bytes (payload %zu bytes)",
              setup["model"] | "?",
              setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] | "?",
+             !cfg.transcripts ? "off" : cfg.transcript_log ? "on+log" : "on",
              instruction.size(), payload.size());
     m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
 }

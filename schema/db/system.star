@@ -23,6 +23,9 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field gemini_model:         string         tag=2
         field gemini_voice:         string         tag=3
         field gemini_system_prompt: string         tag=4
+        field transcripts:          bool = true    tag=5   // ask Gemini for transcriptions
+        field transcript_log:       bool = true    tag=6   // print each turn to the log
+        field manual_silence_s:     u8 = 10        tag=7   // silence timeout of a session started from the API
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",

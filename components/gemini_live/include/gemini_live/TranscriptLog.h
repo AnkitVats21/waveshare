@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <mutex>
 
 #include <ArduinoJson.h>
@@ -20,8 +21,10 @@ public:
     // Appends a transcription fragment to the open entry for this role, or
     // starts a new entry.
     void append(Role role, const char* text, size_t len);
-    // Ends the current turn and logs it: the next fragment starts a new entry.
+    // Ends the current turn and logs it (when logging is on): the next
+    // fragment starts a new entry.
     void closeTurn();
+    void setLogging(bool on) { m_logging = on; }
 
     // Entries changed after `since` (a value of "seq" from an earlier call):
     // {"seq": N, "entries": [{"id", "seq", "role", "t_ms", "done", "text"}]}
@@ -57,6 +60,7 @@ private:
     uint32_t m_next_id = 1;
     uint32_t m_turn_first_id = 1;  // first entry of the turn in progress
     uint32_t m_seq = 0;
+    std::atomic<bool> m_logging{true};
     ChangeCallback m_cb = nullptr;
     void* m_cb_ctx = nullptr;
     void notify() { if (m_cb) m_cb(m_cb_ctx); }

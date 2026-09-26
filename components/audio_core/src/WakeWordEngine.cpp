@@ -61,8 +61,9 @@ void WakeWordEngine::setAssistantActive(bool active) {
     }
 }
 
-bool WakeWordEngine::requestManualWake() {
+bool WakeWordEngine::requestManualWake(uint32_t silence_timeout_ms) {
     if (!isRunning() || m_streaming_active || m_wake_word_suppressed) return false;
+    m_manual_silence_ms = silence_timeout_ms;
     m_manual_wake_requested = true;
     return true;
 }
@@ -383,11 +384,16 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
     m_afe_data = afe_data;
     int fetch_chunksize  = m_afe_handle->get_fetch_chunksize(afe_data);
 
-    const int SILENCE_TIMEOUT_FRAMES =
-        (VAD_SILENCE_TIMEOUT_MS * 16000) / (fetch_chunksize * 1000);
+    // The silence timeout is set per session: the wake word's default, or the
+    // one a manual wake asked for.
+    auto silenceFrames = [fetch_chunksize](uint32_t ms) {
+        return (int)((ms * 16000) / (fetch_chunksize * 1000));
+    };
+    uint32_t silence_timeout_ms = VAD_SILENCE_TIMEOUT_MS;
+    int silence_timeout_frames = silenceFrames(silence_timeout_ms);
 
     ESP_LOGI(TAG, "detect: chunksize=%d  silence_timeout=%d frames",
-             fetch_chunksize, SILENCE_TIMEOUT_FRAMES);
+             fetch_chunksize, silence_timeout_frames);
 
     esp_task_wdt_add(nullptr);
 
@@ -466,6 +472,7 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
 
         // ── Wake word detection ───────────────────────────────────────────────
         bool detected = false;
+        bool manual = false;
         uint8_t channel = 0;
 
         if (res->raw_data_channels == 1 &&
@@ -482,11 +489,17 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             m_manual_wake_requested = false;
             if (!m_streaming_active) {
                 detected = true;
+                manual = true;
                 LOGI_SYSTEM("Manual wake (API) — streaming started");
             }
         }
 
         if (detected) {
+            silence_timeout_ms = VAD_SILENCE_TIMEOUT_MS;
+            if (manual && m_manual_silence_ms > 0) {
+                silence_timeout_ms = m_manual_silence_ms;
+            }
+            silence_timeout_frames = silenceFrames(silence_timeout_ms);
             m_streaming_active = true;
             // Disable WakeNet dynamically to save huge CPU cycles during active conversation
             m_afe_handle->disable_wakenet(afe_data);
@@ -504,8 +517,8 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
                 silence_frames = 0;
             } else {
                 silence_frames++;
-                if (silence_frames >= SILENCE_TIMEOUT_FRAMES) {
-                    LOGW_AUDIO("VAD: Silence threshold reached (%d ms). Suspending stream.", (int)VAD_SILENCE_TIMEOUT_MS);
+                if (silence_frames >= silence_timeout_frames) {
+                    LOGW_AUDIO("VAD: Silence threshold reached (%d ms). Suspending stream.", (int)silence_timeout_ms);
                     m_streaming_active = false; // Suspend immediately to stop pump task
                     silence_frames = 0;
                     m_listener->onVadTimeout();

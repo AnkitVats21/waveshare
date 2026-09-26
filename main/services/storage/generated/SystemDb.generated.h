@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0xA6B2A8F0u;
+constexpr uint32_t SCHEMA_HASH = 0x1DC66946u;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -52,13 +52,19 @@ struct Settings {
         F_GEMINI_MODEL = 1ull << 1,
         F_GEMINI_VOICE = 1ull << 2,
         F_GEMINI_SYSTEM_PROMPT = 1ull << 3,
-        F_ALL = 0xFull,
+        F_TRANSCRIPTS = 1ull << 4,
+        F_TRANSCRIPT_LOG = 1ull << 5,
+        F_MANUAL_SILENCE_S = 1ull << 6,
+        F_ALL = 0x7Full,
     };
 
     std::string timezone = "UTC";
     std::string gemini_model{};
     std::string gemini_voice{};
     std::string gemini_system_prompt{};
+    bool transcripts = true;
+    bool transcript_log = true;
+    uint8_t manual_silence_s = 10;
 
     void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
     // Fields missing from `value` keep their current values.

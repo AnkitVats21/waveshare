@@ -86,11 +86,13 @@ public:
     void setWakeWordSuppressed(bool suppressed);
     bool isWakeWordSuppressed() const { return m_wake_word_suppressed; }
 
-    // Acts as if the wake word was heard (the API trigger for tests). The
+    // Acts as if the wake word was heard (the dashboard and API trigger). The
     // detect task handles it on its next frame, exactly like a real detection.
+    // silence_timeout_ms: how long the session waits for speech before it
+    // ends; 0 = the wake word's VAD_SILENCE_TIMEOUT_MS.
     // False if a session is already streaming, wake is suppressed, or the
     // engine is not running.
-    bool requestManualWake();
+    bool requestManualWake(uint32_t silence_timeout_ms = 0);
 
     /** Recording taps — mutually exclusive, driven by AudioRecorder.
      *  Stereo: the two mic channels (the 'M's of the feed format) before AFE
@@ -130,6 +132,7 @@ private:
     volatile bool m_interruption_triggered = false;
     volatile bool m_wake_word_suppressed   = false;
     volatile bool m_manual_wake_requested  = false;
+    volatile uint32_t m_manual_silence_ms  = 0;
 
     // Recording tap state — set by AudioRecorder, read by feedTask/detectTask.
     volatile bool          m_recording_stereo_active     = false;

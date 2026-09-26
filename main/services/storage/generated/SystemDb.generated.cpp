@@ -55,6 +55,9 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_GEMINI_MODEL) w.str(2, gemini_model);
     if (fields & F_GEMINI_VOICE) w.str(3, gemini_voice);
     if (fields & F_GEMINI_SYSTEM_PROMPT) w.str(4, gemini_system_prompt);
+    if (fields & F_TRANSCRIPTS) w.boolean(5, transcripts);
+    if (fields & F_TRANSCRIPT_LOG) w.boolean(6, transcript_log);
+    if (fields & F_MANUAL_SILENCE_S) w.u8(7, manual_silence_s);
 }
 
 void Settings::decode(std::string_view value) {
@@ -67,6 +70,9 @@ void Settings::decode(std::string_view value) {
             case 2: nexus_db::FieldReader::read(v, len, gemini_model); break;
             case 3: nexus_db::FieldReader::read(v, len, gemini_voice); break;
             case 4: nexus_db::FieldReader::read(v, len, gemini_system_prompt); break;
+            case 5: nexus_db::FieldReader::read(v, len, transcripts); break;
+            case 6: nexus_db::FieldReader::read(v, len, transcript_log); break;
+            case 7: nexus_db::FieldReader::read(v, len, manual_silence_s); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

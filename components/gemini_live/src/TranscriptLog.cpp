@@ -64,10 +64,11 @@ void TranscriptLog::closeTurn() {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         // Log the whole turn once, rather than every fragment as it arrives.
+        const bool log = m_logging;
         for (size_t i = 0; i < m_count; ++i) {
             Entry& e = m_ring[(m_next + MAX_ENTRIES - m_count + i) % MAX_ENTRIES];
             if (e.id < m_turn_first_id) continue;
-            ESP_LOGI(TAG, "%s: %s", e.role == Role::User ? "user" : "model", e.text);
+            if (log) ESP_LOGI(TAG, "%s: %s", e.role == Role::User ? "user" : "model", e.text);
             if (!e.done) {
                 e.done = true;
                 e.seq = ++m_seq;

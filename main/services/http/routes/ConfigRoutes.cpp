@@ -9,6 +9,9 @@ namespace {
 
 using ndb::system::Settings;
 
+constexpr int MIN_SILENCE_S = 3;
+constexpr int MAX_SILENCE_S = 60;
+
 // {"timezone": "IST-5:30"}: a POSIX TZ string, applied immediately.
 esp_err_t getSettingsHandler(httpd_req_t* req) {
     JsonDocument doc;
@@ -42,10 +45,13 @@ void addDefaults(JsonDocument& doc) {
     defaults["voice"] = setup["setup"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"];
 }
 
-// Model, voice and system prompt live in system.ndb; the API key in NVS. The
-// key is write-only: GET reports only whether one is set; POST stores a new
-// key when the body carries one. Unset fields are omitted, and the firmware
-// defaults are listed under "defaults".
+// Model, voice, system prompt and the transcript and session options live in
+// system.ndb; the API key in NVS. The key is write-only: GET reports only
+// whether one is set; POST stores a new key when the body carries one. Unset
+// strings are omitted, and the firmware defaults are listed under "defaults".
+//   transcripts:      ask Gemini for transcriptions (shown on the dashboard)
+//   transcript_log:   also print each turn to the log
+//   manual_silence_s: silence timeout of a session started from the dashboard
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     Settings s = Services::loadSettings();
     JsonDocument doc;
@@ -53,6 +59,9 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     if (!s.gemini_model.empty()) doc["model"] = s.gemini_model;
     if (!s.gemini_voice.empty()) doc["voice"] = s.gemini_voice;
     if (!s.gemini_system_prompt.empty()) doc["system_prompt"] = s.gemini_system_prompt;
+    doc["transcripts"] = s.transcripts;
+    doc["transcript_log"] = s.transcript_log;
+    doc["manual_silence_s"] = s.manual_silence_s;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
@@ -68,11 +77,6 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
         return Http::sendError(req, 400, "Body must be a JSON object");
     }
 
-    std::string new_key = doc["api_key"] | "";
-    if (!new_key.empty() && !credentials::setGeminiApiKey(new_key)) {
-        return Http::sendError(req, 500, "Failed to store the API key");
-    }
-
     // A field present in the body is set (an empty string clears it); an
     // absent one is left unchanged.
     Settings s;
@@ -86,6 +90,28 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     take("model", s.gemini_model, Settings::F_GEMINI_MODEL);
     take("voice", s.gemini_voice, Settings::F_GEMINI_VOICE);
     take("system_prompt", s.gemini_system_prompt, Settings::F_GEMINI_SYSTEM_PROMPT);
+    if (doc["transcripts"].is<bool>()) {
+        s.transcripts = doc["transcripts"];
+        fields |= Settings::F_TRANSCRIPTS;
+    }
+    if (doc["transcript_log"].is<bool>()) {
+        s.transcript_log = doc["transcript_log"];
+        fields |= Settings::F_TRANSCRIPT_LOG;
+    }
+    if (doc["manual_silence_s"].is<int>()) {
+        int v = doc["manual_silence_s"];
+        if (v < MIN_SILENCE_S || v > MAX_SILENCE_S) {
+            return Http::sendError(req, 400, "manual_silence_s must be 3-60");
+        }
+        s.manual_silence_s = v;
+        fields |= Settings::F_MANUAL_SILENCE_S;
+    }
+    // Stored after validation, so a rejected request changes nothing.
+    std::string new_key = doc["api_key"] | "";
+    if (!new_key.empty() && !credentials::setGeminiApiKey(new_key)) {
+        return Http::sendError(req, 500, "Failed to store the API key");
+    }
+
     if (fields && !Services::saveSettings(s, fields)) {
         return Http::sendError(req, 500, "Failed to save settings");
     }

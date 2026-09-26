@@ -21,12 +21,15 @@ public:
         m_tool_ctx = ctx;
     }
 
-    // Model, voice and system prompt for the next session. Empty strings mean
-    // the firmware defaults. The source is set by the app (system.ndb).
+    // Model, voice, system prompt and transcripts for the next session. Empty
+    // strings mean the firmware defaults. The source is set by the app
+    // (system.ndb).
     struct SessionSettings {
         std::string model;
         std::string voice;
         std::string system_prompt;
+        bool transcripts = true;      // ask for input and output transcriptions
+        bool transcript_log = true;   // print each finished turn to the log
     };
     typedef SessionSettings (*SettingsSourceFn)();
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
