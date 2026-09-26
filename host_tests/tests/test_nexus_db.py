@@ -480,10 +480,24 @@ def test_schema_hash_matches_generator():
     ("database x path=\"/a\" {\n collection c id=1 {\n field a: float tag=1\n }\n}", "unknown type"),
     ("database x path=\"/a\" {\n collection c id=0 {\n }\n}", "1..255"),
     ("database x {\n}", "path="),
+    ("database x path=\"/a\" {\n collection c id=1 {\n field a: u8 tag=1 sysdb=audio.volume\n }\n}", "sysdb_include"),
+    ("database x path=\"/a\" sysdb_include=\"h.h\" {\n collection c id=1 {\n field a: u8 tag=1 sysdb=volume\n }\n}",
+     "component.field"),
+    ("database x path=\"/a\" {\n collection c id=1 {\n field a: u8 tag=1 persist=1\n }\n}", "unknown field option"),
 ])
 def test_generator_rejects_bad_schemas(bad, msg):
     with pytest.raises(ndb_gen.SchemaError, match=msg):
         ndb_gen.parse(bad, "bad.star")
+
+
+def test_system_schema_bindings():
+    s = ndb_gen.parse((ROOT / "schema/db/system.star").read_text(), "system.star")
+    state = next(c for c in s.collections if c.name == "state")
+    assert state.cached and state.bound
+    assert {f.name: f.sysdb for f in state.fields}["speaker_volume"] == "audio.speaker_volume"
+    src = ndb_gen.gen_source(s, "SystemDb.generated.h")
+    assert "nexus_db::assignField(s.audio.speaker_volume, speaker_volume);" in src
+    assert '#include "core_sysdb/SystemState.generated.h"' in src
 
 
 # --- JS reader ---------------------------------------------------------------------

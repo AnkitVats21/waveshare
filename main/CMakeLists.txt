@@ -46,7 +46,10 @@ set(srcs
             "services/http/routes/OtaRoutes.cpp"
             "services/http/routes/AlarmRoutes.cpp"
             "services/http/routes/AssistantRoutes.cpp"
+            "services/http/routes/DbRoutes.cpp"
             "services/storage/SysDbSyncReactor.cpp"
+            "services/storage/SystemDatabase.cpp"
+            "services/storage/generated/SystemDb.generated.cpp"
             "services/time/TimeSyncHelper.cpp"
             "services/alarm/AlarmService.cpp"
 )
@@ -119,3 +122,16 @@ idf_component_register(
 )
 
 
+
+# system.ndb code generated from schema/db/system.star by starc
+set(NDB_SYSTEM_SCHEMA "${CMAKE_CURRENT_SOURCE_DIR}/../schema/db/system.star")
+set(NDB_GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/services/storage/generated")
+add_custom_command(
+    OUTPUT "${NDB_GEN_DIR}/SystemDb.generated.h" "${NDB_GEN_DIR}/SystemDb.generated.cpp"
+    COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/starc.py" db "${NDB_SYSTEM_SCHEMA}" --out-dir "${NDB_GEN_DIR}"
+    DEPENDS "${NDB_SYSTEM_SCHEMA}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/starc.py" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/ndb_gen.py"
+    COMMENT "Compiling nexus_db schema system.star via starc"
+    VERBATIM
+)
+add_custom_target(ndb_system_schema DEPENDS "${NDB_GEN_DIR}/SystemDb.generated.h" "${NDB_GEN_DIR}/SystemDb.generated.cpp")
+add_dependencies(${COMPONENT_LIB} ndb_system_schema)

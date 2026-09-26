@@ -1,37 +1,16 @@
 #include "SysDbSyncReactor.h"
-#include "sd_storage/Fs.h"
-#include "sd_storage/SdCard.h"
+
+#include "SystemDatabase.h"
 #include "common/thread_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "common/ParserUtils.h"
-#include <cstdio>
-#include <string>
 
 namespace Services {
 
 namespace {
-struct StateParseCtx {
-    int volume = 80;
-    int r = 0, g = 0, b = 0;
-    bool autoplay = true;
-    bool cache_downloads = false;
-};
-
-static void onStatePair(const std::string& key, const std::string& val, void* ctx) {
-    auto* p = static_cast<StateParseCtx*>(ctx);
-    if (key == "speaker_volume") {
-        p->volume = std::stoi(val);
-    } else if (key == "led_color") {
-        sscanf(val.c_str(), "%d,%d,%d", &p->r, &p->g, &p->b);
-    } else if (key == "autoplay") {
-        p->autoplay = (val == "1" || val == "true");
-    } else if (key == "cache_downloads" || key == "caching") {
-        p->cache_downloads = (val == "1" || val == "true");
-    }
+constexpr const char* STATE_KEY = "state";
 }
-} // namespace
 
 SysDbSyncReactor& SysDbSyncReactor::getInstance() {
     static SysDbSyncReactor instance;
@@ -54,97 +33,62 @@ bool SysDbSyncReactor::begin() {
 }
 
 bool SysDbSyncReactor::loadPersistentState() {
-    if (!sd_storage::SdCard::instance().isMounted() ||
-        !sd_storage::Fs::isFile("/sdcard/state_sync.txt")) {
-        return false;
-    }
+    auto& db = systemDb();
+    ndb::system::SavedState saved;
+    if (!db.db().isOpen() || !db.state().get(STATE_KEY, saved)) return false;
 
-    std::string content = sd_storage::Fs::readText("/sdcard/state_sync.txt");
-    if (content.empty()) {
-        return false;
-    }
-
-    StateParseCtx parseCtx;
-    Utils::ParserUtils::parseKeyValueStream(content, onStatePair, &parseCtx);
-
-    EmbeddedSysDb::getInstance().mutate([parseCtx](SystemState& s) {
-        s.audio.speaker_volume = parseCtx.volume;
-        s.led.color = { (uint8_t)parseCtx.r, (uint8_t)parseCtx.g, (uint8_t)parseCtx.b };
-        s.led.mode = LedMode::SOLID;
-        s.media.autoplay_enabled = parseCtx.autoplay;
-        s.media.cache_downloads = parseCtx.cache_downloads;
-    });
-
-    ESP_LOGI(TAG, "Persistent state restored from SD card: vol=%d, color=%d,%d,%d, autoplay=%d, cache_downloads=%d",
-             parseCtx.volume, parseCtx.r, parseCtx.g, parseCtx.b, parseCtx.autoplay, parseCtx.cache_downloads);
+    EmbeddedSysDb::getInstance().mutate([&saved](SystemState& s) { saved.toSysdb(s); });
+    ESP_LOGI(TAG, "Saved state restored: vol=%d, mic_gain=%.1f dB, color=%d,%d,%d, led_mode=%d, autoplay=%d, "
+             "cache_downloads=%d",
+             (int)saved.speaker_volume, saved.mic_gain_db, saved.led_color.r, saved.led_color.g, saved.led_color.b,
+             saved.led_mode, saved.autoplay, saved.cache_downloads);
     return true;
 }
 
+void SysDbSyncReactor::resumeSaving() {
+    m_paused = false;
+    if (getHandle()) xTaskNotify(getHandle(), COMP::AUDIO, eSetBits);  // save whatever changed meanwhile
+}
+
 void SysDbSyncReactor::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // We only react in run() by resetting the timeout upon getting notifications.
+    // Handled in run(), which is woken by the same notification.
 }
 
 void SysDbSyncReactor::run() {
     ESP_LOGI(TAG, "SysDbSyncReactor task running.");
 
-    TickType_t delay_ticks = portMAX_DELAY;
-    bool pending_write = false;
-
+    // Save SAVE_DELAY_MS after the first change, rather than after the last:
+    // media fields change continuously during playback and would otherwise
+    // postpone the save forever. Saving an unchanged document writes nothing.
+    bool pending = false;
+    TickType_t deadline = 0;
     while (m_running) {
+        TickType_t wait = portMAX_DELAY;
+        if (pending) {
+            TickType_t now = xTaskGetTickCount();
+            wait = (int32_t)(deadline - now) > 0 ? deadline - now : 0;
+        }
         uint32_t changed_bits = 0;
-        // Block until notification, or timeout if we have a pending write
-        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, delay_ticks);
+        BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &changed_bits, wait);
         if (!m_running) break;
 
-        if (notified == pdTRUE && changed_bits > 0) {
-            m_last_changed = changed_bits;
-            
-            // Check if mutated bits contain the fields we care about persisting
-            bool has_audio_change = (m_last_changed & COMP::AUDIO) &&
-                                    (m_last_changed & BIT_AUDIO::SPEAKER_VOLUME);
-            bool has_media_change = (m_last_changed & COMP::MEDIA) && 
-                                    (m_last_changed & (BIT_MEDIA::AUTOPLAY | BIT_MEDIA::CACHE));
-            bool has_led_change = (m_last_changed & COMP::LED) && 
-                                  (m_last_changed & BIT_LED::COLOR);
-
-            if (has_audio_change || has_media_change || has_led_change) {
-                // We have a pending change. Reset or start the 3-second timer.
-                pending_write = true;
-                delay_ticks = pdMS_TO_TICKS(3000);
-                ESP_LOGD(TAG, "Persistent state changed. Resetting debounce timer to 3s.");
-            }
-        } else {
-            // Timeout expired! Write the state to SD card.
-            if (pending_write) {
-                writeStateToSD();
-                pending_write = false;
-                delay_ticks = portMAX_DELAY; // Sleep indefinitely until next change
-            }
+        if (notified == pdTRUE && changed_bits != 0 && !pending) {
+            pending = true;
+            deadline = xTaskGetTickCount() + pdMS_TO_TICKS(SAVE_DELAY_MS);
+        }
+        if (pending && (int32_t)(deadline - xTaskGetTickCount()) <= 0) {
+            save();
+            pending = false;
         }
     }
 }
 
-void SysDbSyncReactor::writeStateToSD() {
-    if (!sd_storage::SdCard::instance().isMounted()) {
-        return;
-    }
-
-    auto snap = EmbeddedSysDb::getInstance().snapshot();
-    char buf[192];
-    snprintf(buf, sizeof(buf),
-             "speaker_volume=%d\nled_color=%d,%d,%d\nautoplay=%d\ncache_downloads=%d\n",
-             snap.audio.speaker_volume,
-             snap.led.color.r,
-             snap.led.color.g,
-             snap.led.color.b,
-             snap.media.autoplay_enabled ? 1 : 0,
-             snap.media.cache_downloads ? 1 : 0);
-
-    if (sd_storage::Fs::writeAtomic("/sdcard/state_sync.txt", buf)) {
-        ESP_LOGI(TAG, "Persistent state successfully synchronized to /sdcard/state_sync.txt");
-    } else {
-        ESP_LOGE(TAG, "Failed to write persistent state to SD card");
-    }
+void SysDbSyncReactor::save() {
+    auto& db = systemDb();
+    if (m_paused || !db.db().isOpen()) return;
+    ndb::system::SavedState state;
+    state.fromSysdb(EmbeddedSysDb::getInstance().snapshot());
+    if (!db.state().put(STATE_KEY, state)) ESP_LOGE(TAG, "Failed to save state to system.ndb");
 }
 
 } // namespace Services

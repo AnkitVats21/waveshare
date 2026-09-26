@@ -15,6 +15,7 @@
 #include "hal/Board.h"
 #include "credentials/Credentials.h"
 #include "nexus_db/StressTest.h"
+#include "services/storage/SystemDatabase.h"
 #include "services/alarm/AlarmService.h"
 #include "services/storage/SysDbSyncReactor.h"
 #include "services/storage/AlertFileDecoder.h"
@@ -68,7 +69,7 @@ extern "C" void app_main(void) {
             LOGE_SYSTEM("Failed to mount SD card!");
         } else {
             LOGI_SYSTEM("SD Card mounted successfully at %s", CONFIG_WAVESHARE_SDCARD_MOUNT_POINT);
-            Services::SysDbSyncReactor::getInstance().loadPersistentState();
+            if (Services::openSystemDb()) Services::SysDbSyncReactor::getInstance().loadPersistentState();
         }
 #endif
         // Moves any secrets on the card into NVS before Wi-Fi reads them.

@@ -22,6 +22,7 @@ void registerConfig(Http::Server& server);  // /api/config/*
 void registerOta(Http::Server& server);     // /api/ota*, /api/ota/frontend*
 void registerAlarms(Http::Server& server);  // /api/alarms*
 void registerAssistant(Http::Server& server); // /api/assistant/*
+void registerDb(Http::Server& server);        // /api/db/<name>
 void registerFrontend(Http::Server& server); // GET /* catch-all: frontend bundle; register last
 
 } // namespace Routes

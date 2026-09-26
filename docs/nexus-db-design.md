@@ -1,6 +1,6 @@
 # nexus_db: on-device databases
 
-Status: design, not implemented. 2026-09-26.
+Status: steps 1–2 done; step 3 in progress. 2026-09-26.
 
 ## Goals
 
@@ -24,7 +24,7 @@ is fast enough.
 
 | Database | Path | Collections | Rebuildable? | Flush |
 |---|---|---|---|---|
-| system | `/sdcard/db/system.ndb` | `state`, `settings`, `alarms`, `playback` | no | every commit |
+| system | `/sdcard/db/system.ndb` | `state`, `settings`, `alarms` | no | every commit |
 | music | `/sdcard/db/music.ndb` | `tracks` | yes (scan `/sdcard/music`) | batched, ≤ 2 s |
 | recordings | `/sdcard/db/recordings.ndb` | `recordings` | yes (scan `/sdcard/recordings`) | batched, ≤ 2 s |
 
@@ -201,29 +201,33 @@ C++ struct uses `std::string` for them; documents live in PSRAM.
 
 ### The `state` collection
 
-`state` in `system.ndb` holds fields of `SystemState` marked `persist` in
-`schema/sysdb.star`:
+`state` in `system.ndb` is one document, key `"state"`, holding the
+`SystemState` fields that survive a reboot. They are listed in
+`schema/db/system.star` like any other collection, each with `sysdb=` naming
+the live field:
 
 ```
-field speaker_volume: int = 80 [writable, bit=2:SPEAKER_VOLUME, persist]
+collection state id=1 key=string cache doc=SavedState {
+    field speaker_volume: i32 = 80 tag=1 sysdb=audio.speaker_volume
+    field led_mode:       u8       tag=4 sysdb=led.mode
+}
 ```
 
-It has one document per SystemState component, keyed by component name
-(`"audio"`, `"led"`, `"media"`). Tags are the field's position among that
-component's `persist` fields, fixed by an explicit `persist=N` if a field is
-ever removed. starc generates:
-
-- the change mask that means "a saved field changed";
-- `encodeState(snapshot, changedMask)` producing merge records;
-- `applyState(document, SystemState&)` for boot.
+So the whole file is described by one schema, which is also where the
+dashboard's JS schema comes from. starc generates `SavedState::fromSysdb()`
+and `toSysdb()`. Defaults must match `sysdb.star`, because a field missing from
+the file is applied with its default.
 
 Saved fields in version 1: `audio.speaker_volume`, `audio.mic_gain_db`,
 `led.color`, `led.mode`, `media.autoplay_enabled`, `media.cache_downloads`.
 `pipeline.mode` is not saved: `AssistantService` derives it from the session
 state.
 
-`SysDbSyncReactor` keeps its role: on a saved-field change it waits 500 ms for
-more changes (a volume drag), then commits one merge per changed component.
+`SysDbSyncReactor` saves 500 ms after the first change of an AUDIO, LED or
+MEDIA field, not after the last one: media fields change continuously during
+playback. It puts the whole document; the engine writes nothing when it is
+unchanged. Saving pauses during a firmware OTA, whose green blink is followed
+by a reboot and must not become the saved LED mode.
 
 ## Seeking
 
@@ -250,7 +254,7 @@ This replaces `CatalogDB::setSeekTable`, `lookupSeekEntry` and
 | `/sdcard/state_sync.txt` | `system.ndb` `state` | renamed `.bak` |
 | `/sdcard/alarms.json` | `system.ndb` `alarms` | renamed `.bak` |
 | `/sdcard/settings.txt` | `system.timezone` → `system.ndb` `settings` | **deleted** (holds unused plaintext Wi-Fi and MQTT credentials) |
-| `/sdcard/playback.txt`, `playback_history.txt` | `system.ndb` `playback` | renamed `.bak` |
+| `/sdcard/playback.txt`, `playback_history.txt` | nothing (written by an agent rule, read by no code) | **deleted** |
 | `/sdcard/music/catalog.db` (+ `.wal`) | `music.ndb` `tracks` (seek tables dropped) | renamed `.bak` |
 | `/sdcard/recordings/*` | `recordings.ndb` (scan) | files unchanged |
 | `/sdcard/gemini_config.json` | `api_key` → NVS; `model`, `voice` → `settings` | **deleted** after the NVS value reads back |
@@ -285,7 +289,7 @@ Each step is its own commit and is tested on the device before the next.
    the format (torn tail, mid-file corruption, cleanup interrupted at each
    step); an on-device stress test that appends while pulling power is
    simulated by `esp_restart` at random points.
-3. **system.ndb**: state, then settings, alarms, playback; migrations.
+3. **system.ndb**: state, then alarms, then settings; migrations; `GET /api/db/<name>`.
 4. **Seeking from the file itself** (before music.ndb, so nothing seek-related
    is migrated): see "Seeking" below.
 5. **music.ndb**: `CatalogDB` becomes a wrapper; migration from `catalog.db`.

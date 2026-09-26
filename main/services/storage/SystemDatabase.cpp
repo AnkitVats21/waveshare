@@ -1,0 +1,100 @@
+#include "SystemDatabase.h"
+
+#include <cstdio>
+#include <string>
+
+#include "common/ParserUtils.h"
+#include "core_sysdb/led_types.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "sd_storage/Fs.h"
+#include "sd_storage/SdCard.h"
+
+namespace Services {
+namespace {
+
+const char* const TAG = "SystemDb";
+
+constexpr const char* STATE_KEY = "state";
+constexpr const char* OLD_STATE_FILE = "/sdcard/state_sync.txt";
+
+void renameToBak(const char* path) {
+    std::string bak = std::string(path) + ".bak";
+    sd_storage::Fs::remove(bak.c_str());
+    if (!sd_storage::Fs::rename(path, bak.c_str())) ESP_LOGW(TAG, "Could not rename %s to .bak", path);
+}
+
+void onStatePair(const std::string& key, const std::string& val, void* ctx) {
+    auto* s = static_cast<ndb::system::SavedState*>(ctx);
+    if (key == "speaker_volume") {
+        s->speaker_volume = atoi(val.c_str());
+    } else if (key == "led_color") {
+        int r = 0, g = 0, b = 0;
+        sscanf(val.c_str(), "%d,%d,%d", &r, &g, &b);
+        s->led_color = {uint8_t(r), uint8_t(g), uint8_t(b)};
+    } else if (key == "autoplay") {
+        s->autoplay = (val == "1" || val == "true");
+    } else if (key == "cache_downloads" || key == "caching") {
+        s->cache_downloads = (val == "1" || val == "true");
+    }
+}
+
+// state_sync.txt -> the "state" document. It never stored the LED mode or
+// mic gain; the old loader always switched the LED to solid.
+void migrateState(ndb::system::SystemDb& db) {
+    if (!sd_storage::Fs::isFile(OLD_STATE_FILE)) return;
+    if (!db.state().contains(STATE_KEY)) {
+        ndb::system::SavedState s;
+        s.led_mode = uint8_t(LedMode::SOLID);
+        Utils::ParserUtils::parseKeyValueStream(sd_storage::Fs::readText(OLD_STATE_FILE), onStatePair, &s);
+        if (!db.state().put(STATE_KEY, s)) {
+            ESP_LOGE(TAG, "Could not import %s; left in place", OLD_STATE_FILE);
+            return;
+        }
+        ESP_LOGI(TAG, "Imported %s", OLD_STATE_FILE);
+    }
+    renameToBak(OLD_STATE_FILE);
+}
+
+// Written by an agent rule, read by nothing.
+void deleteUnusedFiles() {
+    for (const char* path : {"/sdcard/playback.txt", "/sdcard/playback_history.txt"}) {
+        if (sd_storage::Fs::isFile(path) && sd_storage::Fs::remove(path)) ESP_LOGI(TAG, "Deleted unused %s", path);
+    }
+}
+
+}  // namespace
+
+ndb::system::SystemDb& systemDb() {
+    static ndb::system::SystemDb db;
+    return db;
+}
+
+bool openSystemDb() {
+    if (!sd_storage::SdCard::instance().isMounted()) return false;
+    // Opening reads the whole log and may run a cleanup, which is too deep
+    // for the 3.5 KB main task; do it on a short-lived task and wait.
+    struct Job {
+        TaskHandle_t caller;
+        bool ok;
+    } job{xTaskGetCurrentTaskHandle(), false};
+    auto work = [](void* arg) {
+        auto* j = static_cast<Job*>(arg);
+        auto& db = systemDb();
+        j->ok = db.open();
+        if (j->ok) {
+            migrateState(db);
+            deleteUnusedFiles();
+        } else {
+            ESP_LOGE(TAG, "Could not open system.ndb; settings will not be saved");
+        }
+        xTaskNotifyGive(j->caller);
+        vTaskDelete(nullptr);
+    };
+    if (xTaskCreate(work, "sysdb_open", 8 * 1024, &job, 5, nullptr) != pdPASS) return false;
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return job.ok;
+}
+
+}  // namespace Services

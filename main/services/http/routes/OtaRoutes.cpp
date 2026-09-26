@@ -5,6 +5,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/led_types.h"
 #include "media_player/MusicPlaybackService.h"
+#include "services/storage/SysDbSyncReactor.h"
 
 #include <esp_app_desc.h>
 #include <esp_log.h>
@@ -80,6 +81,7 @@ esp_err_t firmwareUploadHandler(httpd_req_t* req) {
     // flashing. On failure the previous LED state is restored; on success the
     // device reboots anyway.
     MusicPlaybackService::getInstance().pause();
+    Services::SysDbSyncReactor::getInstance().pauseSaving();
     auto& sysdb = EmbeddedSysDb::getInstance();
     const auto prev_led = sysdb.snapshot().led;
     sysdb.mutate([](SystemState& s) {
@@ -95,6 +97,7 @@ esp_err_t firmwareUploadHandler(httpd_req_t* req) {
     if (r != FlashUpload::Result::OK) {
         ESP_LOGE(TAG, "Firmware OTA failed (step %d): %s", (int)r, esp_err_to_name(err));
         sysdb.mutate([&](SystemState& s) { s.led = prev_led; });
+        Services::SysDbSyncReactor::getInstance().resumeSaving();
         return sendUploadError(req, r, err, "Firmware OTA");
     }
 

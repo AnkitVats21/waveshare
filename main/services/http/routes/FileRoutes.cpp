@@ -67,6 +67,15 @@ bool isProtected(const std::string& path) {
     return PathPolicy::isProtected(path.c_str());
 }
 
+// Databases change only through their owners; /api/db serves them read-only.
+bool isDbPath(const std::string& path) {
+    return strncasecmp(path.c_str(), "/sdcard/db/", 11) == 0 || strcasecmp(path.c_str(), "/sdcard/db") == 0;
+}
+
+esp_err_t sendDbReadOnly(httpd_req_t* req) {
+    return Http::sendError(req, 403, "Databases under /sdcard/db are read-only here; use GET /api/db/<name>");
+}
+
 bool mounted() {
     return SdCard::instance().isMounted();
 }
@@ -167,6 +176,7 @@ esp_err_t uploadHandler(httpd_req_t* req) {
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
     if (isProtected(path)) return sendProtected(req);
+    if (isDbPath(path)) return sendDbReadOnly(req);
 
     size_t last_slash = path.rfind('/');
     if (last_slash != std::string::npos && last_slash > 0) {
@@ -214,6 +224,7 @@ esp_err_t mkdirHandler(httpd_req_t* req) {
     }
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
+    if (isDbPath(path)) return sendDbReadOnly(req);
 
     if (!Fs::mkdirs(path.c_str())) {
         return Http::sendError(req, 500, "Failed to create directory");
@@ -245,6 +256,7 @@ esp_err_t renameHandler(httpd_req_t* req) {
         return Http::sendError(req, 400, "Invalid path traversal");
     }
     if (isProtected(sanitized_old) || isProtected(sanitized_new)) return sendProtected(req);
+    if (isDbPath(sanitized_old) || isDbPath(sanitized_new)) return sendDbReadOnly(req);
     if (!Fs::rename(sanitized_old.c_str(), sanitized_new.c_str())) {
         return Http::sendError(req, 500, "Failed to rename path");
     }
@@ -259,6 +271,7 @@ esp_err_t deleteHandler(httpd_req_t* req) {
     std::string path;
     if (!sanitize(raw_path, path)) return Http::sendError(req, 400, "Invalid path traversal");
     if (isProtected(path)) return sendProtected(req);
+    if (isDbPath(path)) return sendDbReadOnly(req);
 
     if (path == BASE_PATH || path == std::string(BASE_PATH) + "/") {
         return Http::sendError(req, 403, "Cannot delete root SD mount point");

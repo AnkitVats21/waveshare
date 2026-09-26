@@ -1,23 +1,29 @@
 #pragma once
 
+#include <atomic>
+
 #include "common/ReactorTask.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 
 namespace Services {
 
+// Saves the SystemState fields bound in schema/db/system.star (collection
+// "state") to system.ndb, at most SAVE_DELAY_MS after they change, and
+// restores them at boot.
 class SysDbSyncReactor : public ReactorTask {
 public:
     static SysDbSyncReactor& getInstance();
 
     bool begin();
 
-    /**
-     * @brief Reads persistent state from SD card (/sdcard/state_sync.txt) and restores into SysDb.
-     * @return true if state was found and loaded successfully.
-     */
+    // Applies the saved state to SysDb. Call after openSystemDb().
     bool loadPersistentState();
 
-    // ReactorTask interface
+    // While paused, changes are not saved: an OTA update blinks the LED and
+    // then reboots, and that blink must not become the saved LED mode.
+    void pauseSaving() { m_paused = true; }
+    void resumeSaving();
+
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
 protected:
@@ -29,9 +35,11 @@ private:
     SysDbSyncReactor(const SysDbSyncReactor&) = delete;
     SysDbSyncReactor& operator=(const SysDbSyncReactor&) = delete;
 
-    void writeStateToSD();
+    void save();
 
     static constexpr const char* TAG = "SysDbSync";
+    static constexpr uint32_t SAVE_DELAY_MS = 500;
+    std::atomic<bool> m_paused{false};
 };
 
 } // namespace Services
