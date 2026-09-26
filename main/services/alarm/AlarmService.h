@@ -65,6 +65,10 @@ public:
     // Offline: the reminder chime this many times, this far apart.
     static constexpr int OFFLINE_CHIMES = 3;
     static constexpr uint32_t OFFLINE_CHIME_GAP_MS = 2500;
+    // The session opens after the chime; if Gemini has not started speaking
+    // this long after, the reminder is delivered as offline.
+    static constexpr uint32_t CHIME_MS = 1000;
+    static constexpr uint32_t SPEAK_TIMEOUT_MS = 25000;
 
     std::vector<std::pair<int, ReminderDoc>> reminders();
     // Like saveAlarm; a changed reminder is no longer pending.
@@ -144,10 +148,12 @@ private:
     uint32_t checkSchedule();
     // Marks due reminders pending and queues them; returns the next reminder time (0 = none).
     int64_t checkReminders(int64_t now);
-    // Delivers the queued reminders once no alarm is ringing or snoozed.
+    // Starts delivering the queued reminders once no alarm is ringing or
+    // snoozed and no session is busy.
     void deliverReminders();
-    // Offline chimes still to play; returns ms until the next, 0 if none.
-    uint32_t tickReminderChimes();
+    // Advances a delivery; returns ms until it needs the task again, 0 if none.
+    uint32_t tickDelivery();
+    void startOfflineChimes();
     void persistSnooze(int id, uint32_t until);
 
     std::mutex m_cmd_mutex;
@@ -170,8 +176,13 @@ private:
     uint32_t m_snooze_saved_until = 0;
     // Reminders due and not yet delivered (this task only).
     std::vector<int> m_reminders_due;
+    enum class Delivery : uint8_t { None, Chime, Speaking, Offline };
+    Delivery m_delivery = Delivery::None;
+    std::vector<int> m_delivering;     // ids being delivered
+    std::string m_delivery_prompt;
+    uint64_t m_delivery_start_ms = 0;
+    uint64_t m_delivery_next_ms = 0;   // next step (Chime, Offline) or deadline (Speaking)
     int m_chimes_left = 0;
-    uint64_t m_next_chime_ms = 0;
     std::mutex m_status_mutex;
     Status m_status;
     // For the live ringing_ms / snooze_left_ms in status()

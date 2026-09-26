@@ -191,6 +191,7 @@ void GeminiProtocol::closeConnection() {
         return;
     }
     LOGI_NET("Closing WebSocket connection...");
+    resetTextTurn();
     if (m_client) {
         m_client.close(pdMS_TO_TICKS(1000));
         m_client.stop();
@@ -311,6 +312,36 @@ void GeminiProtocol::sendTextDirect(const char* text) {
     }
 }
 
+void GeminiProtocol::sendTextTurn(const std::string& text) {
+    std::lock_guard<std::mutex> lock(m_turn_mutex);
+    m_pending_turn = text;
+    m_text_turn_us = esp_timer_get_time();
+    if (m_setup_complete && isConnected()) flushTextTurn();
+}
+
+void GeminiProtocol::flushTextTurn() {
+    if (m_pending_turn.empty()) return;
+    JsonDocument doc;
+    doc["realtimeInput"]["text"] = m_pending_turn;
+    std::string out;
+    serializeJson(doc, out);
+    LOGI_NET("Sending a text turn (%u chars)", (unsigned)m_pending_turn.size());
+    m_client.sendText(out.c_str(), out.size(), pdMS_TO_TICKS(1000));
+    m_pending_turn.clear();
+}
+
+bool GeminiProtocol::awaitingTextReply() {
+    std::lock_guard<std::mutex> lock(m_turn_mutex);
+    return m_text_turn_us != 0 && esp_timer_get_time() - m_text_turn_us < TEXT_REPLY_WAIT_US;
+}
+
+void GeminiProtocol::resetTextTurn() {
+    std::lock_guard<std::mutex> lock(m_turn_mutex);
+    m_setup_complete = false;
+    m_pending_turn.clear();
+    m_text_turn_us = 0;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Event Handlers & Frame Parsing
 // ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +357,10 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             self->m_rx_dropped_frames = 0;
             self->m_rx_audio_bytes = 0;
             self->m_frame_overflowed = false;
+            {
+                std::lock_guard<std::mutex> lock(self->m_turn_mutex);
+                self->m_setup_complete = false;
+            }
             self->transmitSetupHandshake();
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::CONNECTED;
@@ -387,6 +422,7 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                      (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
             // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
             // AssistantService will safely invoke closeConnection() outside this task context.
+            self->resetTextTurn();
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::DISCONNECTED;
                 s.audio.assistant_speaking = false;
@@ -421,6 +457,10 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         if (data_end) {
             *data_end = '\0';
 
+            {
+                std::lock_guard<std::mutex> lock(m_turn_mutex);
+                m_text_turn_us = 0;   // the reply has started
+            }
             // If transitioning to speaking, flush stale voice data and update sysdb (notifies reactors once)
             if (!sysdb.assistantSpeaking()) {
                 BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
@@ -481,6 +521,11 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, payload);
         if (!err) {
+            if (!doc["setupComplete"].isNull()) {
+                std::lock_guard<std::mutex> lock(m_turn_mutex);
+                m_setup_complete = true;
+                flushTextTurn();
+            }
             bool turn_complete = doc["serverContent"]["turnComplete"].as<bool>() || doc["turnComplete"].as<bool>();
             recordTranscription(doc["serverContent"]);
             if (turn_complete) {

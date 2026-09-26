@@ -6,6 +6,7 @@
 #include "app/media_player/NexusPlayer.h"
 #include "media_player/CatalogDB.h"
 #include "app/wake_word/WakeWordEngine.h"
+#include "gemini_live/GeminiProtocol.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
 #include "services/storage/SystemDatabase.h"
@@ -566,33 +567,108 @@ int64_t AlarmService::checkReminders(int64_t now) {
     return next;
 }
 
-void AlarmService::deliverReminders() {
-    if (m_reminders_due.empty() || m_ring.state() != AlarmRing::State::Idle) return;
-    std::vector<int> ids;
-    ids.swap(m_reminders_due);
-    // One chime for all the reminders due together.
-    ESP_LOGI(TAG, "Delivering %u reminder(s)", (unsigned)ids.size());
-    AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
-    // Not spoken: chime again and leave them pending for the dashboard.
-    m_chimes_left = OFFLINE_CHIMES - 1;
-    m_next_chime_ms = nowMs() + OFFLINE_CHIME_GAP_MS;
+namespace {
+
+// The first turn of the reminder session; Gemini says it to the user.
+std::string reminderPrompt(const std::vector<std::string>& texts) {
+    std::string p = "[Automatic message from the device, not spoken by the user] ";
+    if (texts.size() == 1) {
+        p += "A reminder the user set is due now. Tell the user, briefly and naturally: " + texts[0];
+    } else {
+        p += "Reminders the user set are due now. Tell the user all of them, briefly and naturally:";
+        for (size_t i = 0; i < texts.size(); ++i) p += "\n" + std::to_string(i + 1) + ". " + texts[i];
+    }
+    return p;
 }
 
-uint32_t AlarmService::tickReminderChimes() {
-    if (m_chimes_left <= 0) return 0;
-    // An alarm takes over; its chimes are dropped.
+} // namespace
+
+void AlarmService::deliverReminders() {
+    if (m_reminders_due.empty() || m_delivery != Delivery::None || m_ring.state() != AlarmRing::State::Idle) return;
+    // A session in the middle of a turn (or closing) finishes first.
+    const AssistantState st = EmbeddedSysDb::getInstance().snapshot().assistant.session_state;
+    if (st != AssistantState::Idle && st != AssistantState::StreamingUserAudio &&
+        st != AssistantState::WaitingForFollowup) {
+        return;
+    }
+    m_delivering.clear();
+    m_delivering.swap(m_reminders_due);
+    std::vector<std::string> texts;
+    for (int id : m_delivering) {
+        ReminderDoc r;
+        if (loadReminder(id, r) && !r.text.empty()) texts.push_back(r.text);
+    }
+    if (texts.empty()) {
+        m_delivering.clear();
+        return;
+    }
+    m_delivery_prompt = reminderPrompt(texts);
+    // One chime for all the reminders due together; the session opens after it.
+    ESP_LOGI(TAG, "Delivering %u reminder(s)", (unsigned)texts.size());
+    AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
+    m_delivery = Delivery::Chime;
+    m_delivery_start_ms = nowMs();
+    m_delivery_next_ms = m_delivery_start_ms + CHIME_MS;
+}
+
+void AlarmService::startOfflineChimes() {
+    ESP_LOGW(TAG, "Reminder not spoken; chiming and leaving it pending");
+    m_delivery = Delivery::Offline;
+    m_chimes_left = OFFLINE_CHIMES - 1;
+    m_delivery_next_ms = nowMs() + OFFLINE_CHIME_GAP_MS;
+    m_delivering.clear();
+}
+
+uint32_t AlarmService::tickDelivery() {
+    if (m_delivery == Delivery::None) return m_reminders_due.empty() ? 0 : 500;   // retry when free
+    // An alarm takes over; the reminders stay pending.
     if (m_ring.state() != AlarmRing::State::Idle) {
-        m_chimes_left = 0;
+        ESP_LOGI(TAG, "Reminder delivery cut short by an alarm");
+        m_delivery = Delivery::None;
+        m_delivering.clear();
         return 0;
     }
     const uint64_t now = nowMs();
-    if (now >= m_next_chime_ms) {
-        AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
-        --m_chimes_left;
-        m_next_chime_ms = now + OFFLINE_CHIME_GAP_MS;
-        if (m_chimes_left <= 0) return 0;
+    const SystemState snap = EmbeddedSysDb::getInstance().snapshot();
+    switch (m_delivery) {
+    case Delivery::Chime: {
+        if (now < m_delivery_next_ms) break;
+        const AssistantState st = snap.assistant.session_state;
+        const bool open = st == AssistantState::StreamingUserAudio || st == AssistantState::WaitingForFollowup;
+        if (!snap.system.wifi_connected || !(open || WakeWordEngine::getInstance().requestManualWake())) {
+            startOfflineChimes();
+            break;
+        }
+        GeminiProtocol::getInstance().sendTextTurn(m_delivery_prompt);
+        m_delivery = Delivery::Speaking;
+        m_delivery_next_ms = now + SPEAK_TIMEOUT_MS;
+        break;
     }
-    return (uint32_t)std::max<uint64_t>(m_next_chime_ms - now, 1);
+    case Delivery::Speaking:
+        if (snap.assistant.session_state == AssistantState::AssistantSpeaking) {
+            ESP_LOGI(TAG, "Reminder spoken %llu ms after it was due", (unsigned long long)(now - m_delivery_start_ms));
+            for (int id : m_delivering) acknowledgeReminder(id);
+            m_delivering.clear();
+            m_delivery = Delivery::None;
+        } else if (now >= m_delivery_next_ms) {
+            startOfflineChimes();
+        }
+        break;
+    case Delivery::Offline:
+        if (now < m_delivery_next_ms) break;
+        AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
+        if (--m_chimes_left <= 0) {
+            m_delivery = Delivery::None;
+        } else {
+            m_delivery_next_ms = now + OFFLINE_CHIME_GAP_MS;
+        }
+        break;
+    default:
+        break;
+    }
+    if (m_delivery == Delivery::None) return m_reminders_due.empty() ? 0 : 500;
+    if (m_delivery == Delivery::Speaking) return 250;
+    return (uint32_t)std::max<uint64_t>(m_delivery_next_ms > now ? m_delivery_next_ms - now : 0, 1);
 }
 
 uint32_t AlarmService::checkSchedule() {
@@ -690,7 +766,7 @@ uint32_t AlarmService::checkSchedule() {
         const int64_t ms = (next - now) * 1000 - tv.tv_usec / 1000 + 20;
         wait_ms = (uint32_t)std::min<int64_t>(std::max<int64_t>(ms, 20), MAX_IDLE_MS);
     }
-    if (const uint32_t chime_ms = tickReminderChimes()) wait_ms = std::min(wait_ms, chime_ms);
+    if (const uint32_t delivery_ms = tickDelivery()) wait_ms = std::min(wait_ms, delivery_ms);
     return wait_ms;
 }
 

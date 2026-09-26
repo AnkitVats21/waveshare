@@ -40,6 +40,15 @@ public:
     void forceReconnect() { connect(); }
     void sendTextDirect(const char* text);
 
+    // Sends `text` as a user turn (realtimeInput text) once the session is set
+    // up: now if it already is, else when setupComplete arrives. Dropped if the
+    // connection closes first. Used by reminders to have Gemini speak.
+    void sendTextTurn(const std::string& text);
+    // A text turn was sent (or is queued) and no reply audio has come yet;
+    // the VAD silence timeout must not end the session meanwhile.
+    bool awaitingTextReply();
+    static constexpr int64_t TEXT_REPLY_WAIT_US = 15LL * 1000 * 1000;
+
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
@@ -60,8 +69,15 @@ private:
     static void websocketEventHandler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
     bool startClientConnection();
 
+    void flushTextTurn();   // m_turn_mutex held
+    void resetTextTurn();
+
     WssClient m_client;
     std::mutex m_client_mutex;
+    std::mutex m_turn_mutex;
+    std::string m_pending_turn;        // waiting for setupComplete
+    bool m_setup_complete = false;
+    int64_t m_text_turn_us = 0;        // when the text turn was queued; 0 = none
     SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
 

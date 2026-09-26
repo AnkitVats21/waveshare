@@ -7,6 +7,7 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
+#include "gemini_live/GeminiProtocol.h"
 #include "hal/audio/AudioHal.h"
 #include "services/BufferManager.h"
 
@@ -171,6 +172,12 @@ void AudioService::onVadTimeout() {
     if (snap.assistant.media_pending_idle || snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
         LOGI_AUDIO("VAD timeout suppressed (media_pending=%d, speaking=%d, turn_pending=%d).",
                    (int)snap.assistant.media_pending_idle, (int)snap.audio.assistant_speaking, (int)snap.audio.turn_complete_pending);
+        return;
+    }
+
+    // A reminder (text turn) is waiting for Gemini to answer; nobody speaks first.
+    if (GeminiProtocol::getInstance().awaitingTextReply()) {
+        LOGI_AUDIO("VAD timeout suppressed (waiting for the reply to a text turn).");
         return;
     }
 
