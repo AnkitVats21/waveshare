@@ -83,6 +83,17 @@ void AlertPlayer::playAlert(AlertType type) {
     }
 }
 
+void AlertPlayer::preview(AlertType type) {
+    if (type >= ALERT_COUNT) return;
+    m_requested_us = esp_timer_get_time();
+    m_mixer.play(type, true);
+}
+
+uint32_t AlertPlayer::clipMs(AlertType type) const {
+    AlertClipPtr c = clip(type);
+    return c ? (uint32_t)((uint64_t)c->size() * 1000 / MIXER_SAMPLE_RATE) : 0;
+}
+
 void AlertPlayer::stop() {
     m_mixer.stop();
 }

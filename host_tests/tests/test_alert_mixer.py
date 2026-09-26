@@ -43,6 +43,8 @@ def test_play_needs_a_clip_and_enabled_slot(mixer):
     mixer.set_clip(0, const(1000, 100))
     mixer.set_enabled(0, False)
     assert not mixer.play(0)
+    assert mixer.play(0, force=True)  # preview of a disabled alert
+    mixer.stop()
     mixer.set_enabled(0, True)
     assert mixer.play(0)
     assert not mixer.play(wh.AlertMixer.SLOTS)

@@ -101,6 +101,7 @@ bool HttpService::startServer() {
     Routes::registerConfig(m_server);
     Routes::registerOta(m_server);
     Routes::registerAlarms(m_server);
+    Routes::registerAlerts(m_server);
     Routes::registerAssistant(m_server);
     Routes::registerDb(m_server);
     // CORS preflight for every /api/* endpoint.

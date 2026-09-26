@@ -65,11 +65,11 @@ bool AlertMixer::enabled(size_t slot) const {
     return m_slots[slot].enabled;
 }
 
-bool AlertMixer::play(size_t slot) {
+bool AlertMixer::play(size_t slot, bool force) {
     if (slot >= SLOTS) return false;
     std::lock_guard<std::mutex> lock(m_mutex);
     const Slot& s = m_slots[slot];
-    if (!s.enabled || !s.clip || s.clip->size() == 0) return false;
+    if ((!s.enabled && !force) || !s.clip || s.clip->size() == 0) return false;
     m_pending = static_cast<int>(slot);
     m_stop_requested = false;
     return true;

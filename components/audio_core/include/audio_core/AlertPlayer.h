@@ -36,6 +36,8 @@ public:
      *        Thread-safe and non-blocking.
      */
     void playAlert(AlertType type);
+    // Plays the alert even if it is disabled (dashboard preview).
+    void preview(AlertType type);
     void stop();
 
     // Speaker task: writes up to n samples of the alert track, returns the count.
@@ -47,6 +49,8 @@ public:
     AlertClipPtr builtin(AlertType type) const;
     void setGainDb(AlertType type, float db);
     void setEnabled(AlertType type, bool enabled);
+    // Length of the alert's clip in ms, 0 if none.
+    uint32_t clipMs(AlertType type) const;
 
 private:
     AlertPlayer() = default;

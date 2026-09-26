@@ -254,6 +254,11 @@ deletes its document, so there is nothing to migrate. `AlertLibrary` reads the
 document when it decodes the alert at boot or on a change; a file that is
 missing or fails to decode falls back to the built-in tone.
 
+`/api/alerts` (see `AlertRoutes.cpp`) lists the alerts, the files in the
+folder and the limits; `POST /api/alerts/<name>` changes `enabled`, `gain_db`
+or `source`; `/upload` stores a file only after it decodes; `/play` previews;
+`/reset` deletes the document.
+
 ## Seeking
 
 No seek table is stored. The player finds byte positions from the file:

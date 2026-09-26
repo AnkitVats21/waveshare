@@ -63,11 +63,22 @@ public:
     bool start();
     // Queues a reload of one alert (ALERT_COUNT reloads all).
     void reload(AlertType type);
+    // Reloads one alert from its saved config on the loader task and waits
+    // for it; false on timeout (the reload still completes later).
+    bool reloadAndWait(AlertType type, uint32_t timeout_ms);
+    // Decodes a file on the loader task (the caller's stack is too small for
+    // the Opus decoder) and waits; false on timeout.
+    bool decodeAndWait(const std::string& path, AlertDecode& out, uint32_t timeout_ms);
+    // Applies enable and gain immediately, without decoding again.
+    void applySettings(AlertType type, bool enabled, float gain_db);
     Status status(AlertType type) const;
 
 private:
+    struct Job;
+
     AlertLibrary() = default;
     static void taskEntry(void* arg);
+    bool submit(const std::shared_ptr<Job>& job, uint32_t timeout_ms);
     void load(AlertType type);
 
     QueueHandle_t m_queue = nullptr;

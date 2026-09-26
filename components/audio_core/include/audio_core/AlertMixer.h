@@ -58,8 +58,8 @@ public:
     void setEnabled(size_t slot, bool enabled);
     bool enabled(size_t slot) const;
 
-    // Returns false if the slot is disabled or holds no clip.
-    bool play(size_t slot);
+    // Returns false if the slot holds no clip, or is disabled and not `force`.
+    bool play(size_t slot, bool force = false);
     // Fades out whatever is playing and drops a pending request.
     void stop();
 

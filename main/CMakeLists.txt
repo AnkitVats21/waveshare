@@ -45,6 +45,7 @@ set(srcs
             "services/http/routes/ConfigRoutes.cpp"
             "services/http/routes/OtaRoutes.cpp"
             "services/http/routes/AlarmRoutes.cpp"
+            "services/http/routes/AlertRoutes.cpp"
             "services/http/routes/AssistantRoutes.cpp"
             "services/http/routes/DbRoutes.cpp"
             "services/storage/SysDbSyncReactor.cpp"

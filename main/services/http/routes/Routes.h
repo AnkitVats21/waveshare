@@ -21,6 +21,7 @@ void registerSystem(Http::Server& server);  // /api/system/*, /api/logs, /api/le
 void registerConfig(Http::Server& server);  // /api/config/*
 void registerOta(Http::Server& server);     // /api/ota*, /api/ota/frontend*
 void registerAlarms(Http::Server& server);  // /api/alarms*
+void registerAlerts(Http::Server& server);  // /api/alerts*
 void registerAssistant(Http::Server& server); // /api/assistant/*
 void registerDb(Http::Server& server);        // /api/db/<name>
 void registerFrontend(Http::Server& server); // GET /* catch-all: frontend bundle; register last

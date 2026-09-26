@@ -35,7 +35,7 @@ void init_alerts(nb::module_& m) {
         .def("gain", &AlertMixer::gain)
         .def("set_enabled", &AlertMixer::setEnabled)
         .def("enabled", &AlertMixer::enabled)
-        .def("play", &AlertMixer::play)
+        .def("play", &AlertMixer::play, nb::arg("slot"), nb::arg("force") = false)
         .def("stop", &AlertMixer::stop)
         .def("active", &AlertMixer::active)
         .def("current", &AlertMixer::current)

@@ -9,6 +9,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/semphr.h"
 #include <algorithm>
 #include <cstring>
 
@@ -59,7 +60,10 @@ AlertDecode decodeAlertFile(const char* path) {
     size_t mono_cap = 0;
     size_t mono_len = 0;
     size_t off = 0;
-    while (off < len && !out.truncated) {
+    // Keeps calling after the input is used up: a decoder may hold whole
+    // frames in its own buffer (WebM takes up to 16 KB per call) and hands
+    // back one per call. Stops when a call makes no progress.
+    while (!out.truncated) {
         size_t consumed = 0, got = 0;
         DecodeResult res = decoder->decode(file.get() + off, len - off, chunk.get(), CHUNK_SAMPLES, consumed, got);
         off += consumed;
@@ -90,7 +94,7 @@ AlertDecode decodeAlertFile(const char* path) {
             if (res != DecodeResult::STREAM_END && mono_len == 0) return fail("decode failed");
             break;
         }
-        if (consumed == 0 && got == 0) break;   // the rest is an incomplete page
+        if (consumed == 0 && got == 0) break;   // done, or only an incomplete frame is left
     }
     if (mono_len == 0) return fail("no audio decoded");
 
@@ -118,9 +122,21 @@ AlertLibrary& AlertLibrary::getInstance() {
     return instance;
 }
 
+// A unit of work for the loader task. The queue carries a heap-allocated
+// shared_ptr, so a waiter that times out never leaves the task a dangling job.
+struct AlertLibrary::Job {
+    enum Kind : uint8_t { LOAD, LOAD_ALL, DECODE } kind = LOAD;
+    AlertType type = ALERT_COUNT;
+    std::string path;
+    AlertDecode result;
+    SemaphoreHandle_t done = nullptr;
+
+    ~Job() { if (done) vSemaphoreDelete(done); }
+};
+
 bool AlertLibrary::start() {
     if (m_queue) return true;
-    m_queue = xQueueCreate(ALERT_COUNT + 1, sizeof(uint8_t));
+    m_queue = xQueueCreate(8, sizeof(std::shared_ptr<Job>*));
     if (!m_queue) return false;
     // The Opus decoder needs a large stack; PSRAM keeps it out of internal RAM.
     TaskHandle_t task = nullptr;
@@ -135,10 +151,53 @@ bool AlertLibrary::start() {
     return true;
 }
 
+// Queues the job; with a timeout, waits for the task to finish it.
+bool AlertLibrary::submit(const std::shared_ptr<Job>& job, uint32_t timeout_ms) {
+    if (!m_queue) return false;
+    if (timeout_ms > 0) {
+        job->done = xSemaphoreCreateBinary();
+        if (!job->done) return false;
+    }
+    auto* item = new std::shared_ptr<Job>(job);
+    if (xQueueSend(m_queue, &item, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        delete item;
+        return false;
+    }
+    return timeout_ms == 0 || xSemaphoreTake(job->done, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
 void AlertLibrary::reload(AlertType type) {
-    if (!m_queue) return;
-    uint8_t v = type;
-    xQueueSend(m_queue, &v, 0);
+    auto job = std::make_shared<Job>();
+    job->kind = type < ALERT_COUNT ? Job::LOAD : Job::LOAD_ALL;
+    job->type = type;
+    submit(job, 0);
+}
+
+bool AlertLibrary::reloadAndWait(AlertType type, uint32_t timeout_ms) {
+    if (type >= ALERT_COUNT) return false;
+    auto job = std::make_shared<Job>();
+    job->type = type;
+    return submit(job, timeout_ms);
+}
+
+bool AlertLibrary::decodeAndWait(const std::string& path, AlertDecode& out, uint32_t timeout_ms) {
+    auto job = std::make_shared<Job>();
+    job->kind = Job::DECODE;
+    job->path = path;
+    if (!submit(job, timeout_ms)) return false;
+    out = std::move(job->result);
+    return true;
+}
+
+void AlertLibrary::applySettings(AlertType type, bool enabled, float gain_db) {
+    if (type >= ALERT_COUNT) return;
+    gain_db = std::clamp(gain_db, MIN_GAIN_DB, MAX_GAIN_DB);
+    AlertPlayer::getInstance().setGainDb(type, gain_db);
+    AlertPlayer::getInstance().setEnabled(type, enabled);
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_status[type].enabled = enabled;
+    m_status[type].gain_db = gain_db;
+    m_status[type].custom = true;
 }
 
 AlertLibrary::Status AlertLibrary::status(AlertType type) const {
@@ -148,18 +207,23 @@ AlertLibrary::Status AlertLibrary::status(AlertType type) const {
 
 void AlertLibrary::taskEntry(void* arg) {
     auto* self = static_cast<AlertLibrary*>(arg);
-    uint8_t v;
+    std::shared_ptr<Job>* item = nullptr;
     for (;;) {
-        if (xQueueReceive(self->m_queue, &v, portMAX_DELAY) != pdTRUE) continue;
-        if (v < ALERT_COUNT) {
-            self->load(static_cast<AlertType>(v));
-            continue;
+        if (xQueueReceive(self->m_queue, &item, portMAX_DELAY) != pdTRUE) continue;
+        Job& job = **item;
+        if (job.kind == Job::LOAD) {
+            self->load(job.type);
+        } else if (job.kind == Job::DECODE) {
+            job.result = decodeAlertFile(job.path.c_str());
+        } else {
+            const int64_t t0 = esp_timer_get_time();
+            for (int i = 0; i < ALERT_COUNT; ++i) self->load(static_cast<AlertType>(i));
+            ESP_LOGI(TAG, "All alerts loaded in %lld ms; PSRAM free %u",
+                     (long long)((esp_timer_get_time() - t0) / 1000),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         }
-        const int64_t t0 = esp_timer_get_time();
-        for (int i = 0; i < ALERT_COUNT; ++i) self->load(static_cast<AlertType>(i));
-        ESP_LOGI(TAG, "All alerts loaded in %lld ms; PSRAM free %u",
-                 (long long)((esp_timer_get_time() - t0) / 1000),
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        if (job.done) xSemaphoreGive(job.done);
+        delete item;
     }
 }
 
