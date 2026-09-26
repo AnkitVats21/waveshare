@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0x6A8584A8u;
+constexpr uint32_t SCHEMA_HASH = 0xA6B2A8F0u;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -84,6 +84,76 @@ struct AlertConfig {
     void decode(std::string_view value);
 };
 
+// Collection 'alarms' (id 4, key: string, cached).
+struct AlarmDoc {
+    static constexpr uint8_t COLLECTION = 4;
+    enum : uint64_t {
+        F_HOUR = 1ull << 0,
+        F_MINUTE = 1ull << 1,
+        F_DAYS = 1ull << 2,
+        F_AT = 1ull << 3,
+        F_LABEL = 1ull << 4,
+        F_ENABLED = 1ull << 5,
+        F_TONE = 1ull << 6,
+        F_SNOOZE_MIN = 1ull << 7,
+        F_VOLUME = 1ull << 8,
+        F_LAST_FIRED = 1ull << 9,
+        F_SNOOZE_UNTIL = 1ull << 10,
+        F_KIND = 1ull << 11,
+        F_CREATED = 1ull << 12,
+        F_ALL = 0x1FFFull,
+    };
+
+    uint8_t hour = 0;
+    uint8_t minute = 0;
+    uint8_t days = 0;
+    uint32_t at = 0u;
+    std::string label{};
+    bool enabled = true;
+    std::string tone{};
+    uint8_t snooze_min = 9;
+    uint8_t volume = 0;
+    uint32_t last_fired = 0u;
+    uint32_t snooze_until = 0u;
+    uint8_t kind = 0;
+    uint32_t created = 0u;
+
+    void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
+    // Fields missing from `value` keep their current values.
+    void decode(std::string_view value);
+};
+
+// Collection 'reminders' (id 5, key: string, cached).
+struct ReminderDoc {
+    static constexpr uint8_t COLLECTION = 5;
+    enum : uint64_t {
+        F_HOUR = 1ull << 0,
+        F_MINUTE = 1ull << 1,
+        F_DAYS = 1ull << 2,
+        F_AT = 1ull << 3,
+        F_TEXT = 1ull << 4,
+        F_ENABLED = 1ull << 5,
+        F_LAST_FIRED = 1ull << 6,
+        F_PENDING = 1ull << 7,
+        F_CREATED = 1ull << 8,
+        F_ALL = 0x1FFull,
+    };
+
+    uint8_t hour = 0;
+    uint8_t minute = 0;
+    uint8_t days = 0;
+    uint32_t at = 0u;
+    std::string text{};
+    bool enabled = true;
+    uint32_t last_fired = 0u;
+    bool pending = false;
+    uint32_t created = 0u;
+
+    void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
+    // Fields missing from `value` keep their current values.
+    void decode(std::string_view value);
+};
+
 // /sdcard/db/system.ndb
 class SystemDb {
 public:
@@ -101,6 +171,8 @@ public:
     nexus_db::Collection<SavedState> state() { return nexus_db::Collection<SavedState>(m_db); }
     nexus_db::Collection<Settings> settings() { return nexus_db::Collection<Settings>(m_db); }
     nexus_db::Collection<AlertConfig> alerts() { return nexus_db::Collection<AlertConfig>(m_db); }
+    nexus_db::Collection<AlarmDoc> alarms() { return nexus_db::Collection<AlarmDoc>(m_db); }
+    nexus_db::Collection<ReminderDoc> reminders() { return nexus_db::Collection<ReminderDoc>(m_db); }
 
 private:
     nexus_db::Database m_db;

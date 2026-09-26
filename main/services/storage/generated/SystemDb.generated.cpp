@@ -92,10 +92,84 @@ void AlertConfig::decode(std::string_view value) {
     }
 }
 
+void AlarmDoc::encode(nexus_db::Writer& w, uint64_t fields) const {
+    if (fields & F_HOUR) w.u8(1, hour);
+    if (fields & F_MINUTE) w.u8(2, minute);
+    if (fields & F_DAYS) w.u8(3, days);
+    if (fields & F_AT) w.u32(4, at);
+    if (fields & F_LABEL) w.str(5, label);
+    if (fields & F_ENABLED) w.boolean(6, enabled);
+    if (fields & F_TONE) w.str(7, tone);
+    if (fields & F_SNOOZE_MIN) w.u8(8, snooze_min);
+    if (fields & F_VOLUME) w.u8(9, volume);
+    if (fields & F_LAST_FIRED) w.u32(10, last_fired);
+    if (fields & F_SNOOZE_UNTIL) w.u32(11, snooze_until);
+    if (fields & F_KIND) w.u8(12, kind);
+    if (fields & F_CREATED) w.u32(13, created);
+}
+
+void AlarmDoc::decode(std::string_view value) {
+    nexus_db::FieldReader r(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+    uint16_t tag, len;
+    const uint8_t* v;
+    while (r.next(tag, v, len)) {
+        switch (tag) {
+            case 1: nexus_db::FieldReader::read(v, len, hour); break;
+            case 2: nexus_db::FieldReader::read(v, len, minute); break;
+            case 3: nexus_db::FieldReader::read(v, len, days); break;
+            case 4: nexus_db::FieldReader::read(v, len, at); break;
+            case 5: nexus_db::FieldReader::read(v, len, label); break;
+            case 6: nexus_db::FieldReader::read(v, len, enabled); break;
+            case 7: nexus_db::FieldReader::read(v, len, tone); break;
+            case 8: nexus_db::FieldReader::read(v, len, snooze_min); break;
+            case 9: nexus_db::FieldReader::read(v, len, volume); break;
+            case 10: nexus_db::FieldReader::read(v, len, last_fired); break;
+            case 11: nexus_db::FieldReader::read(v, len, snooze_until); break;
+            case 12: nexus_db::FieldReader::read(v, len, kind); break;
+            case 13: nexus_db::FieldReader::read(v, len, created); break;
+            default: break;  // unknown tag: a newer or retired field
+        }
+    }
+}
+
+void ReminderDoc::encode(nexus_db::Writer& w, uint64_t fields) const {
+    if (fields & F_HOUR) w.u8(1, hour);
+    if (fields & F_MINUTE) w.u8(2, minute);
+    if (fields & F_DAYS) w.u8(3, days);
+    if (fields & F_AT) w.u32(4, at);
+    if (fields & F_TEXT) w.str(5, text);
+    if (fields & F_ENABLED) w.boolean(6, enabled);
+    if (fields & F_LAST_FIRED) w.u32(7, last_fired);
+    if (fields & F_PENDING) w.boolean(8, pending);
+    if (fields & F_CREATED) w.u32(9, created);
+}
+
+void ReminderDoc::decode(std::string_view value) {
+    nexus_db::FieldReader r(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+    uint16_t tag, len;
+    const uint8_t* v;
+    while (r.next(tag, v, len)) {
+        switch (tag) {
+            case 1: nexus_db::FieldReader::read(v, len, hour); break;
+            case 2: nexus_db::FieldReader::read(v, len, minute); break;
+            case 3: nexus_db::FieldReader::read(v, len, days); break;
+            case 4: nexus_db::FieldReader::read(v, len, at); break;
+            case 5: nexus_db::FieldReader::read(v, len, text); break;
+            case 6: nexus_db::FieldReader::read(v, len, enabled); break;
+            case 7: nexus_db::FieldReader::read(v, len, last_fired); break;
+            case 8: nexus_db::FieldReader::read(v, len, pending); break;
+            case 9: nexus_db::FieldReader::read(v, len, created); break;
+            default: break;  // unknown tag: a newer or retired field
+        }
+    }
+}
+
 static const nexus_db::CollectionDef COLLECTIONS[] = {
     {1, "state", true},
     {2, "settings", true},
     {3, "alerts", true},
+    {4, "alarms", true},
+    {5, "reminders", true},
 };
 
 const nexus_db::Options& SystemDb::options() {

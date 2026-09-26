@@ -1,6 +1,8 @@
 #include "SystemDatabase.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include <ArduinoJson.h>
@@ -126,6 +128,40 @@ void deleteUnusedFiles() {
     }
 }
 
+std::string idKey(int id) { return std::to_string(id); }
+
+// Keys that are not a positive decimal id are skipped.
+int parseId(std::string_view key) {
+    if (key.empty() || key.size() > 9) return 0;
+    int id = 0;
+    for (char c : key) {
+        if (c < '0' || c > '9') return 0;
+        id = id * 10 + (c - '0');
+    }
+    return id;
+}
+
+template <typename Doc>
+std::vector<std::pair<int, Doc>> listById(nexus_db::Collection<Doc> coll) {
+    std::vector<std::pair<int, Doc>> out;
+    coll.forEach([&](std::string_view key, const Doc& doc) {
+        if (int id = parseId(key)) out.emplace_back(id, doc);
+        return true;
+    });
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    return out;
+}
+
+template <typename Doc>
+int nextId(nexus_db::Collection<Doc> coll) {
+    int max_id = 0;
+    coll.forEach([&](std::string_view key, const Doc&) {
+        max_id = std::max(max_id, parseId(key));
+        return true;
+    });
+    return max_id + 1;
+}
+
 }  // namespace
 
 ndb::system::SystemDb& systemDb() {
@@ -186,6 +222,68 @@ bool saveAlertConfig(const char* name, const ndb::system::AlertConfig& config, u
 bool resetAlertConfig(const char* name) {
     auto& db = systemDb();
     return db.db().isOpen() && db.alerts().remove(name);
+}
+
+std::vector<std::pair<int, ndb::system::AlarmDoc>> listAlarms() {
+    auto& db = systemDb();
+    if (!db.db().isOpen()) return {};
+    return listById(db.alarms());
+}
+
+bool loadAlarm(int id, ndb::system::AlarmDoc& doc) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.alarms().get(idKey(id), doc);
+}
+
+bool saveAlarm(int id, const ndb::system::AlarmDoc& doc) {
+    auto& db = systemDb();
+    return id > 0 && db.db().isOpen() && db.alarms().put(idKey(id), doc);
+}
+
+bool mergeAlarm(int id, const ndb::system::AlarmDoc& doc, uint64_t fields) {
+    auto& db = systemDb();
+    return id > 0 && db.db().isOpen() && db.alarms().merge(idKey(id), doc, fields);
+}
+
+bool removeAlarm(int id) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.alarms().remove(idKey(id));
+}
+
+int nextAlarmId() {
+    auto& db = systemDb();
+    return db.db().isOpen() ? nextId(db.alarms()) : 1;
+}
+
+std::vector<std::pair<int, ndb::system::ReminderDoc>> listReminders() {
+    auto& db = systemDb();
+    if (!db.db().isOpen()) return {};
+    return listById(db.reminders());
+}
+
+bool loadReminder(int id, ndb::system::ReminderDoc& doc) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.reminders().get(idKey(id), doc);
+}
+
+bool saveReminder(int id, const ndb::system::ReminderDoc& doc) {
+    auto& db = systemDb();
+    return id > 0 && db.db().isOpen() && db.reminders().put(idKey(id), doc);
+}
+
+bool mergeReminder(int id, const ndb::system::ReminderDoc& doc, uint64_t fields) {
+    auto& db = systemDb();
+    return id > 0 && db.db().isOpen() && db.reminders().merge(idKey(id), doc, fields);
+}
+
+bool removeReminder(int id) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.reminders().remove(idKey(id));
+}
+
+int nextReminderId() {
+    auto& db = systemDb();
+    return db.db().isOpen() ? nextId(db.reminders()) : 1;
 }
 
 }  // namespace Services

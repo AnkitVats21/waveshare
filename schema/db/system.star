@@ -34,4 +34,37 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field source:  string      tag=2   // "" default, "builtin", or a file name in /sdcard/media/alert/
         field gain_db: f32         tag=3   // -24..+6
     }
+
+    // One document per alarm, keyed by its id as a decimal string ("1", "2", ...).
+    // When: `at` (epoch seconds) for a one-shot alarm or timer, else hour:minute
+    // on the `days` in local time (bit0 Mon .. bit6 Sun; 0 = next occurrence
+    // only). A one-shot alarm is disabled after it fires; a timer is deleted.
+    collection alarms id=4 key=string cache doc=AlarmDoc {
+        field hour:         u8          tag=1
+        field minute:       u8          tag=2
+        field days:         u8          tag=3
+        field at:           u32         tag=4    // epoch s; 0 = use hour/minute
+        field label:        string      tag=5
+        field enabled:      bool = true tag=6
+        field tone:         string      tag=7    // CatalogDB song id; "" = built-in tone
+        field snooze_min:   u8 = 9      tag=8
+        field volume:       u8          tag=9    // 0 = the alarm floor (AlarmService::MIN_VOLUME)
+        field last_fired:   u32         tag=10   // epoch s of the last fire
+        field snooze_until: u32         tag=11   // epoch s; 0 = not snoozed
+        field kind:         u8          tag=12   // 0 alarm, 1 timer
+        field created:      u32         tag=13   // epoch s
+    }
+
+    // One document per reminder, keyed like alarms. Same "when" fields.
+    collection reminders id=5 key=string cache doc=ReminderDoc {
+        field hour:       u8          tag=1
+        field minute:     u8          tag=2
+        field days:       u8          tag=3
+        field at:         u32         tag=4
+        field text:       string      tag=5
+        field enabled:    bool = true tag=6
+        field last_fired: u32         tag=7
+        field pending:    bool        tag=8    // fired but not spoken; waits for acknowledgement
+        field created:    u32         tag=9
+    }
 }
