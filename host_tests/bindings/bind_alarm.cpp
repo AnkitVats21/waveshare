@@ -1,5 +1,8 @@
 #include "bindings.h"
 #include "services/alarm/AlarmRing.h"
+#include "services/alarm/AlarmSchedule.h"
+#include <cstdlib>
+#include <ctime>
 #include <nanobind/stl/string.h>
 #include <string>
 
@@ -20,6 +23,20 @@ std::string actionName(AlarmRing::Action a) {
 } // namespace
 
 void init_alarm(nb::module_& m) {
+    // Process timezone (POSIX TZ string), as TimeSyncHelper::applyTimezone does.
+    m.def("set_tz", [](const std::string& tz) {
+        setenv("TZ", tz.c_str(), 1);
+        tzset();
+    });
+    m.def("next_fire", [](int hour, int minute, int days, uint32_t at, int64_t after) {
+        Services::AlarmWhen w;
+        w.hour = uint8_t(hour);
+        w.minute = uint8_t(minute);
+        w.days = uint8_t(days);
+        w.at = at;
+        return Services::nextFire(w, after);
+    }, nb::arg("hour"), nb::arg("minute"), nb::arg("days") = 0, nb::arg("at") = 0, nb::arg("after") = 0);
+
     // Actions come back as "", "song", "builtin", "silence" or "finish".
     nb::class_<AlarmRing>(m, "AlarmRing")
         .def("__init__", [](AlarmRing* self, uint32_t ring_limit_ms, uint32_t snooze_ms, uint32_t watchdog_ms) {
