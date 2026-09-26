@@ -5,6 +5,7 @@
 #include "app/media_player/AudioDecoderFactory.h"
 #include "sd_storage/Fs.h"
 #include "sd_storage/SdCard.h"
+#include "services/storage/SystemDatabase.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -162,31 +163,56 @@ void AlertLibrary::taskEntry(void* arg) {
     }
 }
 
+bool AlertLibrary::isValidFileName(const std::string& name) {
+    if (name.empty() || name.size() > 64 || name == BUILTIN) return false;
+    if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos) return false;
+    return name[0] != '.';
+}
+
 void AlertLibrary::load(AlertType type) {
     AlertPlayer& player = AlertPlayer::getInstance();
-    const std::string path = std::string(ALERT_DIR) + "/" + alertName(type) + ".ogg";
+    const char* name = alertName(type);
 
+    ndb::system::AlertConfig cfg;
     Status st;
+    st.custom = loadAlertConfig(name, cfg);
+    st.enabled = cfg.enabled;
+    st.gain_db = std::clamp(cfg.gain_db, MIN_GAIN_DB, MAX_GAIN_DB);
+    st.setting = cfg.source;
+
+    // "" is the default: <name>.ogg when the card has it, else the tone.
+    std::string file;
+    if (cfg.source.empty()) {
+        std::string def = std::string(name) + ".ogg";
+        if (sd_storage::Fs::isFile((std::string(ALERT_DIR) + "/" + def).c_str())) file = def;
+    } else if (cfg.source != BUILTIN) {
+        file = cfg.source;
+    }
+
     AlertClipPtr clip;
-    if (!sd_storage::SdCard::instance().isMounted()) {
-        st.error = "SD card not mounted";
-    } else if (!sd_storage::Fs::isFile(path.c_str())) {
-        st.error = "no file";
-    } else {
-        AlertDecode d = decodeAlertFile(path.c_str());
+    if (!file.empty()) {
+        const std::string path = std::string(ALERT_DIR) + "/" + file;
+        AlertDecode d;
+        if (!isValidFileName(file)) {
+            d.error = "invalid file name";
+        } else if (!sd_storage::SdCard::instance().isMounted()) {
+            d.error = "SD card not mounted";
+        } else {
+            d = decodeAlertFile(path.c_str());
+        }
         if (d.clip) {
             clip = d.clip;
-            st.source = path;
+            st.file = file;
             st.samples = d.clip->size();
             st.decode_ms = d.decode_ms;
             st.truncated = d.truncated;
-            ESP_LOGI(TAG, "%s: %u ms of audio from %u Hz, %u bytes, decoded in %u ms%s", alertName(type),
+            ESP_LOGI(TAG, "%s: %u ms of audio from %u Hz, %u bytes, decoded in %u ms%s", name,
                      (unsigned)(st.samples * 1000 / MIXER_SAMPLE_RATE), (unsigned)d.source_rate,
                      (unsigned)(st.samples * sizeof(int16_t)), (unsigned)d.decode_ms,
                      d.truncated ? " (cut to 3 s)" : "");
         } else {
             st.error = d.error;
-            ESP_LOGW(TAG, "%s: %s (%s); using the built-in tone", alertName(type), d.error.c_str(), path.c_str());
+            ESP_LOGW(TAG, "%s: %s (%s); using the built-in tone", name, d.error.c_str(), path.c_str());
         }
     }
     if (!clip) {
@@ -194,6 +220,8 @@ void AlertLibrary::load(AlertType type) {
         if (clip) st.samples = clip->size();
     }
     player.setClip(type, clip);
+    player.setGainDb(type, st.gain_db);
+    player.setEnabled(type, st.enabled);
     std::lock_guard<std::mutex> lock(m_mutex);
     m_status[type] = st;
 }

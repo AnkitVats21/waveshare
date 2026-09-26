@@ -1,4 +1,4 @@
-// /sdcard/db/system.ndb: device state, settings and alarms. See
+// /sdcard/db/system.ndb: device state, settings, alert chimes and alarms. See
 // docs/nexus-db-design.md. Tags are never reused; retire a removed field's
 // tag with a comment.
 database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="core_sysdb/SystemState.generated.h" {
@@ -23,5 +23,15 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field gemini_model:         string         tag=2
         field gemini_voice:         string         tag=3
         field gemini_system_prompt: string         tag=4
+    }
+
+    // One document per alert chime, keyed by its name ("wake_confirm",
+    // "ready_to_speak", "session_end", "error", "offline"). No document means
+    // the default: the file <name>.ogg in /sdcard/media/alert/ if present,
+    // else the built-in tone.
+    collection alerts id=3 key=string cache doc=AlertConfig {
+        field enabled: bool = true tag=1
+        field source:  string      tag=2   // "" default, "builtin", or a file name in /sdcard/media/alert/
+        field gain_db: f32         tag=3   // -24..+6
     }
 }

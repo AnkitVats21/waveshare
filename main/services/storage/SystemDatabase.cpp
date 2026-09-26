@@ -173,4 +173,19 @@ bool saveSettings(const ndb::system::Settings& settings, uint64_t fields) {
     return db.db().isOpen() && db.settings().merge(SETTINGS_KEY, settings, fields);
 }
 
+bool loadAlertConfig(const char* name, ndb::system::AlertConfig& config) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.alerts().get(name, config);
+}
+
+bool saveAlertConfig(const char* name, const ndb::system::AlertConfig& config, uint64_t fields) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.alerts().merge(name, config, fields);
+}
+
+bool resetAlertConfig(const char* name) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.alerts().remove(name);
+}
+
 }  // namespace Services

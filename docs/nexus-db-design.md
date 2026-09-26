@@ -24,7 +24,7 @@ is fast enough.
 
 | Database | Path | Collections | Rebuildable? | Flush |
 |---|---|---|---|---|
-| system | `/sdcard/db/system.ndb` | `state`, `settings` (`alarms` with the alarm redesign) | no | every commit |
+| system | `/sdcard/db/system.ndb` | `state`, `settings`, `alerts` (`alarms` with the alarm redesign) | no | every commit |
 | music | `/sdcard/db/music.ndb` | `tracks` | yes (scan `/sdcard/music`) | batched, ≤ 2 s |
 | recordings | `/sdcard/db/recordings.ndb` | `recordings` | yes (scan `/sdcard/recordings`) | batched, ≤ 2 s |
 
@@ -242,6 +242,18 @@ Dropping a `gemini_config.json` on the card still works on a fresh device:
 at boot the key goes to NVS first, then the other fields to `settings`, and
 the file is deleted. A file still holding a key is never deleted.
 
+### The `alerts` collection
+
+One document per alert chime, keyed by its name (`wake_confirm`,
+`ready_to_speak`, `session_end`, `error`, `offline`): `enabled` (default
+true), `source` and `gain_db` (-24..+6, default 0). `source` is `""` for the
+default, `"builtin"` for the synthesized tone, or a plain file name in
+`/sdcard/media/alert/`. An alert with no document is the default: its
+`<name>.ogg` if the card has one, else the built-in tone. Resetting an alert
+deletes its document, so there is nothing to migrate. `AlertLibrary` reads the
+document when it decodes the alert at boot or on a change; a file that is
+missing or fails to decode falls back to the built-in tone.
+
 ## Seeking
 
 No seek table is stored. The player finds byte positions from the file:
@@ -302,7 +314,7 @@ Each step is its own commit and is tested on the device before the next.
    the format (torn tail, mid-file corruption, cleanup interrupted at each
    step); an on-device stress test that appends while pulling power is
    simulated by `esp_restart` at random points.
-3. **system.ndb**: state and settings, migrations, `GET /api/db/<name>`. Alarms move with the alarm redesign (own design doc).
+3. **system.ndb**: state, settings and alert chimes, migrations, `GET /api/db/<name>`. Alarms move with the alarm redesign (own design doc).
 4. **Seeking from the file itself** (before music.ndb, so nothing seek-related
    is migrated): see "Seeking" below.
 5. **music.ndb**: `CatalogDB` becomes a wrapper; migration from `catalog.db`.

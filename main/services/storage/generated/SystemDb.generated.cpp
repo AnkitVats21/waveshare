@@ -72,9 +72,30 @@ void Settings::decode(std::string_view value) {
     }
 }
 
+void AlertConfig::encode(nexus_db::Writer& w, uint64_t fields) const {
+    if (fields & F_ENABLED) w.boolean(1, enabled);
+    if (fields & F_SOURCE) w.str(2, source);
+    if (fields & F_GAIN_DB) w.f32(3, gain_db);
+}
+
+void AlertConfig::decode(std::string_view value) {
+    nexus_db::FieldReader r(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+    uint16_t tag, len;
+    const uint8_t* v;
+    while (r.next(tag, v, len)) {
+        switch (tag) {
+            case 1: nexus_db::FieldReader::read(v, len, enabled); break;
+            case 2: nexus_db::FieldReader::read(v, len, source); break;
+            case 3: nexus_db::FieldReader::read(v, len, gain_db); break;
+            default: break;  // unknown tag: a newer or retired field
+        }
+    }
+}
+
 static const nexus_db::CollectionDef COLLECTIONS[] = {
     {1, "state", true},
     {2, "settings", true},
+    {3, "alerts", true},
 };
 
 const nexus_db::Options& SystemDb::options() {

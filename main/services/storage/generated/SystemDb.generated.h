@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0x1DCEC80Bu;
+constexpr uint32_t SCHEMA_HASH = 0x6A8584A8u;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -65,6 +65,25 @@ struct Settings {
     void decode(std::string_view value);
 };
 
+// Collection 'alerts' (id 3, key: string, cached).
+struct AlertConfig {
+    static constexpr uint8_t COLLECTION = 3;
+    enum : uint64_t {
+        F_ENABLED = 1ull << 0,
+        F_SOURCE = 1ull << 1,
+        F_GAIN_DB = 1ull << 2,
+        F_ALL = 0x7ull,
+    };
+
+    bool enabled = true;
+    std::string source{};
+    float gain_db = 0.0f;
+
+    void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
+    // Fields missing from `value` keep their current values.
+    void decode(std::string_view value);
+};
+
 // /sdcard/db/system.ndb
 class SystemDb {
 public:
@@ -81,6 +100,7 @@ public:
 
     nexus_db::Collection<SavedState> state() { return nexus_db::Collection<SavedState>(m_db); }
     nexus_db::Collection<Settings> settings() { return nexus_db::Collection<Settings>(m_db); }
+    nexus_db::Collection<AlertConfig> alerts() { return nexus_db::Collection<AlertConfig>(m_db); }
 
 private:
     nexus_db::Database m_db;
