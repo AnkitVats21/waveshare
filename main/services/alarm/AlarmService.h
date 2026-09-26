@@ -15,6 +15,7 @@
 namespace Services {
 
 using AlarmDoc = ndb::system::AlarmDoc;
+using ReminderDoc = ndb::system::ReminderDoc;
 
 /**
  * @brief Alarm scheduler and ringer (docs/alarm-design.md).
@@ -56,6 +57,22 @@ public:
     // Next fire of an enabled alarm (epoch s), 0 if none.
     static int64_t nextFireOf(const AlarmDoc& doc, int64_t now);
     static AlarmWhen whenOf(const AlarmDoc& doc);
+
+    // ── Reminders (system.ndb "reminders") ───────────────────────────────
+    // A due reminder chimes and is marked pending until it is spoken or
+    // acknowledged (docs/alarm-design.md, "Delivery").
+    static constexpr size_t MAX_REMINDER_TEXT = 200;
+    // Offline: the reminder chime this many times, this far apart.
+    static constexpr int OFFLINE_CHIMES = 3;
+    static constexpr uint32_t OFFLINE_CHIME_GAP_MS = 2500;
+
+    std::vector<std::pair<int, ReminderDoc>> reminders();
+    // Like saveAlarm; a changed reminder is no longer pending.
+    int saveReminder(int id, ReminderDoc doc);
+    bool deleteReminder(int id);
+    // Clears pending. False if there is no such reminder.
+    bool acknowledgeReminder(int id);
+    static int64_t nextFireOf(const ReminderDoc& doc, int64_t now);
 
     // ── Ringing ──────────────────────────────────────────────────────────
     struct RingOptions {
@@ -125,6 +142,12 @@ private:
     void migrateAlarmsFile();
     // Fires what is due; returns ms until the next check.
     uint32_t checkSchedule();
+    // Marks due reminders pending and queues them; returns the next reminder time (0 = none).
+    int64_t checkReminders(int64_t now);
+    // Delivers the queued reminders once no alarm is ringing or snoozed.
+    void deliverReminders();
+    // Offline chimes still to play; returns ms until the next, 0 if none.
+    uint32_t tickReminderChimes();
     void persistSnooze(int id, uint32_t until);
 
     std::mutex m_cmd_mutex;
@@ -145,6 +168,10 @@ private:
     // Snooze written to the alarm's document, so it survives a reboot.
     int m_snooze_saved_id = 0;
     uint32_t m_snooze_saved_until = 0;
+    // Reminders due and not yet delivered (this task only).
+    std::vector<int> m_reminders_due;
+    int m_chimes_left = 0;
+    uint64_t m_next_chime_ms = 0;
     std::mutex m_status_mutex;
     Status m_status;
     // For the live ringing_ms / snooze_left_ms in status()

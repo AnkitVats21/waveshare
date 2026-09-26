@@ -8,6 +8,7 @@
 #include "app/wake_word/WakeWordEngine.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
+#include "services/storage/SystemDatabase.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "services/time/TimeSyncHelper.h"
@@ -84,7 +85,11 @@ bool AlarmService::begin() {
 
 // ── Alarms ───────────────────────────────────────────────────────────────────
 
-AlarmWhen AlarmService::whenOf(const AlarmDoc& doc) {
+namespace {
+
+// Alarms and reminders share the "when" fields.
+template <typename Doc>
+AlarmWhen whenFields(const Doc& doc) {
     AlarmWhen w;
     w.hour = doc.hour;
     w.minute = doc.minute;
@@ -93,9 +98,10 @@ AlarmWhen AlarmService::whenOf(const AlarmDoc& doc) {
     return w;
 }
 
-int64_t AlarmService::nextFireOf(const AlarmDoc& doc, int64_t now) {
+template <typename Doc>
+int64_t nextFireFields(const Doc& doc, int64_t now) {
     if (!doc.enabled) return 0;
-    const AlarmWhen w = whenOf(doc);
+    const AlarmWhen w = whenFields(doc);
     // A one-shot hour:minute fires once, at its first occurrence after creation.
     int64_t after = now;
     if (w.oneShot() && !w.at) {
@@ -103,6 +109,20 @@ int64_t AlarmService::nextFireOf(const AlarmDoc& doc, int64_t now) {
         after = std::max<int64_t>(now, doc.created);
     }
     return nextFire(w, after);
+}
+
+} // namespace
+
+int64_t AlarmService::nextFireOf(const AlarmDoc& doc, int64_t now) {
+    return nextFireFields(doc, now);
+}
+
+int64_t AlarmService::nextFireOf(const ReminderDoc& doc, int64_t now) {
+    return nextFireFields(doc, now);
+}
+
+AlarmWhen AlarmService::whenOf(const AlarmDoc& doc) {
+    return whenFields(doc);
 }
 
 std::vector<std::pair<int, AlarmDoc>> AlarmService::alarms() {
@@ -172,6 +192,48 @@ void AlarmService::migrateAlarmsFile() {
     const std::string bak = std::string(ALARMS_FILE) + ".bak";
     sd_storage::Fs::remove(bak.c_str());
     sd_storage::Fs::rename(ALARMS_FILE, bak.c_str());
+}
+
+// ── Reminders ────────────────────────────────────────────────────────────────
+
+std::vector<std::pair<int, ReminderDoc>> AlarmService::reminders() {
+    return listReminders();
+}
+
+int AlarmService::saveReminder(int id, ReminderDoc doc) {
+    if (id <= 0) id = nextReminderId();
+    ReminderDoc old;
+    const bool exists = loadReminder(id, old);
+    doc.created = exists && old.created ? old.created : (uint32_t)time(nullptr);
+    doc.last_fired = 0;
+    doc.pending = false;
+    if (!Services::saveReminder(id, doc)) {
+        ESP_LOGE(TAG, "Could not save reminder %d", id);
+        return 0;
+    }
+    ESP_LOGI(TAG, "Reminder %d saved: %02u:%02u days 0x%02x at %lu%s", id, doc.hour, doc.minute, doc.days,
+             (unsigned long)doc.at, doc.enabled ? "" : " (disabled)");
+    if (m_task_handle) xTaskNotify(m_task_handle, 0, eNoAction);
+    return id;
+}
+
+bool AlarmService::deleteReminder(int id) {
+    ReminderDoc doc;
+    if (!loadReminder(id, doc) || !removeReminder(id)) return false;
+    ESP_LOGI(TAG, "Reminder %d deleted", id);
+    if (m_task_handle) xTaskNotify(m_task_handle, 0, eNoAction);
+    return true;
+}
+
+bool AlarmService::acknowledgeReminder(int id) {
+    ReminderDoc doc;
+    if (!loadReminder(id, doc)) return false;
+    if (doc.pending) {
+        doc.pending = false;
+        mergeReminder(id, doc, ReminderDoc::F_PENDING);
+        ESP_LOGI(TAG, "Reminder %d acknowledged", id);
+    }
+    return true;
 }
 
 // ── Requests from other tasks ────────────────────────────────────────────────
@@ -476,6 +538,63 @@ void AlarmService::persistSnooze(int id, uint32_t until) {
     m_snooze_saved_until = until;
 }
 
+int64_t AlarmService::checkReminders(int64_t now) {
+    int64_t next = 0;
+    for (auto& [id, r] : listReminders()) {
+        if (!r.enabled) continue;
+        const int64_t f = nextFireOf(r, std::max<int64_t>(m_checked_until, r.last_fired));
+        if (f == 0) continue;
+        if (f > now) {
+            if (next == 0 || f < next) next = f;
+            continue;
+        }
+        ReminderDoc upd;
+        upd.last_fired = (uint32_t)now;
+        upd.pending = true;
+        uint64_t fields = ReminderDoc::F_LAST_FIRED | ReminderDoc::F_PENDING;
+        if (whenFields(r).oneShot()) {
+            upd.enabled = false;
+            fields |= ReminderDoc::F_ENABLED;
+        } else {
+            const int64_t n = nextFireOf(r, now);
+            if (n && (next == 0 || n < next)) next = n;
+        }
+        mergeReminder(id, upd, fields);
+        ESP_LOGI(TAG, "Reminder %d due: \"%s\"", id, r.text.c_str());
+        m_reminders_due.push_back(id);
+    }
+    return next;
+}
+
+void AlarmService::deliverReminders() {
+    if (m_reminders_due.empty() || m_ring.state() != AlarmRing::State::Idle) return;
+    std::vector<int> ids;
+    ids.swap(m_reminders_due);
+    // One chime for all the reminders due together.
+    ESP_LOGI(TAG, "Delivering %u reminder(s)", (unsigned)ids.size());
+    AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
+    // Not spoken: chime again and leave them pending for the dashboard.
+    m_chimes_left = OFFLINE_CHIMES - 1;
+    m_next_chime_ms = nowMs() + OFFLINE_CHIME_GAP_MS;
+}
+
+uint32_t AlarmService::tickReminderChimes() {
+    if (m_chimes_left <= 0) return 0;
+    // An alarm takes over; its chimes are dropped.
+    if (m_ring.state() != AlarmRing::State::Idle) {
+        m_chimes_left = 0;
+        return 0;
+    }
+    const uint64_t now = nowMs();
+    if (now >= m_next_chime_ms) {
+        AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
+        --m_chimes_left;
+        m_next_chime_ms = now + OFFLINE_CHIME_GAP_MS;
+        if (m_chimes_left <= 0) return 0;
+    }
+    return (uint32_t)std::max<uint64_t>(m_next_chime_ms - now, 1);
+}
+
 uint32_t AlarmService::checkSchedule() {
     if (!TimeSyncHelper::clockValid()) {
         if (!m_warned_unsynced) {
@@ -551,6 +670,8 @@ uint32_t AlarmService::checkSchedule() {
         due_id = id;
         due = a;
     }
+    const int64_t next_reminder = checkReminders(now);
+    if (next_reminder) consider(next_reminder);
     m_checked_until = now;
 
     if (due_id) {
@@ -561,11 +682,16 @@ uint32_t AlarmService::checkSchedule() {
         c.ring.volume = due.volume;
         handle(c);
     }
+    deliverReminders();
 
-    if (next == 0) return MAX_IDLE_MS;
-    // Just after the second it is due.
-    const int64_t ms = (next - now) * 1000 - tv.tv_usec / 1000 + 20;
-    return (uint32_t)std::min<int64_t>(std::max<int64_t>(ms, 20), MAX_IDLE_MS);
+    uint32_t wait_ms = MAX_IDLE_MS;
+    if (next != 0) {
+        // Just after the second it is due.
+        const int64_t ms = (next - now) * 1000 - tv.tv_usec / 1000 + 20;
+        wait_ms = (uint32_t)std::min<int64_t>(std::max<int64_t>(ms, 20), MAX_IDLE_MS);
+    }
+    if (const uint32_t chime_ms = tickReminderChimes()) wait_ms = std::min(wait_ms, chime_ms);
+    return wait_ms;
 }
 
 void AlarmService::run() {

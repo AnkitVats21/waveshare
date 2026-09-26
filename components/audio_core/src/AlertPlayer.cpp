@@ -10,7 +10,7 @@
 namespace {
 
 const char* const NAMES[ALERT_COUNT] = {
-    "wake_confirm", "ready_to_speak", "session_end", "error", "offline",
+    "wake_confirm", "ready_to_speak", "session_end", "error", "offline", "reminder",
 };
 
 const ToneNote WAKE_CONFIRM[] = {
@@ -34,6 +34,14 @@ const ToneNote ERROR_BEEPS[] = {
 const ToneNote OFFLINE[] = {
     {146.8f, 8000, 120, 25},   // D3
 };
+// Doorbell-like, longer than the session chimes so it is not mistaken for one.
+const ToneNote REMINDER[] = {
+    {1318.5f, 9000, 160, 30},  // E6
+    {1046.5f, 9000, 160, 30},  // C6
+    {0.0f, 0, 60, 0},
+    {1318.5f, 9000, 160, 30},  // E6
+    {1568.0f, 9000, 320, 80},  // G6
+};
 
 // Classic alarm clock: four beeps, then a pause. Looped while ringing.
 const ToneNote ALARM_BEEPS[] = {
@@ -47,6 +55,7 @@ struct ToneSet { const ToneNote* notes; size_t count; };
 template <size_t N> constexpr ToneSet tones(const ToneNote (&n)[N]) { return {n, N}; }
 const ToneSet TONES[ALERT_COUNT] = {
     tones(WAKE_CONFIRM), tones(READY_TO_SPEAK), tones(SESSION_END), tones(ERROR_BEEPS), tones(OFFLINE),
+    tones(REMINDER),
 };
 
 } // namespace

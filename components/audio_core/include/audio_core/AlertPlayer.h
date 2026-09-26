@@ -9,6 +9,7 @@ enum AlertType : uint8_t {
     ALERT_SESSION_END,
     ALERT_ERROR,
     ALERT_OFFLINE,
+    ALERT_REMINDER,
     ALERT_COUNT
 };
 
@@ -70,6 +71,7 @@ private:
     AlertMixer m_mixer;
     AlertClipPtr m_builtin[ALERT_COUNT];
     static constexpr size_t ALARM_SLOT = ALERT_COUNT;
+    static_assert(ALARM_SLOT < AlertMixer::SLOTS, "one mixer slot per alert, plus the alarm");
     volatile bool m_alarm_active = false;
     // esp_timer time of the last playAlert(), for the trigger-to-mix latency log
     volatile int64_t m_requested_us = 0;
