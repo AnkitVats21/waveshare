@@ -90,6 +90,7 @@ idf_component_register(
             gemini_live
             sd_storage
             credentials
+            nexus_db
             ${DISPLAY_REQUIRES}
             nvs_flash
             esp_wifi

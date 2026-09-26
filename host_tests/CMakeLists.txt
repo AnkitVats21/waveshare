@@ -18,6 +18,19 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/shims
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/core_sysdb/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/audio_core/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/nexus_db/include
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
+)
+
+# nexus_db code generated from the test schema by starc
+set(NDB_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(NDB_STARC "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/starc.py")
+set(NDB_TEST_SCHEMA "${CMAKE_CURRENT_SOURCE_DIR}/schema/testdb.star")
+add_custom_command(
+    OUTPUT "${NDB_GEN_DIR}/TestdbDb.generated.h" "${NDB_GEN_DIR}/TestdbDb.generated.cpp" "${NDB_GEN_DIR}/ndb_schema.js"
+    COMMAND python3 "${NDB_STARC}" db "${NDB_TEST_SCHEMA}" --out-dir "${NDB_GEN_DIR}" --js "${NDB_GEN_DIR}/ndb_schema.js"
+    DEPENDS "${NDB_TEST_SCHEMA}" "${NDB_STARC}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/ndb_gen.py"
+    VERBATIM
 )
 
 nanobind_add_module(waveshare_host
@@ -30,6 +43,10 @@ nanobind_add_module(waveshare_host
     ../components/core_sysdb/src/BufferManager.cpp
     ../components/core_sysdb/src/ReactorTask.cpp
     ../components/audio_core/src/Resampler.cpp
+    bindings/bind_nexus_db.cpp
+    ../components/nexus_db/src/Database.cpp
+    ../components/nexus_db/src/Crc32.cpp
+    ${NDB_GEN_DIR}/TestdbDb.generated.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)

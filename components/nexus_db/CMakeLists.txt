@@ -1,0 +1,15 @@
+idf_component_register(
+    SRCS
+        "src/Database.cpp"
+        "src/Crc32.cpp"
+        "src/SdIo.cpp"
+        "src/StressTest.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        sd_storage
+        heap
+        log
+        esp_timer
+        esp_system
+)

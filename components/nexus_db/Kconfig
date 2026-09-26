@@ -1,0 +1,13 @@
+menu "nexus_db"
+
+config NEXUS_DB_STRESS_TEST
+    bool "Power-loss stress test at boot"
+    default n
+    help
+        Test build only. When /sdcard/db/stress.run exists (it holds the
+        number of rounds), each boot checks /sdcard/db/stress.ndb against the
+        writes acknowledged before the last reset, then writes until an
+        esp_restart at a random moment. Results go to /sdcard/db/stress.log.
+        The random resets interrupt SD writes, so leave this off otherwise.
+
+endmenu

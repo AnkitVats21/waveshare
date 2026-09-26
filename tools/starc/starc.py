@@ -4,6 +4,7 @@ STAR Schema Compiler (starc)
 Compiles declarative .star schema files into C++ headers, codecs, and bindings.
 """
 
+import os
 import sys
 import re
 import argparse
@@ -393,6 +394,12 @@ def generate_codec(schema: Schema) -> str:
     return "\n".join(out)
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "db":
+        # nexus_db schemas: see ndb_gen.py
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import ndb_gen
+        sys.exit(ndb_gen.main(sys.argv[2:]))
+
     parser = argparse.ArgumentParser(description="STAR Schema Compiler (starc)")
     parser.add_argument("schema", help="Path to input .star schema file")
     parser.add_argument("--out-header", help="Path to output C++ generated header")

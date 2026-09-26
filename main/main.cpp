@@ -14,6 +14,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "hal/Board.h"
 #include "credentials/Credentials.h"
+#include "nexus_db/StressTest.h"
 #include "services/alarm/AlarmService.h"
 #include "services/storage/SysDbSyncReactor.h"
 #include "services/storage/AlertFileDecoder.h"
@@ -72,6 +73,9 @@ extern "C" void app_main(void) {
 #endif
         // Moves any secrets on the card into NVS before Wi-Fi reads them.
         credentials::importFromSdCard();
+#if CONFIG_NEXUS_DB_STRESS_TEST
+        nexus_db::runStressTestIfRequested();
+#endif
     }
 
     // 3.5 Start WiFi service early to secure internal DMA buffers before tasks allocate stacks
