@@ -440,7 +440,9 @@ bool Database::openLocked() {
     m_records = res.records;
     m_skipped = res.skipped;
     m_truncated = res.truncated;
-    m_compact_needed = res.skipped > 0;
+    // Damage is dropped by a cleanup, and so is a stale schema hash: the
+    // header is rewritten only then, and readers compare it with theirs.
+    m_compact_needed = res.skipped > 0 || get32(h + 8) != m_opt.schema_hash;
     ESP_LOGI(TAG, "%s: %u documents, %u records, %u bytes (%u live)", m_opt.name, unsigned(m_index.size()),
              unsigned(m_records), unsigned(m_size), unsigned(m_live));
     maybeCompact();

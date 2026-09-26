@@ -21,6 +21,16 @@ public:
         m_tool_ctx = ctx;
     }
 
+    // Model, voice and system prompt for the next session. Empty strings mean
+    // the firmware defaults. The source is set by the app (system.ndb).
+    struct SessionSettings {
+        std::string model;
+        std::string voice;
+        std::string system_prompt;
+    };
+    typedef SessionSettings (*SettingsSourceFn)();
+    void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
+
     void transmitToolResponse(const char* call_id, const char* json_result);
     void transmitAudioUplink(const char* base64_pcm);
     
@@ -41,9 +51,6 @@ private:
     ~GeminiProtocol() override;
 
     bool ensureClientInitialized();
-    // Parses /sdcard/gemini_config.json ({"model","voice","system_prompt"}; the API key is in NVS);
-    // false (and `out` empty) if missing or invalid.
-    bool readConfig(JsonDocument& out);
     void transmitSetupHandshake();
     void processIncomingFrame(char* payload, size_t length);
     void handleToolCall(JsonObjectConst toolCall);
@@ -55,6 +62,7 @@ private:
 
     WssClient m_client;
     std::mutex m_client_mutex;
+    SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
 
     ToolCallHandlerFn m_tool_handler = nullptr;

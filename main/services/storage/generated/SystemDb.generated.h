@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0x0317DD60u;
+constexpr uint32_t SCHEMA_HASH = 0x1DCEC80Bu;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -44,6 +44,27 @@ struct SavedState {
     void toSysdb(::SystemState& s) const;
 };
 
+// Collection 'settings' (id 2, key: string, cached).
+struct Settings {
+    static constexpr uint8_t COLLECTION = 2;
+    enum : uint64_t {
+        F_TIMEZONE = 1ull << 0,
+        F_GEMINI_MODEL = 1ull << 1,
+        F_GEMINI_VOICE = 1ull << 2,
+        F_GEMINI_SYSTEM_PROMPT = 1ull << 3,
+        F_ALL = 0xFull,
+    };
+
+    std::string timezone = "UTC";
+    std::string gemini_model{};
+    std::string gemini_voice{};
+    std::string gemini_system_prompt{};
+
+    void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
+    // Fields missing from `value` keep their current values.
+    void decode(std::string_view value);
+};
+
 // /sdcard/db/system.ndb
 class SystemDb {
 public:
@@ -59,6 +80,7 @@ public:
     nexus_db::Database& db() { return m_db; }
 
     nexus_db::Collection<SavedState> state() { return nexus_db::Collection<SavedState>(m_db); }
+    nexus_db::Collection<Settings> settings() { return nexus_db::Collection<Settings>(m_db); }
 
 private:
     nexus_db::Database m_db;

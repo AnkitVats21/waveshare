@@ -28,7 +28,7 @@ struct CollectionDef {
 struct Options {
     const char* name;  // stored in the header, at most 11 characters
     const char* path;  // e.g. "/sdcard/db/music.ndb"
-    uint32_t schema_hash;
+    uint32_t schema_hash;  // a file with another hash is rewritten once at open
     Flush flush;
     const CollectionDef* collections;
     size_t collection_count;

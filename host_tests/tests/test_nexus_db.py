@@ -256,6 +256,24 @@ def test_newer_format_is_left_alone(env):
     assert env.file.read_bytes() == bytes(data)
 
 
+def test_schema_change_rewrites_header_once(env):
+    d = env.opened()
+    fill(d)
+    expected = env.state(d)
+    d.close()
+    data = bytearray(env.file.read_bytes())
+    struct.pack_into("<I", data, 8, 0x9999)  # written by another schema
+    struct.pack_into("<I", data, 28, zlib.crc32(bytes(data[:28])))
+    env.file.write_bytes(bytes(data))
+    d = env.opened()
+    assert d.stats()["compactions"] == 1
+    assert env.state(d) == expected
+    d.close()
+    assert struct.unpack_from("<I", env.file.read_bytes(), 8)[0] == 0x1234
+    d = env.opened()
+    assert d.stats()["compactions"] == 0
+
+
 def test_unknown_collection_records_are_ignored(env):
     other = ndb.Database(PATH, "test", COLLECTIONS + [(7, "future", True)], io=env.io())
     assert other.open()

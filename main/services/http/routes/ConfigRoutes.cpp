@@ -1,31 +1,36 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
-#include "sd_storage/Fs.h"
+#include "services/storage/SystemDatabase.h"
+#include "services/time/TimeSyncHelper.h"
 #include "credentials/Credentials.h"
 #include "gemini_live/gemini_skills_generated.h"
 
 namespace {
 
-constexpr const char* GEMINI_CONFIG = "/sdcard/gemini_config.json";
-constexpr const char* SETTINGS_FILE = "/sdcard/settings.txt";
+using ndb::system::Settings;
 
-// settings.txt: raw text passthrough.
+// {"timezone": "IST-5:30"}: a POSIX TZ string, applied immediately.
 esp_err_t getSettingsHandler(httpd_req_t* req) {
-    std::string content = sd_storage::Fs::readText(SETTINGS_FILE);
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, content.c_str(), content.length());
+    JsonDocument doc;
+    doc["timezone"] = Services::loadSettings().timezone;
+    return Http::sendJson(req, 200, doc);
 }
 
 esp_err_t setSettingsHandler(httpd_req_t* req) {
     std::string body;
-    if (req->content_len > 0 && !Http::readBody(req, body, req->content_len)) {
-        return Http::sendError(req, 500, "Socket receive failed");
+    JsonDocument doc;
+    if (req->content_len == 0 || !Http::readBody(req, body, 512) || deserializeJson(doc, body) ||
+        !doc["timezone"].is<const char*>()) {
+        return Http::sendError(req, 400, "Body must be {\"timezone\": \"<POSIX TZ>\"}");
     }
-    if (!sd_storage::Fs::writeAtomic(SETTINGS_FILE, body.c_str())) {
-        return Http::sendError(req, 500, "Failed to write config file to SD");
+    Settings s;
+    s.timezone = doc["timezone"].as<const char*>();
+    if (s.timezone.empty()) s.timezone = "UTC";
+    if (!Services::saveSettings(s, Settings::F_TIMEZONE)) {
+        return Http::sendError(req, 500, "Failed to save settings");
     }
-    return Http::sendOk(req, "Config updated successfully");
+    Services::TimeSyncHelper::applyTimezone(s.timezone);
+    return Http::sendOk(req, "Settings updated");
 }
 
 // Model and voice compiled into the firmware, used when the config sets none.
@@ -37,19 +42,17 @@ void addDefaults(JsonDocument& doc) {
     defaults["voice"] = setup["setup"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"];
 }
 
-// gemini_config.json holds {"model", "voice", "system_prompt"}; the API key is
-// in NVS. The key is write-only: GET reports only whether one is set; POST
-// stores a new key when the body carries one and never writes it to the file.
+// Model, voice and system prompt live in system.ndb; the API key in NVS. The
+// key is write-only: GET reports only whether one is set; POST stores a new
+// key when the body carries one. Unset fields are omitted, and the firmware
+// defaults are listed under "defaults".
 esp_err_t getGeminiHandler(httpd_req_t* req) {
+    Settings s = Services::loadSettings();
     JsonDocument doc;
-    std::string content = sd_storage::Fs::readText(GEMINI_CONFIG);
-    if (content.empty() || deserializeJson(doc, content) || !doc.is<JsonObject>()) {
-        doc.to<JsonObject>();
-        if (!content.empty()) {
-            doc["config_error"] = "gemini_config.json on the SD card is not valid JSON; it is being ignored";
-        }
-    }
-    doc.remove("api_key");
+    doc.to<JsonObject>();
+    if (!s.gemini_model.empty()) doc["model"] = s.gemini_model;
+    if (!s.gemini_voice.empty()) doc["voice"] = s.gemini_voice;
+    if (!s.gemini_system_prompt.empty()) doc["system_prompt"] = s.gemini_system_prompt;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
@@ -64,20 +67,27 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     if (deserializeJson(doc, body) || !doc.is<JsonObject>()) {
         return Http::sendError(req, 400, "Body must be a JSON object");
     }
-    doc.remove("api_key_set");
-    doc.remove("defaults");
-    doc.remove("config_error");
 
     std::string new_key = doc["api_key"] | "";
-    doc.remove("api_key");
     if (!new_key.empty() && !credentials::setGeminiApiKey(new_key)) {
         return Http::sendError(req, 500, "Failed to store the API key");
     }
 
-    std::string out;
-    serializeJson(doc, out);
-    if (!sd_storage::Fs::writeAtomic(GEMINI_CONFIG, out.c_str())) {
-        return Http::sendError(req, 500, "Failed to write config file to SD");
+    // A field present in the body is set (an empty string clears it); an
+    // absent one is left unchanged.
+    Settings s;
+    uint64_t fields = 0;
+    auto take = [&](const char* key, std::string& dst, uint64_t bit) {
+        if (doc[key].is<const char*>()) {
+            dst = doc[key].as<const char*>();
+            fields |= bit;
+        }
+    };
+    take("model", s.gemini_model, Settings::F_GEMINI_MODEL);
+    take("voice", s.gemini_voice, Settings::F_GEMINI_VOICE);
+    take("system_prompt", s.gemini_system_prompt, Settings::F_GEMINI_SYSTEM_PROMPT);
+    if (fields && !Services::saveSettings(s, fields)) {
+        return Http::sendError(req, 500, "Failed to save settings");
     }
     return Http::sendOk(req, "Gemini config updated; applies to the next session");
 }

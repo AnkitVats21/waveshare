@@ -1,6 +1,6 @@
 # nexus_db: on-device databases
 
-Status: steps 1–2 done; step 3 in progress. 2026-09-26.
+Status: steps 1–3 done (alarms deferred to the alarm redesign). 2026-09-26.
 
 ## Goals
 
@@ -24,7 +24,7 @@ is fast enough.
 
 | Database | Path | Collections | Rebuildable? | Flush |
 |---|---|---|---|---|
-| system | `/sdcard/db/system.ndb` | `state`, `settings`, `alarms` | no | every commit |
+| system | `/sdcard/db/system.ndb` | `state`, `settings` (`alarms` with the alarm redesign) | no | every commit |
 | music | `/sdcard/db/music.ndb` | `tracks` | yes (scan `/sdcard/music`) | batched, ≤ 2 s |
 | recordings | `/sdcard/db/recordings.ndb` | `recordings` | yes (scan `/sdcard/recordings`) | batched, ≤ 2 s |
 
@@ -79,7 +79,7 @@ All integers little-endian. Records are 4-byte aligned.
 | 0 | 4 | magic `"NXDB"` |
 | 4 | 2 | format version (1) |
 | 6 | 2 | header length (32) |
-| 8 | 4 | schema hash (of this database's schema; informational) |
+| 8 | 4 | schema hash (of the schema that last wrote the header; a file opened with another schema is cleaned up once, which rewrites it) |
 | 12 | 4 | generation (incremented by each cleanup) |
 | 16 | 12 | database name, NUL-padded (`"system"`, `"music"`, ...) |
 | 28 | 4 | CRC-32 of bytes 0–27 |
@@ -229,6 +229,19 @@ playback. It puts the whole document; the engine writes nothing when it is
 unchanged. Saving pauses during a firmware OTA, whose green blink is followed
 by a reboot and must not become the saved LED mode.
 
+### The `settings` collection
+
+One document, key `"settings"`: `timezone` (POSIX TZ, default `"UTC"`),
+`gemini_model`, `gemini_voice`, `gemini_system_prompt` (empty = firmware
+default). `/api/config/settings` reads and writes `{"timezone"}` and applies
+it immediately; `/api/config/gemini` keeps its shape, with the API key still
+write-only in NVS. `gemini_live` gets these through a callback set by `main`
+(`GeminiProtocol::setSettingsSource`), so it does not depend on the database.
+
+Dropping a `gemini_config.json` on the card still works on a fresh device:
+at boot the key goes to NVS first, then the other fields to `settings`, and
+the file is deleted. A file still holding a key is never deleted.
+
 ## Seeking
 
 No seek table is stored. The player finds byte positions from the file:
@@ -252,12 +265,12 @@ This replaces `CatalogDB::setSeekTable`, `lookupSeekEntry` and
 | Old file | Goes to | Afterwards |
 |---|---|---|
 | `/sdcard/state_sync.txt` | `system.ndb` `state` | renamed `.bak` |
-| `/sdcard/alarms.json` | `system.ndb` `alarms` | renamed `.bak` |
-| `/sdcard/settings.txt` | `system.timezone` → `system.ndb` `settings` | **deleted** (holds unused plaintext Wi-Fi and MQTT credentials) |
+| `/sdcard/alarms.json` | `system.ndb` `alarms` (with the alarm redesign) | renamed `.bak` |
+| `/sdcard/settings.txt` | `system.timezone` → `settings.timezone` | **deleted** (held unused plaintext Wi-Fi and MQTT credentials) |
 | `/sdcard/playback.txt`, `playback_history.txt` | nothing (written by an agent rule, read by no code) | **deleted** |
 | `/sdcard/music/catalog.db` (+ `.wal`) | `music.ndb` `tracks` (seek tables dropped) | renamed `.bak` |
 | `/sdcard/recordings/*` | `recordings.ndb` (scan) | files unchanged |
-| `/sdcard/gemini_config.json` | `api_key` → NVS; `model`, `voice` → `settings` | **deleted** after the NVS value reads back |
+| `/sdcard/gemini_config.json` | `api_key` → NVS; `model`, `voice`, `system_prompt` → `settings` | **deleted** once no key is left in it |
 | `/sdcard/wifi_config.json` | NVS `wifi_store` | **deleted** after the NVS value reads back |
 
 Each import runs only when the target is empty and the old file exists, so an
@@ -289,7 +302,7 @@ Each step is its own commit and is tested on the device before the next.
    the format (torn tail, mid-file corruption, cleanup interrupted at each
    step); an on-device stress test that appends while pulling power is
    simulated by `esp_restart` at random points.
-3. **system.ndb**: state, then alarms, then settings; migrations; `GET /api/db/<name>`.
+3. **system.ndb**: state and settings, migrations, `GET /api/db/<name>`. Alarms move with the alarm redesign (own design doc).
 4. **Seeking from the file itself** (before music.ndb, so nothing seek-related
    is migrated): see "Seeking" below.
 5. **music.ndb**: `CatalogDB` becomes a wrapper; migration from `catalog.db`.

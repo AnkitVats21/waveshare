@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace Services {
 
@@ -13,6 +14,9 @@ public:
      * @return true if time was successfully synchronized.
      */
     static bool synchronizeTimeAndCleanup(uint32_t timeout_ms = 15000);
+
+    // Sets the process timezone (POSIX TZ string, e.g. "IST-5:30").
+    static void applyTimezone(const std::string& tz);
 };
 
 } // namespace Services

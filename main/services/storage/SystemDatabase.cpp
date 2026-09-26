@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <string>
 
+#include <ArduinoJson.h>
+
 #include "common/ParserUtils.h"
 #include "core_sysdb/led_types.h"
 #include "esp_log.h"
@@ -17,7 +19,10 @@ namespace {
 const char* const TAG = "SystemDb";
 
 constexpr const char* STATE_KEY = "state";
+constexpr const char* SETTINGS_KEY = "settings";
 constexpr const char* OLD_STATE_FILE = "/sdcard/state_sync.txt";
+constexpr const char* OLD_SETTINGS_FILE = "/sdcard/settings.txt";
+constexpr const char* OLD_GEMINI_FILE = "/sdcard/gemini_config.json";
 
 void renameToBak(const char* path) {
     std::string bak = std::string(path) + ".bak";
@@ -57,6 +62,63 @@ void migrateState(ndb::system::SystemDb& db) {
     renameToBak(OLD_STATE_FILE);
 }
 
+void onSettingsPair(const std::string& key, const std::string& val, void* ctx) {
+    if (key == "system.timezone") static_cast<ndb::system::Settings*>(ctx)->timezone = val;
+}
+
+// settings.txt -> timezone. Its only other lines were unused Wi-Fi and MQTT
+// credentials, so the file is deleted rather than kept as .bak.
+void migrateSettingsFile(ndb::system::SystemDb& db) {
+    if (!sd_storage::Fs::isFile(OLD_SETTINGS_FILE)) return;
+    ndb::system::Settings s;
+    s.timezone.clear();
+    Utils::ParserUtils::parseKeyValueStream(sd_storage::Fs::readText(OLD_SETTINGS_FILE), onSettingsPair, &s);
+    if (!s.timezone.empty() && !db.settings().merge(SETTINGS_KEY, s, ndb::system::Settings::F_TIMEZONE)) {
+        ESP_LOGE(TAG, "Could not import %s; left in place", OLD_SETTINGS_FILE);
+        return;
+    }
+    sd_storage::Fs::remove(OLD_SETTINGS_FILE);
+    ESP_LOGI(TAG, "Imported and deleted %s", OLD_SETTINGS_FILE);
+}
+
+// gemini_config.json -> model, voice, system prompt. Also the way to set them
+// on a fresh device: drop the file on the card. credentials::importFromSdCard
+// has already moved any API key to NVS; a file still holding one is left
+// alone so the key is never lost.
+void migrateGeminiFile(ndb::system::SystemDb& db) {
+    std::string content = sd_storage::Fs::readText(OLD_GEMINI_FILE);
+    if (content.empty()) {
+        if (sd_storage::Fs::isFile(OLD_GEMINI_FILE)) sd_storage::Fs::remove(OLD_GEMINI_FILE);
+        return;
+    }
+    if (content.find("\"api_key\"") != std::string::npos) {
+        ESP_LOGW(TAG, "%s still holds an API key; not importing it", OLD_GEMINI_FILE);
+        return;
+    }
+    JsonDocument doc;
+    if (!deserializeJson(doc, content) && doc.is<JsonObject>()) {
+        ndb::system::Settings s;
+        uint64_t fields = 0;
+        auto take = [&](const char* key, std::string& dst, uint64_t bit) {
+            if (doc[key].is<const char*>()) {
+                dst = doc[key].as<const char*>();
+                fields |= bit;
+            }
+        };
+        take("model", s.gemini_model, ndb::system::Settings::F_GEMINI_MODEL);
+        take("voice", s.gemini_voice, ndb::system::Settings::F_GEMINI_VOICE);
+        take("system_prompt", s.gemini_system_prompt, ndb::system::Settings::F_GEMINI_SYSTEM_PROMPT);
+        if (fields && !db.settings().merge(SETTINGS_KEY, s, fields)) {
+            ESP_LOGE(TAG, "Could not import %s; left in place", OLD_GEMINI_FILE);
+            return;
+        }
+    } else {
+        ESP_LOGW(TAG, "%s is not valid JSON; deleting it", OLD_GEMINI_FILE);
+    }
+    sd_storage::Fs::remove(OLD_GEMINI_FILE);
+    ESP_LOGI(TAG, "Imported and deleted %s", OLD_GEMINI_FILE);
+}
+
 // Written by an agent rule, read by nothing.
 void deleteUnusedFiles() {
     for (const char* path : {"/sdcard/playback.txt", "/sdcard/playback_history.txt"}) {
@@ -85,6 +147,8 @@ bool openSystemDb() {
         j->ok = db.open();
         if (j->ok) {
             migrateState(db);
+            migrateSettingsFile(db);
+            migrateGeminiFile(db);
             deleteUnusedFiles();
         } else {
             ESP_LOGE(TAG, "Could not open system.ndb; settings will not be saved");
@@ -95,6 +159,18 @@ bool openSystemDb() {
     if (xTaskCreate(work, "sysdb_open", 8 * 1024, &job, 5, nullptr) != pdPASS) return false;
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     return job.ok;
+}
+
+ndb::system::Settings loadSettings() {
+    ndb::system::Settings s;
+    auto& db = systemDb();
+    if (db.db().isOpen()) db.settings().get(SETTINGS_KEY, s);
+    return s;
+}
+
+bool saveSettings(const ndb::system::Settings& settings, uint64_t fields) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.settings().merge(SETTINGS_KEY, settings, fields);
 }
 
 }  // namespace Services

@@ -1,7 +1,5 @@
 #include "TimeSyncHelper.h"
-#include "sd_storage/Fs.h"
-#include "sd_storage/SdCard.h"
-#include "common/ParserUtils.h"
+#include "services/storage/SystemDatabase.h"
 #include "esp_sntp.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -13,11 +11,9 @@ static const char* TAG = "TimeSyncHelper";
 
 namespace Services {
 
-static void onTimeSyncConfigPair(const std::string& key, const std::string& val, void* ctx) {
-    auto* tz_str = static_cast<std::string*>(ctx);
-    if (key == "system.timezone") {
-        *tz_str = val;
-    }
+void TimeSyncHelper::applyTimezone(const std::string& tz) {
+    setenv("TZ", tz.empty() ? "UTC" : tz.c_str(), 1);
+    tzset();
 }
 
 bool TimeSyncHelper::synchronizeTimeAndCleanup(uint32_t timeout_ms) {
@@ -58,21 +54,9 @@ bool TimeSyncHelper::synchronizeTimeAndCleanup(uint32_t timeout_ms) {
         asctime_r(&timeinfo, str);
         ESP_LOGI(TAG, "NTP synchronization successful! System time: %s", str);
 
-        // Load timezone from settings.txt
-        std::string tz = "UTC"; // default
-        if (sd_storage::SdCard::instance().isMounted()) {
-            std::string config = sd_storage::Fs::readText("/sdcard/settings.txt");
-            if (!config.empty()) {
-                Utils::ParserUtils::parseKeyValueStream(config, onTimeSyncConfigPair, &tz);
-                if (tz != "UTC") {
-                    ESP_LOGI(TAG, "Loaded timezone configuration from SD card: %s", tz.c_str());
-                }
-            }
-        }
-
-        // Apply timezone
-        setenv("TZ", tz.c_str(), 1);
-        tzset();
+        std::string tz = loadSettings().timezone;
+        ESP_LOGI(TAG, "Timezone from settings: %s", tz.c_str());
+        applyTimezone(tz);
         
         // Log timezone-adjusted local time
         time(&now);

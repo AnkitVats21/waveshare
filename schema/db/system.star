@@ -15,4 +15,13 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field autoplay:        bool = true tag=5  sysdb=media.autoplay_enabled
         field cache_downloads: bool        tag=6  sysdb=media.cache_downloads
     }
+
+    // One document, key "settings". Empty strings mean "use the default":
+    // UTC, and the model and voice compiled into the firmware.
+    collection settings id=2 key=string cache doc=Settings {
+        field timezone:             string = "UTC" tag=1   // POSIX TZ, e.g. "IST-5:30"
+        field gemini_model:         string         tag=2
+        field gemini_voice:         string         tag=3
+        field gemini_system_prompt: string         tag=4
+    }
 }

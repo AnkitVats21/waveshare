@@ -24,7 +24,6 @@
 
 static const char* const GEMINI_LIVE_BASE_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=";
 static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 65536; // 64KB ceiling
-static constexpr const char* GEMINI_CONFIG_PATH = "/sdcard/gemini_config.json";
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
@@ -111,19 +110,6 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocket Client Management
 // ─────────────────────────────────────────────────────────────────────────────
-
-bool GeminiProtocol::readConfig(JsonDocument& out) {
-    out.clear();
-    std::string content = sd_storage::Fs::readText(GEMINI_CONFIG_PATH);
-    if (content.empty()) return false;
-    DeserializationError err = deserializeJson(out, content);
-    if (err || !out.is<JsonObject>()) {
-        LOGW_NET("%s is not valid JSON (%s); ignoring it", GEMINI_CONFIG_PATH, err ? err.c_str() : "not an object");
-        out.clear();
-        return false;
-    }
-    return true;
-}
 
 bool GeminiProtocol::ensureClientInitialized() {
     std::lock_guard<std::mutex> lock(m_client_mutex);
@@ -230,7 +216,7 @@ void GeminiProtocol::transmitSetupHandshake() {
     if (!m_client.isConnected()) return;
 
     // Start from the compiled-in setup (model, voice, tool declarations), then
-    // apply /sdcard/gemini_config.json overrides and the long-term memory.
+    // apply the saved settings and the long-term memory.
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, GeminiSkills::SETUP_HANDSHAKE_JSON);
     if (err) {
@@ -241,19 +227,15 @@ void GeminiProtocol::transmitSetupHandshake() {
     }
     JsonObject setup = doc["setup"];
 
-    JsonDocument cfg;
-    readConfig(cfg);
-    const char* model = cfg["model"] | "";
-    const char* voice = cfg["voice"] | "";
-    if (model[0]) {
-        std::string full = (strncmp(model, "models/", 7) == 0) ? model : std::string("models/") + model;
-        setup["model"] = full;
+    SessionSettings cfg = m_settings_source ? m_settings_source() : SessionSettings{};
+    if (!cfg.model.empty()) {
+        setup["model"] = cfg.model.rfind("models/", 0) == 0 ? cfg.model : "models/" + cfg.model;
     }
-    if (voice[0]) {
-        setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] = voice;
+    if (!cfg.voice.empty()) {
+        setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] = cfg.voice;
     }
 
-    std::string instruction = cfg["system_prompt"] | "";
+    std::string instruction = cfg.system_prompt;
     std::string memory = sd_storage::Fs::readText("/sdcard/gemini_memory.txt");
     if (!memory.empty()) {
         if (!instruction.empty()) instruction += "\n\n";

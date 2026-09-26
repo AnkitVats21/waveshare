@@ -50,8 +50,31 @@ void SavedState::decode(std::string_view value) {
     }
 }
 
+void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
+    if (fields & F_TIMEZONE) w.str(1, timezone);
+    if (fields & F_GEMINI_MODEL) w.str(2, gemini_model);
+    if (fields & F_GEMINI_VOICE) w.str(3, gemini_voice);
+    if (fields & F_GEMINI_SYSTEM_PROMPT) w.str(4, gemini_system_prompt);
+}
+
+void Settings::decode(std::string_view value) {
+    nexus_db::FieldReader r(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+    uint16_t tag, len;
+    const uint8_t* v;
+    while (r.next(tag, v, len)) {
+        switch (tag) {
+            case 1: nexus_db::FieldReader::read(v, len, timezone); break;
+            case 2: nexus_db::FieldReader::read(v, len, gemini_model); break;
+            case 3: nexus_db::FieldReader::read(v, len, gemini_voice); break;
+            case 4: nexus_db::FieldReader::read(v, len, gemini_system_prompt); break;
+            default: break;  // unknown tag: a newer or retired field
+        }
+    }
+}
+
 static const nexus_db::CollectionDef COLLECTIONS[] = {
     {1, "state", true},
+    {2, "settings", true},
 };
 
 const nexus_db::Options& SystemDb::options() {

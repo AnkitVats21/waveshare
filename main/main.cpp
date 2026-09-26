@@ -69,11 +69,12 @@ extern "C" void app_main(void) {
             LOGE_SYSTEM("Failed to mount SD card!");
         } else {
             LOGI_SYSTEM("SD Card mounted successfully at %s", CONFIG_WAVESHARE_SDCARD_MOUNT_POINT);
+            // Moves any secrets on the card into NVS before Wi-Fi reads them,
+            // and before system.ndb imports (and deletes) gemini_config.json.
+            credentials::importFromSdCard();
             if (Services::openSystemDb()) Services::SysDbSyncReactor::getInstance().loadPersistentState();
         }
 #endif
-        // Moves any secrets on the card into NVS before Wi-Fi reads them.
-        credentials::importFromSdCard();
 #if CONFIG_NEXUS_DB_STRESS_TEST
         nexus_db::runStressTestIfRequested();
 #endif
@@ -109,7 +110,10 @@ extern "C" void app_main(void) {
     static LedService           led_svc(led_strip);
     static AssistantService     assistant_svc;
     static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
-    (void)gemini_proto; // Suppress unused warning since task auto-spawns on instantiation
+    gemini_proto.setSettingsSource([]() {
+        ndb::system::Settings s = Services::loadSettings();
+        return GeminiProtocol::SessionSettings{s.gemini_model, s.gemini_voice, s.gemini_system_prompt};
+    });
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();

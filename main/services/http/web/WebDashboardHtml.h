@@ -309,17 +309,17 @@ audio { outline: none; height: 36px; width: 340px; max-width: 60%; }
     <div class="grid-2">
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <h2>📄 settings.txt</h2>
+          <h2>⚙️ Settings (JSON)</h2>
           <button class="btn btn-primary btn-sm" onclick="saveConfigSettings()">💾 Save</button>
         </div>
-        <textarea id="editor-settings" rows="18" placeholder="Loading settings.txt..."></textarea>
+        <textarea id="editor-settings" rows="18" placeholder='{"timezone": "IST-5:30"}'></textarea>
       </div>
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <h2>🤖 gemini_config.json</h2>
+          <h2>🤖 Gemini config (JSON)</h2>
           <button class="btn btn-primary btn-sm" onclick="saveConfigGemini()">💾 Save</button>
         </div>
-        <textarea id="editor-gemini" rows="18" placeholder="Loading gemini_config.json..."></textarea>
+        <textarea id="editor-gemini" rows="18" placeholder="Loading Gemini config..."></textarea>
       </div>
     </div>
   </div>
@@ -867,9 +867,9 @@ async function loadConfigs() {
 async function saveConfigSettings() {
   const content = document.getElementById('editor-settings').value;
   try {
-    const res = await fetch('/api/config/settings', { method: 'POST', body: content });
+    const res = await fetch('/api/config/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: content });
     if (!res.ok) throw new Error('Save failed');
-    showToast('Saved settings.txt');
+    showToast('Saved settings');
   } catch (err) { showToast(err.message, true); }
 }
 
@@ -878,7 +878,7 @@ async function saveConfigGemini() {
   try {
     const res = await fetch('/api/config/gemini', { method: 'POST', body: content });
     if (!res.ok) throw new Error('Save failed');
-    showToast('Saved gemini_config.json');
+    showToast('Saved Gemini config');
   } catch (err) { showToast(err.message, true); }
 }
 
