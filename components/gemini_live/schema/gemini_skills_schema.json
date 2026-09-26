@@ -189,7 +189,15 @@
   },
   {
     "name": "stop_active_alarm",
-    "description": "Stops any active playing alarm tone on the device.",
+    "description": "Stops the alarm or timer that is ringing (or snoozed).",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "snooze_alarm",
+    "description": "Snoozes the alarm or timer that is ringing; it rings again after its snooze time (9 minutes unless set otherwise).",
     "parameters": {
       "type": "OBJECT",
       "properties": {}
@@ -197,31 +205,155 @@
   },
   {
     "name": "set_alarm",
-    "description": "Sets or schedules an alarm on the device at a specific absolute hour and minute (24-hour format).",
+    "description": "Sets an alarm at hour:minute local time (24-hour clock). One-time unless repeat days are given. An alarm at the same time and days is updated instead of duplicated. Returns the id and when it rings next.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
         "hour": {
           "type": "INTEGER",
-          "description": "Hour of the day in 24-hour format (0-23)."
+          "description": "Hour, 0-23."
         },
         "minute": {
           "type": "INTEGER",
-          "description": "Minute of the hour (0-59)."
+          "description": "Minute, 0-59."
         },
-        "tone_file": {
+        "days": {
           "type": "STRING",
-          "description": "Path to the WAV sound file on the SD card (optional, defaults to /sdcard/alarms/soft_wake_up.wav)."
+          "description": "Repeat days: 'once' (default), 'daily', 'weekdays', 'weekends', or day names like 'mon, wed, fri'."
+        },
+        "day": {
+          "type": "STRING",
+          "description": "For a one-time item: 'today', 'tomorrow', a day name, or YYYY-MM-DD. Default: the next time the clock shows hour:minute."
+        },
+        "label": {
+          "type": "STRING",
+          "description": "Optional name, e.g. 'gym'."
+        },
+        "tone": {
+          "type": "STRING",
+          "description": "Optional song from the device's music library to ring with (title or artist). Default: the built-in alarm tone."
         },
         "enabled": {
           "type": "BOOLEAN",
-          "description": "Whether the alarm is enabled (optional, defaults to true)."
+          "description": "False to create or keep the alarm switched off. Default true."
         }
       },
       "required": [
         "hour",
         "minute"
       ]
+    }
+  },
+  {
+    "name": "list_alarms",
+    "description": "Lists the alarms and running timers with their ids, times, repeat days and when each rings next.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "cancel_alarm",
+    "description": "Deletes an alarm or timer by id (get ids from list_alarms).",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "id": {
+          "type": "INTEGER",
+          "description": "The alarm or timer id."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "set_timer",
+    "description": "Starts a countdown timer that rings like an alarm when it ends.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "seconds": {
+          "type": "INTEGER",
+          "description": "Duration in seconds, e.g. 1200 for 20 minutes. At most 24 hours."
+        },
+        "label": {
+          "type": "STRING",
+          "description": "Optional name, e.g. 'pasta'."
+        }
+      },
+      "required": [
+        "seconds"
+      ]
+    }
+  },
+  {
+    "name": "set_reminder",
+    "description": "Sets a reminder: at the time, the device chimes and you will be asked to tell the user the text. Give either in_minutes, or hour and minute (with optional day or repeat days).",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "text": {
+          "type": "STRING",
+          "description": "What to remind the user of, e.g. 'call the bank'."
+        },
+        "hour": {
+          "type": "INTEGER",
+          "description": "Hour, 0-23."
+        },
+        "minute": {
+          "type": "INTEGER",
+          "description": "Minute, 0-59."
+        },
+        "days": {
+          "type": "STRING",
+          "description": "Repeat days: 'once' (default), 'daily', 'weekdays', 'weekends', or day names like 'mon, wed, fri'."
+        },
+        "day": {
+          "type": "STRING",
+          "description": "For a one-time item: 'today', 'tomorrow', a day name, or YYYY-MM-DD. Default: the next time the clock shows hour:minute."
+        },
+        "in_minutes": {
+          "type": "INTEGER",
+          "description": "Instead of hour and minute: remind this many minutes from now."
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "list_reminders",
+    "description": "Lists the reminders with their ids, times, repeat days and whether any are pending (fired but not yet heard by the user).",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "cancel_reminder",
+    "description": "Deletes a reminder by id (get ids from list_reminders).",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "id": {
+          "type": "INTEGER",
+          "description": "The reminder id."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "acknowledge_reminders",
+    "description": "Marks all pending reminders as heard. Use when the user says they got them or have done them.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
     }
   },
   {

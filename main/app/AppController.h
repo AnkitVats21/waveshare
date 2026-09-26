@@ -15,8 +15,7 @@ public:
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
     // IDeviceCommandDelegate interface
-    bool setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) override;
-    bool stopActiveAlarm() override;
+    bool handleAlarmTool(const GeminiSkills::DecodedSkillCall& call, JsonDocument& response) override;
 
 protected:
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace Services {
 
@@ -30,5 +31,20 @@ int64_t nextFire(const AlarmWhen& when, int64_t after);
 
 // Days bit (bit0 Mon .. bit6 Sun) of a tm_wday (0 Sun .. 6 Sat).
 inline uint8_t dayBit(int tm_wday) { return uint8_t(1u << ((tm_wday + 6) % 7)); }
+
+// Repeat days from words (voice tools): "" or "once" = 0, "daily", "weekdays",
+// "weekends", or day names ("mon, wednesday and fri", "Mondays").
+// False if a word is not understood.
+bool parseDays(const std::string& text, uint8_t& days);
+// "once", "every day", "weekdays", "weekends" or "Mon, Wed, Fri".
+std::string formatDays(uint8_t days);
+
+// The epoch of hour:minute on `day`, local time: "today", "tomorrow", a day
+// name (its next occurrence, today if the time is still ahead) or
+// "YYYY-MM-DD". Returns DAY_INVALID if `day` is not understood and
+// DAY_PAST if the time has already gone.
+constexpr int64_t DAY_INVALID = -1;
+constexpr int64_t DAY_PAST = -2;
+int64_t resolveDay(const std::string& day, int hour, int minute, int64_t now);
 
 } // namespace Services

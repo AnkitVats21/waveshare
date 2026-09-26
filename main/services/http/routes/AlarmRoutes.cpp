@@ -4,6 +4,7 @@
 //   POST   /api/alarms           create, or update the one with "id" (fields left out keep their values)
 //                                {"id"?, "hour", "minute", "days"?, "at"?, "label"?, "enabled"?,
 //                                 "tone"?, "snooze_min"?, "volume"?, "kind"?}
+//                                a new alarm with neither days nor at repeats daily
 //   DELETE /api/alarms?id=N
 //   GET    /api/alarms/status    ringing state
 //   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?}
@@ -93,6 +94,8 @@ esp_err_t saveHandler(httpd_req_t* req) {
     if (!takeInt(in, "snooze_min", 1, 60, a.snooze_min)) return Http::sendError(req, 400, "snooze_min must be 1-60");
     if (!takeInt(in, "volume", 0, 100, a.volume)) return Http::sendError(req, 400, "volume must be 0-100");
     if (!exists && in["hour"].isNull() && !a.at) return Http::sendError(req, 400, "hour and minute, or at, are required");
+    // Alarms used to be daily only, and the dashboard does not send days yet.
+    if (!exists && in["days"].isNull() && !a.at) a.days = Services::AlarmWhen::EVERY_DAY;
     if (!in["kind"].isNull()) {
         const char* kind = in["kind"] | "";
         if (strcmp(kind, "alarm") && strcmp(kind, "timer")) return Http::sendError(req, 400, "kind must be alarm or timer");

@@ -128,3 +128,54 @@ def test_dst_repeated_hour_fires_once(cet):
     fires = _series(epoch(cet, 2026, 10, 24, 12, 0), 2, 30, EVERY_DAY, 3)
     days = [local(cet, t).date() for t in fires]
     assert days == [dt.date(2026, 10, 25), dt.date(2026, 10, 26), dt.date(2026, 10, 27)]
+
+
+# ── Words from the voice tools ───────────────────────────────────────────────
+
+@pytest.mark.parametrize("text,days", [
+    ("", 0), ("once", 0),
+    ("daily", EVERY_DAY), ("every day", EVERY_DAY), ("Everyday", EVERY_DAY),
+    ("weekdays", 0x1F), ("weekends", SAT | SUN),
+    ("mon", MON), ("Mondays", MON), ("tues", TUE), ("thursday", THU),
+    ("mon, wed and fri", MON | WED | FRI), ("sat/sun", SAT | SUN), ("every Monday", MON),
+])
+def test_parse_days(text, days):
+    assert wh.parse_days(text) == days
+
+
+@pytest.mark.parametrize("text", ["fortnightly", "mo", "monday, someday", "xyz"])
+def test_parse_days_rejects(text):
+    assert wh.parse_days(text) is None
+
+
+@pytest.mark.parametrize("days,text", [
+    (0, "once"), (EVERY_DAY, "every day"), (0x1F, "weekdays"), (SAT | SUN, "weekends"),
+    (MON | WED | FRI, "Mon, Wed, Fri"), (SUN, "Sun"),
+])
+def test_format_days(days, text):
+    assert wh.format_days(days) == text
+
+
+def test_resolve_day(ist):
+    now = epoch(ist, 2026, 9, 27, 12, 0)   # Sunday noon
+    assert wh.resolve_day("today", 17, 0, now) == epoch(ist, 2026, 9, 27, 17, 0)
+    assert wh.resolve_day("Tomorrow", 7, 30, now) == epoch(ist, 2026, 9, 28, 7, 30)
+    assert wh.resolve_day("2026-12-31", 23, 59, now) == epoch(ist, 2026, 12, 31, 23, 59)
+    assert wh.resolve_day("wednesday", 9, 0, now) == epoch(ist, 2026, 9, 30, 9, 0)
+    # The same day name: today if still ahead, else a week on.
+    assert wh.resolve_day("sunday", 18, 0, now) == epoch(ist, 2026, 9, 27, 18, 0)
+    assert wh.resolve_day("sunday", 8, 0, now) == epoch(ist, 2026, 10, 4, 8, 0)
+
+
+def test_resolve_day_month_end(ist):
+    now = epoch(ist, 2026, 12, 31, 22, 0)
+    assert wh.resolve_day("tomorrow", 6, 0, now) == epoch(ist, 2027, 1, 1, 6, 0)
+
+
+def test_resolve_day_errors(ist):
+    now = epoch(ist, 2026, 9, 27, 12, 0)
+    assert wh.resolve_day("today", 9, 0, now) == wh.DAY_PAST
+    assert wh.resolve_day("2026-01-01", 9, 0, now) == wh.DAY_PAST
+    assert wh.resolve_day("someday", 9, 0, now) == wh.DAY_INVALID
+    assert wh.resolve_day("2026-02-30", 9, 0, now) == wh.DAY_INVALID
+    assert wh.resolve_day("today", 24, 0, now) == wh.DAY_INVALID

@@ -120,41 +120,6 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             return true;
         }
             
-        case SkillType::SET_ALARM: {
-            auto args = skill_call.args.set_alarm;
-            if (args == nullptr) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Null set alarm arguments";
-                return true;
-            }
-
-            int hour = args->hour;
-            int minute = args->minute;
-            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Invalid time format (hour 0-23, minute 0-59 required)";
-                return true;
-            }
-
-            if (!s_delegate) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Alarm service unavailable";
-                return true;
-            }
-
-            int alarm_id = -1;
-            bool ok = s_delegate->setAlarm(hour, minute, args->tone_file.c_str(), args->enabled, alarm_id);
-            if (ok) {
-                response_doc["status"] = "success";
-                response_doc["message"] = "Alarm set successfully";
-                response_doc["alarm_id"] = alarm_id;
-            } else {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Failed to set alarm";
-            }
-            return true;
-        }
-
         case SkillType::SAVE_TO_MEMORY: {
             auto args = skill_call.args.save_to_memory;
             if (args == nullptr) {
@@ -180,16 +145,20 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             return true;
         }
 
-        case SkillType::STOP_ACTIVE_ALARM: {
-            ESP_LOGI(TAG, "Tool request: Stopping active alarm tone...");
-            if (!s_delegate) {
+        case SkillType::STOP_ACTIVE_ALARM:
+        case SkillType::SNOOZE_ALARM:
+        case SkillType::SET_ALARM:
+        case SkillType::LIST_ALARMS:
+        case SkillType::CANCEL_ALARM:
+        case SkillType::SET_TIMER:
+        case SkillType::SET_REMINDER:
+        case SkillType::LIST_REMINDERS:
+        case SkillType::CANCEL_REMINDER:
+        case SkillType::ACKNOWLEDGE_REMINDERS: {
+            if (!s_delegate || !s_delegate->handleAlarmTool(skill_call, response_doc)) {
                 response_doc["status"] = "error";
                 response_doc["message"] = "Alarm service unavailable";
-                return true;
             }
-            s_delegate->stopActiveAlarm();
-            response_doc["status"] = "success";
-            response_doc["message"] = "Alarm cancellation triggered";
             return true;
         }
 

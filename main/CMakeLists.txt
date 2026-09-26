@@ -56,6 +56,7 @@ set(srcs
             "services/alarm/AlarmService.cpp"
             "services/alarm/AlarmRing.cpp"
             "services/alarm/AlarmSchedule.cpp"
+            "services/alarm/AlarmTools.cpp"
             "services/alerts/AlertLibrary.cpp"
 )
 

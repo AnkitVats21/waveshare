@@ -36,6 +36,18 @@ void init_alarm(nb::module_& m) {
         w.at = at;
         return Services::nextFire(w, after);
     }, nb::arg("hour"), nb::arg("minute"), nb::arg("days") = 0, nb::arg("at") = 0, nb::arg("after") = 0);
+    // None if not understood.
+    m.def("parse_days", [](const std::string& text) -> nb::object {
+        uint8_t days = 0;
+        if (!Services::parseDays(text, days)) return nb::none();
+        return nb::int_(days);
+    });
+    m.def("format_days", [](int days) { return Services::formatDays(uint8_t(days)); });
+    m.def("resolve_day", [](const std::string& day, int hour, int minute, int64_t now) {
+        return Services::resolveDay(day, hour, minute, now);
+    });
+    m.attr("DAY_INVALID") = Services::DAY_INVALID;
+    m.attr("DAY_PAST") = Services::DAY_PAST;
 
     // Actions come back as "", "song", "builtin", "silence" or "finish".
     nb::class_<AlarmRing>(m, "AlarmRing")

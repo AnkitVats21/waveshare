@@ -1,5 +1,8 @@
 #pragma once
 
+#include <ArduinoJson.h>
+#include "gemini_live/gemini_skills_generated.h"
+
 /**
  * @brief Abstract interface for platform/board specific device command execution.
  * Decouples Gemini tool dispatching from board services (the alarm scheduler).
@@ -9,7 +12,6 @@ class IDeviceCommandDelegate {
 public:
     virtual ~IDeviceCommandDelegate() = default;
 
-    // Alarm scheduler operations
-    virtual bool setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) = 0;
-    virtual bool stopActiveAlarm() = 0;
+    // Alarm, timer and reminder tools. False if the call is not one of them.
+    virtual bool handleAlarmTool(const GeminiSkills::DecodedSkillCall& call, JsonDocument& response) = 0;
 };

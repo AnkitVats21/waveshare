@@ -8,6 +8,7 @@
 #include "gemini_live/DeviceCommandHandler.h"
 #include "services/time/TimeSyncHelper.h"
 #include "services/alarm/AlarmService.h"
+#include "services/alarm/AlarmTools.h"
 
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
@@ -122,34 +123,7 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
 // IDeviceCommandDelegate Implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool AppController::setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) {
-    auto& svc = Services::AlarmService::getInstance();
-    // Same time as an existing daily alarm: update it.
-    int target_id = 0;
-    Services::AlarmDoc alarm;
-    for (const auto& [id, a] : svc.alarms()) {
-        if (a.hour == hour && a.minute == minute && !a.at && a.kind == 0) {
-            target_id = id;
-            alarm = a;
-            break;
-        }
-    }
-    alarm.hour = (uint8_t)hour;
-    alarm.minute = (uint8_t)minute;
-    if (!target_id) alarm.days = Services::AlarmWhen::EVERY_DAY;
-    alarm.enabled = enabled;
-    alarm.tone = tone_file ? tone_file : "";  // empty = built-in tone
-    if (!alarm.tone.empty() && alarm.tone[0] == '/') alarm.tone.clear();
-
-    ESP_LOGI(TAG, "Tool request: alarm %d at %02d:%02d (tone '%s', %s)", target_id, hour, minute,
-             alarm.tone.c_str(), enabled ? "enabled" : "disabled");
-    out_alarm_id = svc.saveAlarm(target_id, alarm);
-    return out_alarm_id != 0;
-}
-
-bool AppController::stopActiveAlarm() {
-    ESP_LOGI(TAG, "Tool request: Stopping active alarm tone...");
-    Services::AlarmService::getInstance().stopActiveAlarm();
-    return true;
+bool AppController::handleAlarmTool(const GeminiSkills::DecodedSkillCall& call, JsonDocument& response) {
+    return Services::handleAlarmTool(call, response);
 }
 
