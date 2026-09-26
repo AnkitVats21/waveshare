@@ -123,38 +123,28 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool AppController::setAlarm(int hour, int minute, const char* tone_file, bool enabled, int& out_alarm_id) {
-    auto alarms = Services::AlarmService::getInstance().getAlarms();
-    int target_id = -1;
-    int max_id = 0;
-    for (const auto& a : alarms) {
-        if (a.id > max_id) {
-            max_id = a.id;
-        }
-        if (a.hour == hour && a.minute == minute) {
-            target_id = a.id;
+    auto& svc = Services::AlarmService::getInstance();
+    // Same time as an existing daily alarm: update it.
+    int target_id = 0;
+    Services::AlarmDoc alarm;
+    for (const auto& [id, a] : svc.alarms()) {
+        if (a.hour == hour && a.minute == minute && !a.at && a.kind == 0) {
+            target_id = id;
+            alarm = a;
+            break;
         }
     }
-
-    if (target_id == -1) {
-        target_id = max_id + 1;
-    }
-
-    Services::Alarm alarm;
-    alarm.id = target_id;
-    alarm.hour = hour;
-    alarm.minute = minute;
+    alarm.hour = (uint8_t)hour;
+    alarm.minute = (uint8_t)minute;
+    if (!target_id) alarm.days = Services::AlarmWhen::EVERY_DAY;
     alarm.enabled = enabled;
+    alarm.tone = tone_file ? tone_file : "";  // empty = built-in tone
+    if (!alarm.tone.empty() && alarm.tone[0] == '/') alarm.tone.clear();
 
-    std::string tone = tone_file ? tone_file : "";  // empty = built-in tone
-    strncpy(alarm.tone_file, tone.c_str(), sizeof(alarm.tone_file) - 1);
-    alarm.tone_file[sizeof(alarm.tone_file) - 1] = '\0';
-
-    ESP_LOGI(TAG, "Tool request: Setting alarm %d for %02d:%02d (%s, %s)...", 
-             alarm.id, alarm.hour, alarm.minute, alarm.tone_file, alarm.enabled ? "enabled" : "disabled");
-    
-    Services::AlarmService::getInstance().addOrUpdateAlarm(alarm);
-    out_alarm_id = target_id;
-    return true;
+    ESP_LOGI(TAG, "Tool request: alarm %d at %02d:%02d (tone '%s', %s)", target_id, hour, minute,
+             alarm.tone.c_str(), enabled ? "enabled" : "disabled");
+    out_alarm_id = svc.saveAlarm(target_id, alarm);
+    return out_alarm_id != 0;
 }
 
 bool AppController::stopActiveAlarm() {

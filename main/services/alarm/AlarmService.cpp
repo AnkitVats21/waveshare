@@ -10,10 +10,12 @@
 #include "audio_core/AlertPlayer.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
+#include "services/time/TimeSyncHelper.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <cstring>
@@ -28,6 +30,10 @@ namespace {
 constexpr const char* ALARMS_FILE = "/sdcard/alarms.json";
 // How often a ringing alarm checks song progress, the ring limit and snooze.
 constexpr uint32_t TICK_MS = 250;
+// Longest idle sleep, so clock changes are noticed.
+constexpr uint32_t MAX_IDLE_MS = 60000;
+// A clock jump larger than this skips what it jumped over.
+constexpr int64_t MAX_GAP_S = 90;
 
 uint64_t nowMs() {
     return static_cast<uint64_t>(esp_timer_get_time() / 1000);
@@ -68,7 +74,6 @@ AlarmService::AlarmService()
 {}
 
 bool AlarmService::begin() {
-    loadAlarms();
     // A music command from the dashboard or a key while the alarm owns the
     // player: the alarm ends first, without bringing back the old music.
     NexusPlayer::getInstance().setAlarmYieldHandler([this]() {
@@ -77,89 +82,96 @@ bool AlarmService::begin() {
     return true;
 }
 
-void AlarmService::loadAlarms() {
-    std::lock_guard<std::mutex> lock(m_alarms_mutex);
-    m_alarms.clear();
+// ── Alarms ───────────────────────────────────────────────────────────────────
 
-    if (!sd_storage::Fs::isFile(ALARMS_FILE)) {
-        ESP_LOGI(TAG, "No alarms.json on the SD card");
-        return;
+AlarmWhen AlarmService::whenOf(const AlarmDoc& doc) {
+    AlarmWhen w;
+    w.hour = doc.hour;
+    w.minute = doc.minute;
+    w.days = doc.days;
+    w.at = doc.at;
+    return w;
+}
+
+int64_t AlarmService::nextFireOf(const AlarmDoc& doc, int64_t now) {
+    if (!doc.enabled) return 0;
+    const AlarmWhen w = whenOf(doc);
+    // A one-shot hour:minute fires once, at its first occurrence after creation.
+    int64_t after = now;
+    if (w.oneShot() && !w.at) {
+        if (doc.last_fired) return 0;
+        after = std::max<int64_t>(now, doc.created);
     }
+    return nextFire(w, after);
+}
 
-    std::string content = sd_storage::Fs::readText(ALARMS_FILE);
-    if (content.empty()) return;
+std::vector<std::pair<int, AlarmDoc>> AlarmService::alarms() {
+    return listAlarms();
+}
 
+int AlarmService::saveAlarm(int id, AlarmDoc doc) {
+    if (id <= 0) id = nextAlarmId();
+    AlarmDoc old;
+    const bool exists = loadAlarm(id, old);
+    doc.created = exists && old.created ? old.created : (uint32_t)time(nullptr);
+    // A changed alarm starts over.
+    doc.last_fired = 0;
+    doc.snooze_until = 0;
+    if (!Services::saveAlarm(id, doc)) {
+        ESP_LOGE(TAG, "Could not save alarm %d", id);
+        return 0;
+    }
+    ESP_LOGI(TAG, "Alarm %d saved: %02u:%02u days 0x%02x at %lu%s", id, doc.hour, doc.minute, doc.days,
+             (unsigned long)doc.at, doc.enabled ? "" : " (disabled)");
+    if (m_task_handle) xTaskNotify(m_task_handle, 0, eNoAction);   // reschedule
+    return id;
+}
+
+bool AlarmService::deleteAlarm(int id) {
+    AlarmDoc doc;
+    if (!loadAlarm(id, doc)) return false;
+    const Status st = status();
+    if (st.state != AlarmRing::State::Idle && st.alarm_id == id) stopActiveAlarm(true, 3000);
+    const bool ok = removeAlarm(id);
+    if (ok) ESP_LOGI(TAG, "Alarm %d deleted", id);
+    if (m_task_handle) xTaskNotify(m_task_handle, 0, eNoAction);
+    return ok;
+}
+
+// alarms.json -> the alarms collection, once. Its alarms rang every day.
+void AlarmService::migrateAlarmsFile() {
+    if (!sd_storage::Fs::isFile(ALARMS_FILE)) return;
+    if (!systemDb().db().isOpen()) return;
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, content);
-    if (err) {
-        ESP_LOGE(TAG, "Failed to parse alarms.json: %s", err.c_str());
-        return;
-    }
-
-    JsonArray arr = doc.as<JsonArray>();
-    for (JsonObject obj : arr) {
-        Alarm alarm = {};
-        alarm.id = obj["id"];
-        alarm.hour = obj["hour"];
-        alarm.minute = obj["minute"];
-        strncpy(alarm.tone_file, obj["tone_file"] | "", sizeof(alarm.tone_file) - 1);
-        alarm.enabled = obj["enabled"];
-        m_alarms.push_back(alarm);
-    }
-    ESP_LOGI(TAG, "Loaded %zu alarms from SD card", m_alarms.size());
-}
-
-void AlarmService::saveAlarms() {
-    std::lock_guard<std::mutex> lock(m_alarms_mutex);
-    JsonDocument doc;
-    JsonArray arr = doc.to<JsonArray>();
-    for (const auto& alarm : m_alarms) {
-        JsonObject obj = arr.add<JsonObject>();
-        obj["id"] = alarm.id;
-        obj["hour"] = alarm.hour;
-        obj["minute"] = alarm.minute;
-        obj["tone_file"] = alarm.tone_file;
-        obj["enabled"] = alarm.enabled;
-    }
-    std::string content;
-    serializeJson(doc, content);
-    sd_storage::Fs::writeAtomic(ALARMS_FILE, content.c_str());
-}
-
-void AlarmService::addOrUpdateAlarm(const Alarm& alarm) {
-    {
-        std::lock_guard<std::mutex> lock(m_alarms_mutex);
-        bool found = false;
-        for (auto& item : m_alarms) {
-            if (item.id == alarm.id) {
-                item = alarm;
-                found = true;
-                break;
+    const std::string content = sd_storage::Fs::readText(ALARMS_FILE);
+    if (deserializeJson(doc, content) || !doc.is<JsonArray>()) {
+        ESP_LOGW(TAG, "alarms.json is not a JSON array; not importing it");
+    } else {
+        int imported = 0;
+        for (JsonObject obj : doc.as<JsonArray>()) {
+            const int id = obj["id"] | 0;
+            const int hour = obj["hour"] | -1;
+            const int minute = obj["minute"] | -1;
+            AlarmDoc existing;
+            if (id <= 0 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || loadAlarm(id, existing)) continue;
+            AlarmDoc a;
+            a.hour = (uint8_t)hour;
+            a.minute = (uint8_t)minute;
+            a.days = AlarmWhen::EVERY_DAY;
+            a.enabled = obj["enabled"] | true;
+            a.tone = toneFromFile(obj["tone_file"] | "");
+            a.created = (uint32_t)time(nullptr);
+            if (!Services::saveAlarm(id, a)) {
+                ESP_LOGE(TAG, "Could not import alarms.json; left in place");
+                return;
             }
+            ++imported;
         }
-        if (!found) {
-            m_alarms.push_back(alarm);
-        }
+        ESP_LOGI(TAG, "Imported %d alarms from alarms.json", imported);
     }
-    saveAlarms();
-}
-
-void AlarmService::deleteAlarm(int id) {
-    {
-        std::lock_guard<std::mutex> lock(m_alarms_mutex);
-        for (auto it = m_alarms.begin(); it != m_alarms.end(); ++it) {
-            if (it->id == id) {
-                m_alarms.erase(it);
-                break;
-            }
-        }
-    }
-    saveAlarms();
-}
-
-std::vector<Alarm> AlarmService::getAlarms() {
-    std::lock_guard<std::mutex> lock(m_alarms_mutex);
-    return m_alarms;
+    const std::string bak = std::string(ALARMS_FILE) + ".bak";
+    sd_storage::Fs::remove(bak.c_str());
+    sd_storage::Fs::rename(ALARMS_FILE, bak.c_str());
 }
 
 // ── Requests from other tasks ────────────────────────────────────────────────
@@ -260,6 +272,7 @@ void AlarmService::handle(Command& cmd) {
         if (cmd.ring.ring_limit_ms) cfg.ring_limit_ms = cmd.ring.ring_limit_ms;
         if (cmd.ring.snooze_ms) cfg.snooze_ms = cmd.ring.snooze_ms;
         m_ring.setConfig(cfg);
+        m_min_volume = cmd.ring.volume > 0 ? std::min(cmd.ring.volume, 100) : MIN_VOLUME;
         m_tone = cmd.ring.tone;
         m_tone_title.clear();
         m_fallback_reason.clear();
@@ -358,9 +371,9 @@ void AlarmService::takeOver() {
 
     m_saved_volume = snap.audio.speaker_volume;
     m_raised_volume = -1;
-    if (m_saved_volume < MIN_VOLUME) {
-        m_raised_volume = MIN_VOLUME;
-        db.mutate([](SystemState& s) { s.audio.speaker_volume = MIN_VOLUME; });
+    if (m_saved_volume < m_min_volume) {
+        const int floor = m_raised_volume = m_min_volume;
+        db.mutate([floor](SystemState& s) { s.audio.speaker_volume = floor; });
     }
 
     NexusPlayer::getInstance().beginAlarm(this);
@@ -436,6 +449,7 @@ void AlarmService::publish() {
     const uint32_t snooze_until = st.snooze_left_ms ? (uint32_t)time(nullptr) + st.snooze_left_ms / 1000 : 0;
     const bool builtin = st.source == AlarmRing::Source::Builtin;
     const int id = state == AlarmRingState::IDLE ? 0 : st.alarm_id;
+    persistSnooze(state == AlarmRingState::SNOOZED ? id : 0, snooze_until);
     EmbeddedSysDb::getInstance().mutate([=](SystemState& s) {
         s.alarm.state = state;
         s.alarm.playing = state == AlarmRingState::RINGING;
@@ -447,57 +461,123 @@ void AlarmService::publish() {
 
 // ── Scheduler ────────────────────────────────────────────────────────────────
 
-uint32_t AlarmService::msToNextMinute() const {
-    struct timeval tv;
-    gettimeofday(&tv, nullptr);
-    const uint32_t into = (uint32_t)(tv.tv_sec % 60) * 1000 + (uint32_t)(tv.tv_usec / 1000);
-    return 60000 - into;
+void AlarmService::persistSnooze(int id, uint32_t until) {
+    if (id == m_snooze_saved_id && (id == 0 || until == m_snooze_saved_until)) return;
+    AlarmDoc doc;
+    if (m_snooze_saved_id > 0 && m_snooze_saved_id != id) {
+        doc.snooze_until = 0;
+        mergeAlarm(m_snooze_saved_id, doc, AlarmDoc::F_SNOOZE_UNTIL);
+    }
+    if (id > 0 && loadAlarm(id, doc)) {
+        doc.snooze_until = until;
+        mergeAlarm(id, doc, AlarmDoc::F_SNOOZE_UNTIL);
+    }
+    m_snooze_saved_id = id;
+    m_snooze_saved_until = until;
 }
 
-void AlarmService::checkSchedule() {
-    time_t now = time(nullptr);
-    struct tm t;
-    localtime_r(&now, &t);
-    if (t.tm_year <= 120) {
+uint32_t AlarmService::checkSchedule() {
+    if (!TimeSyncHelper::clockValid()) {
         if (!m_warned_unsynced) {
             ESP_LOGW(TAG, "Clock not set; alarms wait for time sync");
             m_warned_unsynced = true;
         }
-        return;
+        m_checked_until = 0;
+        return MAX_IDLE_MS;
     }
-    // Each local minute is checked once; a minute passed while off is skipped.
-    const int64_t key = ((int64_t)(t.tm_year * 366 + t.tm_yday) * 24 + t.tm_hour) * 60 + t.tm_min;
-    if (key == m_last_minute_key) return;
-    m_last_minute_key = key;
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    const int64_t now = tv.tv_sec;
+    // First valid time, or the clock jumped: what lies before now is skipped.
+    if (m_checked_until == 0 || now < m_checked_until || now - m_checked_until > MAX_GAP_S) {
+        if (m_checked_until != 0) ESP_LOGW(TAG, "Clock jumped by %lld s; skipping", (long long)(now - m_checked_until));
+        m_checked_until = now;
+        m_warned_unsynced = false;
+    }
 
-    RingOptions due;
-    bool found = false;
-    {
-        std::lock_guard<std::mutex> lock(m_alarms_mutex);
-        for (const auto& a : m_alarms) {
-            if (a.enabled && a.hour == t.tm_hour && a.minute == t.tm_min) {
-                due.alarm_id = a.id;
-                due.tone = toneFromFile(a.tone_file);
-                found = true;
-                break;
+    const bool ringing = m_ring.state() == AlarmRing::State::Ringing;
+    const int snoozed_id = m_ring.state() == AlarmRing::State::Snoozed ? m_ring.alarmId() : 0;
+    int64_t next = 0;
+    auto consider = [&](int64_t t) { if (t > now && (next == 0 || t < next)) next = t; };
+
+    int due_id = 0;
+    AlarmDoc due;
+    for (auto& [id, a] : listAlarms()) {
+        // A snooze saved before a reboot (the running one lives in m_ring).
+        if (a.snooze_until && id != snoozed_id) {
+            if (a.snooze_until > now) {
+                consider(a.snooze_until);
+            } else if (!due_id && !ringing && now - a.snooze_until <= SNOOZE_GRACE_S) {
+                ESP_LOGI(TAG, "Alarm %d: snooze from before the restart ended", id);
+                due_id = id;
+                due = a;
+            } else {
+                AlarmDoc clear;
+                mergeAlarm(id, clear, AlarmDoc::F_SNOOZE_UNTIL);
             }
+            if (a.snooze_until > now || due_id == id) continue;
         }
+        if (!a.enabled) continue;
+        const int64_t f = nextFireOf(a, std::max<int64_t>(m_checked_until, a.last_fired));
+        if (f == 0) {
+            if (a.kind == 1) removeAlarm(id);   // a timer that ran out while off
+            continue;
+        }
+        if (f > now) {
+            consider(f);
+            continue;
+        }
+        // Due now.
+        const bool timer = a.kind == 1;
+        if (whenOf(a).oneShot() || timer) {
+            if (timer) {
+                removeAlarm(id);
+            } else {
+                AlarmDoc upd;
+                upd.enabled = false;
+                upd.last_fired = (uint32_t)now;
+                mergeAlarm(id, upd, AlarmDoc::F_ENABLED | AlarmDoc::F_LAST_FIRED);
+            }
+        } else {
+            AlarmDoc upd;
+            upd.last_fired = (uint32_t)now;
+            mergeAlarm(id, upd, AlarmDoc::F_LAST_FIRED);
+            consider(nextFireOf(a, now));
+        }
+        if (due_id || ringing) {
+            ESP_LOGW(TAG, "Alarm %d due while alarm %d rings; skipped", id, due_id ? due_id : m_ring.alarmId());
+            continue;
+        }
+        due_id = id;
+        due = a;
     }
-    if (found) {
+    m_checked_until = now;
+
+    if (due_id) {
         Command c{CmdType::Ring};
-        c.ring = due;
+        c.ring.alarm_id = due_id;
+        c.ring.tone = due.tone;
+        c.ring.snooze_ms = (uint32_t)(due.snooze_min ? due.snooze_min : 9) * 60000;
+        c.ring.volume = due.volume;
         handle(c);
     }
+
+    if (next == 0) return MAX_IDLE_MS;
+    // Just after the second it is due.
+    const int64_t ms = (next - now) * 1000 - tv.tv_usec / 1000 + 20;
+    return (uint32_t)std::min<int64_t>(std::max<int64_t>(ms, 20), MAX_IDLE_MS);
 }
 
 void AlarmService::run() {
     ESP_LOGI(TAG, "Alarm scheduler running");
+    migrateAlarmsFile();
     publish();
+    uint32_t schedule_ms = 0;
 
     while (m_running) {
         const bool active = m_ring.state() != AlarmRing::State::Idle;
-        // Idle: wake just after the next minute starts. Ringing: tick.
-        const uint32_t wait_ms = active ? TICK_MS : msToNextMinute() + 20;
+        // Idle: sleep until the next alarm is due. Ringing: tick.
+        const uint32_t wait_ms = active ? std::min(TICK_MS, schedule_ms) : schedule_ms;
         uint32_t bits = 0;
         BaseType_t notified = xTaskNotifyWait(0, 0xFFFFFFFF, &bits, pdMS_TO_TICKS(wait_ms));
         if (!m_running) break;
@@ -530,7 +610,7 @@ void AlarmService::run() {
         apply(action);
         if (action != AlarmRing::Action::None || m_ring.state() != before) publish();
 
-        checkSchedule();
+        schedule_ms = checkSchedule();
     }
 }
 

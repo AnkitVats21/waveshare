@@ -1,7 +1,9 @@
-// /api/alarms: the alarm list (alarms.json until step B) and ringing control.
+// /api/alarms: the alarms in system.ndb and ringing control.
 //
 //   GET    /api/alarms           list
-//   POST   /api/alarms           create or update {"id"?, "hour", "minute", "tone_file"?, "enabled"?}
+//   POST   /api/alarms           create, or update the one with "id" (fields left out keep their values)
+//                                {"id"?, "hour", "minute", "days"?, "at"?, "label"?, "enabled"?,
+//                                 "tone"?, "snooze_min"?, "volume"?, "kind"?}
 //   DELETE /api/alarms?id=N
 //   GET    /api/alarms/status    ringing state
 //   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?}
@@ -12,74 +14,107 @@
 #include "services/alarm/AlarmService.h"
 
 #include <cstring>
+#include <ctime>
 
-using Services::Alarm;
+using Services::AlarmDoc;
 using Services::AlarmRing;
 using Services::AlarmService;
 
 namespace {
 
-// Empty = the built-in tone; otherwise a library song id.
-constexpr const char* DEFAULT_TONE = "";
 constexpr uint32_t REQUEST_TIMEOUT_MS = 5000;
 
-void toJson(const Alarm& a, JsonObject out) {
-    out["id"] = a.id;
+void toJson(int id, const AlarmDoc& a, JsonObject out) {
+    out["id"] = id;
     out["hour"] = a.hour;
     out["minute"] = a.minute;
-    out["tone_file"] = std::string(a.tone_file);  // copy: a char array would be stored by pointer
+    out["days"] = a.days;
+    if (a.at) out["at"] = a.at;
+    out["label"] = a.label;
     out["enabled"] = a.enabled;
+    out["tone"] = a.tone;
+    out["snooze_min"] = a.snooze_min;
+    out["volume"] = a.volume;
+    out["kind"] = a.kind == 1 ? "timer" : "alarm";
+    if (a.last_fired) out["last_fired"] = a.last_fired;
+    if (a.snooze_until) out["snooze_until"] = a.snooze_until;
+    const int64_t next = AlarmService::nextFireOf(a, time(nullptr));
+    if (next) out["next_fire"] = next;
 }
 
 esp_err_t listHandler(httpd_req_t* req) {
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
-    for (const Alarm& a : AlarmService::getInstance().getAlarms()) {
-        toJson(a, arr.add<JsonObject>());
+    for (const auto& [id, a] : AlarmService::getInstance().alarms()) {
+        toJson(id, a, arr.add<JsonObject>());
     }
     return Http::sendJson(req, 200, doc);
 }
 
-// Creates an alarm, or updates the one with the given "id".
-// Body: {"id"?, "hour", "minute", "tone_file"?, "enabled"?}
+// Integer field in [lo, hi] if present; false if present but invalid.
+template <typename T>
+bool takeInt(JsonObject in, const char* key, int64_t lo, int64_t hi, T& dst) {
+    JsonVariant v = in[key];
+    if (v.isNull()) return true;
+    if (!v.is<int64_t>()) return false;
+    const int64_t n = v.as<int64_t>();
+    if (n < lo || n > hi) return false;
+    dst = (T)n;
+    return true;
+}
+
 esp_err_t saveHandler(httpd_req_t* req) {
     std::string body;
-    if (!Http::readBody(req, body, 512)) return Http::sendError(req, 400, "Missing or oversized body");
-    JsonDocument in;
-    if (deserializeJson(in, body) || !in.is<JsonObject>()) return Http::sendError(req, 400, "Body must be a JSON object");
-
-    int hour = in["hour"] | -1;
-    int minute = in["minute"] | -1;
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-        return Http::sendError(req, 400, "hour (0-23) and minute (0-59) are required");
-    }
-    const char* tone = in["tone_file"] | DEFAULT_TONE;
-    if (strlen(tone) >= sizeof(Alarm::tone_file)) return Http::sendError(req, 400, "tone_file path too long");
+    if (!Http::readBody(req, body, 1024)) return Http::sendError(req, 400, "Missing or oversized body");
+    JsonDocument doc;
+    if (deserializeJson(doc, body) || !doc.is<JsonObject>()) return Http::sendError(req, 400, "Body must be a JSON object");
+    JsonObject in = doc.as<JsonObject>();
 
     auto& svc = AlarmService::getInstance();
     int id = in["id"] | 0;
-    if (id <= 0) {
-        for (const Alarm& a : svc.getAlarms()) id = (a.id > id) ? a.id : id;
-        ++id;
+    AlarmDoc a;
+    const bool exists = id > 0 && Services::loadAlarm(id, a);
+    if (id > 0 && !exists) return Http::sendError(req, 404, "No such alarm");
+
+    if (!takeInt(in, "hour", 0, 23, a.hour) || !takeInt(in, "minute", 0, 59, a.minute)) {
+        return Http::sendError(req, 400, "hour must be 0-23 and minute 0-59");
     }
+    if (!takeInt(in, "days", 0, 0x7F, a.days)) return Http::sendError(req, 400, "days must be 0-127 (bit0 Mon .. bit6 Sun)");
+    if (!takeInt(in, "at", 0, 0xFFFFFFFFLL, a.at)) return Http::sendError(req, 400, "at must be epoch seconds");
+    if (!takeInt(in, "snooze_min", 1, 60, a.snooze_min)) return Http::sendError(req, 400, "snooze_min must be 1-60");
+    if (!takeInt(in, "volume", 0, 100, a.volume)) return Http::sendError(req, 400, "volume must be 0-100");
+    if (!exists && in["hour"].isNull() && !a.at) return Http::sendError(req, 400, "hour and minute, or at, are required");
+    if (!in["kind"].isNull()) {
+        const char* kind = in["kind"] | "";
+        if (strcmp(kind, "alarm") && strcmp(kind, "timer")) return Http::sendError(req, 400, "kind must be alarm or timer");
+        a.kind = strcmp(kind, "timer") == 0 ? 1 : 0;
+    }
+    if (a.kind == 1 && !a.at) return Http::sendError(req, 400, "a timer needs at");
+    if (!in["enabled"].isNull()) a.enabled = in["enabled"].as<bool>();
+    if (in["label"].is<const char*>()) a.label = in["label"].as<const char*>();
+    // "tone_file" is the old name; a path (an old .wav tone) means the built-in tone.
+    JsonVariant tone = in["tone"].isNull() ? in["tone_file"] : in["tone"];
+    if (!tone.isNull()) {
+        if (!tone.is<const char*>() || strlen(tone.as<const char*>()) > AlarmService::MAX_TONE_LEN) {
+            return Http::sendError(req, 400, "tone must be a library song id");
+        }
+        a.tone = tone.as<const char*>();
+        if (!a.tone.empty() && a.tone[0] == '/') a.tone.clear();
+    }
+    if (a.label.size() > 64) return Http::sendError(req, 400, "label too long");
 
-    Alarm alarm = {};
-    alarm.id = id;
-    alarm.hour = hour;
-    alarm.minute = minute;
-    strncpy(alarm.tone_file, tone, sizeof(alarm.tone_file) - 1);
-    alarm.enabled = in["enabled"] | true;
-    svc.addOrUpdateAlarm(alarm);
-
+    id = svc.saveAlarm(id, a);
+    if (!id) return Http::sendError(req, 500, "Could not save the alarm");
+    Services::loadAlarm(id, a);
     JsonDocument out;
-    toJson(alarm, out.to<JsonObject>());
+    toJson(id, a, out.to<JsonObject>());
     return Http::sendJson(req, 200, out);
 }
 
 esp_err_t deleteHandler(httpd_req_t* req) {
     std::string id_str;
     if (!Http::queryParam(req, "id", id_str) || id_str.empty()) return Http::sendError(req, 400, "Missing id");
-    AlarmService::getInstance().deleteAlarm(atoi(id_str.c_str()));
+    if (!AlarmService::getInstance().deleteAlarm(atoi(id_str.c_str()))) return Http::sendError(req, 404, "No such alarm");
     return Http::sendOk(req, "Alarm deleted");
 }
 
@@ -126,7 +161,7 @@ esp_err_t ringHandler(httpd_req_t* req) {
             return Http::sendError(req, 400, "Body must be {\"tone\"?, \"ring_limit_s\"?, \"snooze_s\"?}");
         }
         if (!in["tone"].isNull()) {
-            if (!in["tone"].is<const char*>() || strlen(in["tone"].as<const char*>()) >= sizeof(Alarm::tone_file)) {
+            if (!in["tone"].is<const char*>() || strlen(in["tone"].as<const char*>()) > AlarmService::MAX_TONE_LEN) {
                 return Http::sendError(req, 400, "tone must be a library song id");
             }
             opts.tone = in["tone"].as<const char*>();

@@ -4,6 +4,8 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "app/media_player/IPlaybackObserver.h"
 #include "services/alarm/AlarmRing.h"
+#include "services/alarm/AlarmSchedule.h"
+#include "services/storage/SystemDatabase.h"
 #include "freertos/semphr.h"
 #include <deque>
 #include <mutex>
@@ -12,19 +14,12 @@
 
 namespace Services {
 
-struct Alarm {
-    int id;
-    int hour;      // 0-23
-    int minute;    // 0-59
-    // Library song (CatalogDB id); empty or an old .wav path = built-in tone.
-    char tone_file[64];
-    bool enabled;
-};
+using AlarmDoc = ndb::system::AlarmDoc;
 
 /**
  * @brief Alarm scheduler and ringer (docs/alarm-design.md).
  *
- * Fires the alarms from alarms.json on the minute and rings them: the device
+ * Fires the alarms in system.ndb and rings them: the device
  * is taken over (assistant session ended, chimes muted, wake word off, keys
  * captured), NexusPlayer plays the tone song looped, and the built-in tone
  * from PSRAM takes over if the song fails. Stop gives everything back and
@@ -43,13 +38,24 @@ public:
     static constexpr float FADE_FROM = 0.10f;
     static constexpr uint32_t FADE_MS = 10000;
 
+    // Longest tone id (a CatalogDB song id).
+    static constexpr size_t MAX_TONE_LEN = 63;
+    // A snooze that ended while the device was off still rings if it ended
+    // less than this long ago.
+    static constexpr uint32_t SNOOZE_GRACE_S = 600;
+
     bool begin();
 
-    void loadAlarms();
-    void saveAlarms();
-    void addOrUpdateAlarm(const Alarm& alarm);
-    void deleteAlarm(int id);
-    std::vector<Alarm> getAlarms();
+    // ── Alarms (system.ndb "alarms") ─────────────────────────────────────
+    std::vector<std::pair<int, AlarmDoc>> alarms();
+    // Writes `doc` under `id`, or under a new id if id <= 0; sets `created`
+    // on a new alarm and clears last_fired / snooze_until. Returns the id, 0 on failure.
+    int saveAlarm(int id, AlarmDoc doc);
+    // Deletes the alarm, stopping it if it is ringing or snoozed.
+    bool deleteAlarm(int id);
+    // Next fire of an enabled alarm (epoch s), 0 if none.
+    static int64_t nextFireOf(const AlarmDoc& doc, int64_t now);
+    static AlarmWhen whenOf(const AlarmDoc& doc);
 
     // ── Ringing ──────────────────────────────────────────────────────────
     struct RingOptions {
@@ -57,6 +63,7 @@ public:
         std::string tone;          // CatalogDB id; empty = built-in tone
         uint32_t ring_limit_ms = 0;  // 0 = default (test rings may shorten)
         uint32_t snooze_ms = 0;
+        int volume = 0;            // volume floor while ringing; 0 = MIN_VOLUME
     };
     // Each returns once the request is handled (or after timeout_ms; 0 = don't wait).
     bool ring(const RingOptions& opts, uint32_t timeout_ms = 0);
@@ -115,11 +122,10 @@ private:
     void silence();
     void publish();
 
-    void checkSchedule();
-    uint32_t msToNextMinute() const;
-
-    std::vector<Alarm> m_alarms;
-    std::mutex m_alarms_mutex;
+    void migrateAlarmsFile();
+    // Fires what is due; returns ms until the next check.
+    uint32_t checkSchedule();
+    void persistSnooze(int id, uint32_t until);
 
     std::mutex m_cmd_mutex;
     std::deque<Command> m_cmds;
@@ -130,10 +136,15 @@ private:
     std::string m_tone;
     std::string m_tone_title;
     std::string m_fallback_reason;
+    int m_min_volume = MIN_VOLUME;
     int m_saved_volume = -1;
     int m_raised_volume = -1;
-    int64_t m_last_minute_key = -1;
+    // Alarms due in (m_checked_until, now] fire; 0 until the clock is set.
+    int64_t m_checked_until = 0;
     bool m_warned_unsynced = false;
+    // Snooze written to the alarm's document, so it survives a reboot.
+    int m_snooze_saved_id = 0;
+    uint32_t m_snooze_saved_until = 0;
     std::mutex m_status_mutex;
     Status m_status;
     // For the live ringing_ms / snooze_left_ms in status()
