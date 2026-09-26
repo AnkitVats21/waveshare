@@ -107,6 +107,9 @@ bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, 
                     }
                 }
             },
+            # Text of both sides of the conversation, for logs and /api/assistant/transcript.
+            "inputAudioTranscription": {},
+            "outputAudioTranscription": {},
             "tools": [
                 { "functionDeclarations": tools,},
             ]

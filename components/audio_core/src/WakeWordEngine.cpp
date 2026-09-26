@@ -61,6 +61,12 @@ void WakeWordEngine::setAssistantActive(bool active) {
     }
 }
 
+bool WakeWordEngine::requestManualWake() {
+    if (!isRunning() || m_streaming_active || m_wake_word_suppressed) return false;
+    m_manual_wake_requested = true;
+    return true;
+}
+
 // ============================================================================
 // setWakeWordSuppressed — suppress WakeNet only, mic feed keeps running.
 // ============================================================================
@@ -472,6 +478,12 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             detected = true;
             channel  = (uint8_t)res->trigger_channel_id;
             LOGI_SYSTEM("Wake word detected (ch %d) — streaming started", channel);
+        } else if (m_manual_wake_requested) {
+            m_manual_wake_requested = false;
+            if (!m_streaming_active) {
+                detected = true;
+                LOGI_SYSTEM("Manual wake (API) — streaming started");
+            }
         }
 
         if (detected) {

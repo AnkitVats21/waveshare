@@ -15,6 +15,9 @@ namespace Services {
  *   - Device -> client: full JSON state on connect, then again on every relevant
  *     SysDb change (coalesced to MIN_PUSH_INTERVAL_MS) and every TELEMETRY_PERIOD_MS.
  *   - Client -> device: {"cmd": "<name>", ...} command envelope.
+ *   - Transcript (opt-in, {"cmd":"subscribe","transcript":true}): the whole
+ *     transcript once, then {"type":"transcript","seq","entries"} with the
+ *     entries that changed (see TranscriptLog). State pushes carry no "type".
  *   - Advertises the device over mDNS as nexus.local (_nexus._tcp, _http._tcp).
  *
  * The same state/command format is intended to be reused by a remote relay link
@@ -44,11 +47,18 @@ private:
 
     void startMdns();
     void pushState();
+    void pushTranscript();
+    void sendText(httpd_handle_t server, int fd, std::string& text);
+    static void onTranscriptChanged(void* ctx);
     void handleCommand(const char* json, size_t len);
 
     std::atomic<httpd_handle_t> m_server{nullptr};
     std::atomic<int>            m_client_fd{-1};
     std::atomic<bool>           m_push_now{false};
+    std::atomic<bool>           m_transcript_subscribed{false};
+    std::atomic<bool>           m_transcript_dirty{false};
+    std::atomic<bool>           m_transcript_resend{false};  // next push starts from seq 0
+    uint32_t                    m_transcript_sent_seq = 0;    // run() task only
 
     static constexpr uint32_t MIN_PUSH_INTERVAL_MS = 200;
     static constexpr uint32_t TELEMETRY_PERIOD_MS  = 2000;

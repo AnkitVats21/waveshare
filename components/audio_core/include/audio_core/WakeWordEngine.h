@@ -86,6 +86,12 @@ public:
     void setWakeWordSuppressed(bool suppressed);
     bool isWakeWordSuppressed() const { return m_wake_word_suppressed; }
 
+    // Acts as if the wake word was heard (the API trigger for tests). The
+    // detect task handles it on its next frame, exactly like a real detection.
+    // False if a session is already streaming, wake is suppressed, or the
+    // engine is not running.
+    bool requestManualWake();
+
     /** Recording taps — mutually exclusive, driven by AudioRecorder.
      *  Stereo: the two mic channels (the 'M's of the feed format) before AFE
      *  processing, at the hardware rate. Resampled: the AFE's processed
@@ -123,6 +129,7 @@ private:
     volatile bool m_assistant_active       = false;
     volatile bool m_interruption_triggered = false;
     volatile bool m_wake_word_suppressed   = false;
+    volatile bool m_manual_wake_requested  = false;
 
     // Recording tap state — set by AudioRecorder, read by feedTask/detectTask.
     volatile bool          m_recording_stereo_active     = false;

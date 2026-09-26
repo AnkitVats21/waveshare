@@ -6,6 +6,7 @@
 #include "common/thread_config.h"
 #include "sd_storage/Fs.h"
 #include "credentials/Credentials.h"
+#include "gemini_live/TranscriptLog.h"
 #include <ArduinoJson.h>
 #include "sdkconfig.h"
 #include "esp_timer.h"
@@ -483,13 +484,26 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             }
             *data_end = '"';
         }
+        // Transcriptions usually come in their own frames, but can share one with audio.
+        if (strstr(payload, "Transcription\"")) {
+            JsonDocument filter;
+            filter["serverContent"]["inputTranscription"]["text"] = true;
+            filter["serverContent"]["outputTranscription"]["text"] = true;
+            JsonDocument doc;
+            if (!deserializeJson(doc, static_cast<const char*>(payload), length,
+                                 DeserializationOption::Filter(filter))) {
+                recordTranscription(doc["serverContent"]);
+            }
+        }
     } else {
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, payload);
         if (!err) {
             bool turn_complete = doc["serverContent"]["turnComplete"].as<bool>() || doc["turnComplete"].as<bool>();
+            recordTranscription(doc["serverContent"]);
             if (turn_complete) {
                 LOGI_NET("Assistant turn complete");
+                TranscriptLog::instance().closeTurn();
                 sysdb.mutate([](SystemState& s) {
                     s.audio.turn_complete_pending = true;
                 });
@@ -519,6 +533,14 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
     }
 
     payload[length] = old_char;
+}
+
+void GeminiProtocol::recordTranscription(JsonObjectConst serverContent) {
+    if (serverContent.isNull()) return;
+    const char* in = serverContent["inputTranscription"]["text"] | "";
+    const char* out = serverContent["outputTranscription"]["text"] | "";
+    if (in[0]) TranscriptLog::instance().append(TranscriptLog::Role::User, in, strlen(in));
+    if (out[0]) TranscriptLog::instance().append(TranscriptLog::Role::Model, out, strlen(out));
 }
 
 void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {

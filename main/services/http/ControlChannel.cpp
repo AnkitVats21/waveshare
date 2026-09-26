@@ -1,7 +1,9 @@
 #include "services/http/ControlChannel.h"
 #include "services/http/SystemInfo.h"
+#include "services/http/StateNames.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "media_player/MusicPlaybackService.h"
+#include "gemini_live/TranscriptLog.h"
 #include "common/thread_config.h"
 #include "core_sysdb/led_types.h"
 #include <ArduinoJson.h>
@@ -41,29 +43,6 @@ LedMode ledModeFromString(const char* s) {
 
 int64_t nowMs() { return esp_timer_get_time() / 1000; }
 
-const char* assistantStateToString(AssistantState s) {
-    switch (s) {
-        case AssistantState::StartingSession:    return "starting";
-        case AssistantState::Connecting:         return "connecting";
-        case AssistantState::StreamingUserAudio: return "listening";
-        case AssistantState::AssistantSpeaking:  return "speaking";
-        case AssistantState::WaitingForFollowup: return "followup";
-        case AssistantState::Closing:            return "closing";
-        case AssistantState::ErrorCooldown:      return "error";
-        default:                                 return "idle";
-    }
-}
-
-const char* wsStateToString(WsState s) {
-    switch (s) {
-        case WsState::CONNECTING:  return "connecting";
-        case WsState::CONNECTED:   return "connected";
-        case WsState::GOING_AWAY:  return "going_away";
-        case WsState::ERROR_STATE: return "error";
-        default:                   return "disconnected";
-    }
-}
-
 // Upper bound on queue entries included in each state push.
 constexpr size_t PUSH_QUEUE_MAX = 30;
 
@@ -85,7 +64,15 @@ ControlChannel::ControlChannel()
 
 bool ControlChannel::begin() {
     startMdns();
+    TranscriptLog::instance().setChangeCallback(&ControlChannel::onTranscriptChanged, this);
     return true;
+}
+
+void ControlChannel::onTranscriptChanged(void* ctx) {
+    auto* self = static_cast<ControlChannel*>(ctx);
+    if (!self->m_transcript_subscribed.load()) return;
+    self->m_transcript_dirty = true;
+    if (self->getHandle()) xTaskNotify(self->getHandle(), 0, eSetBits);
 }
 
 void ControlChannel::startMdns() {
@@ -123,6 +110,7 @@ esp_err_t ControlChannel::onWsHandshake(httpd_req_t* req) {
     } else {
         ESP_LOGI(TAG, "Client connected (fd=%d)", fd);
     }
+    m_transcript_subscribed = false;  // each client opts in
     m_push_now = true;
     if (getHandle()) xTaskNotify(getHandle(), 0, eSetBits);
     return ESP_OK;
@@ -265,6 +253,16 @@ void ControlChannel::handleCommand(const char* json, size_t len) {
             ESP_LOGW(TAG, "Unknown action '%s'", action);
         }
 
+    } else if (strcmp(cmd, "subscribe") == 0) {
+        bool on = doc["transcript"] | false;
+        m_transcript_subscribed = on;
+        if (on) {
+            m_transcript_resend = true;
+            m_transcript_dirty = true;
+            if (getHandle()) xTaskNotify(getHandle(), 0, eSetBits);
+        }
+        return;
+
     } else {
         ESP_LOGW(TAG, "Unknown cmd '%s'", cmd);
         return;
@@ -359,11 +357,30 @@ void ControlChannel::pushState() {
 
     std::string out;
     serializeJson(doc, out);
+    sendText(server, fd, out);
+}
 
+void ControlChannel::pushTranscript() {
+    httpd_handle_t server = m_server.load();
+    int fd = m_client_fd.load();
+    if (!server || fd < 0) return;
+    if (m_transcript_resend.exchange(false)) m_transcript_sent_seq = 0;
+
+    JsonDocument doc;
+    doc["type"] = "transcript";
+    TranscriptLog::instance().toJson(m_transcript_sent_seq, doc);
+    if (doc["entries"].size() == 0) return;
+    m_transcript_sent_seq = doc["seq"];
+    std::string out;
+    serializeJson(doc, out);
+    sendText(server, fd, out);
+}
+
+void ControlChannel::sendText(httpd_handle_t server, int fd, std::string& text) {
     httpd_ws_frame_t frame = {};
     frame.type = HTTPD_WS_TYPE_TEXT;
-    frame.payload = reinterpret_cast<uint8_t*>(out.data());
-    frame.len = out.size();
+    frame.payload = reinterpret_cast<uint8_t*>(text.data());
+    frame.len = text.size();
     frame.final = true;
     esp_err_t err = httpd_ws_send_data(server, fd, &frame);
     if (err != ESP_OK) {
@@ -378,9 +395,11 @@ void ControlChannel::pushState() {
 void ControlChannel::run() {
     bool dirty = false;
     int64_t last_push_ms = 0;
+    int64_t last_transcript_ms = 0;
 
     while (m_running) {
-        int64_t since_push = nowMs() - last_push_ms;
+        int64_t now = nowMs();
+        int64_t since_push = now - last_push_ms;
         uint32_t wait_ms;
         if (m_client_fd.load() < 0) {
             wait_ms = portMAX_DELAY;
@@ -389,7 +408,13 @@ void ControlChannel::run() {
         } else {
             wait_ms = since_push >= TELEMETRY_PERIOD_MS ? 0 : TELEMETRY_PERIOD_MS - since_push;
         }
+        if (wait_ms != portMAX_DELAY && m_transcript_dirty.load()) {
+            int64_t since_t = now - last_transcript_ms;
+            wait_ms = std::min<uint32_t>(wait_ms, since_t >= MIN_PUSH_INTERVAL_MS ? 0 : MIN_PUSH_INTERVAL_MS - since_t);
+        }
 
+        // State changes notify with their component bits; transcript changes,
+        // new clients and commands notify with none and set a flag instead.
         uint32_t bits = 0;
         TickType_t ticks = (wait_ms == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(wait_ms);
         if (xTaskNotifyWait(0, 0xFFFFFFFF, &bits, ticks) == pdTRUE && bits != 0) {
@@ -399,6 +424,7 @@ void ControlChannel::run() {
 
         if (m_client_fd.load() < 0) {
             dirty = false;
+            m_transcript_dirty = false;
             continue;
         }
 
@@ -410,6 +436,12 @@ void ControlChannel::run() {
             pushState();
             last_push_ms = nowMs();
             dirty = false;
+        }
+
+        if (m_transcript_dirty.load() && nowMs() - last_transcript_ms >= MIN_PUSH_INTERVAL_MS) {
+            m_transcript_dirty = false;
+            pushTranscript();
+            last_transcript_ms = nowMs();
         }
     }
 }

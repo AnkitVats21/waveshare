@@ -5,6 +5,7 @@ idf_component_register(
         "src/DeviceCommandHandler.cpp"
         "src/GeminiAudioPump.cpp"
         "src/GeminiProtocol.cpp"
+        "src/TranscriptLog.cpp"
         "src/gemini_skills_generated.cpp"
     INCLUDE_DIRS
         "include"

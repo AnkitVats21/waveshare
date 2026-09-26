@@ -47,6 +47,8 @@ private:
     void transmitSetupHandshake();
     void processIncomingFrame(char* payload, size_t length);
     void handleToolCall(JsonObjectConst toolCall);
+    // Input/output transcription fragments → TranscriptLog.
+    void recordTranscription(JsonObjectConst serverContent);
 
     static void websocketEventHandler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
     bool startClientConnection();
