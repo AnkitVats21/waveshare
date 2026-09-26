@@ -6,11 +6,11 @@
 #include "audio_core/Resampler.h"
 #include "core_sysdb/BufferManager.h"
 #include "app/media_player/AudioDecoderFactory.h"
-#include "services/storage/StorageService.h"
+#include "sd_storage/File.h"
+#include "sd_storage/Fs.h"
+#include "sd_storage/SdCard.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "esp_memory_utils.h"
-#include <cstdio>
 #include <memory>
 
 class AlertFileDecoder : public IAlertFileDecoder {
@@ -20,64 +20,60 @@ public:
         return instance;
     }
 
+    // Returns true only if some audio was decoded and queued, so the caller
+    // falls back to its built-in tone for a missing or undecodable file.
     bool playAlertFile(const char* path) override {
-        if (!path || !Services::StorageService::getInstance().isMounted()) {
+        if (!path || !sd_storage::SdCard::instance().isMounted()) {
             return false;
         }
-        if (!Services::StorageService::getInstance().fileExists(path)) {
-            if (Services::StorageService::getInstance().fileExists("/sdcard/media/alert/alert.ogg")) {
+        if (!sd_storage::Fs::isFile(path)) {
+            if (sd_storage::Fs::isFile("/sdcard/media/alert/alert.ogg")) {
                 path = "/sdcard/media/alert/alert.ogg";
             } else {
                 return false;
             }
         }
 
-        FILE* f = fopen(path, "rb");
+        sd_storage::File f = sd_storage::File::open(path, sd_storage::Mode::Read);
         if (!f) return false;
 
         ESP_LOGI("AlertFileDecoder", "Playing custom alert: %s", path);
 
         constexpr size_t READ_BUF_SIZE = 1024;
-        uint8_t* read_buf = (uint8_t*)malloc(READ_BUF_SIZE);
         constexpr size_t MAX_SAMPLES = 4096;
-        int16_t* pcm_buf = (int16_t*)heap_caps_malloc(MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        int16_t* resample_buf = (int16_t*)heap_caps_malloc(MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        struct CapsFree { void operator()(void* p) const { heap_caps_free(p); } };
+        auto psram = [](size_t bytes) { return heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); };
+        std::unique_ptr<uint8_t, CapsFree> read_mem(static_cast<uint8_t*>(psram(READ_BUF_SIZE)));
+        std::unique_ptr<int16_t, CapsFree> pcm_mem(static_cast<int16_t*>(psram(MAX_SAMPLES * sizeof(int16_t))));
+        std::unique_ptr<int16_t, CapsFree> resample_mem(static_cast<int16_t*>(psram(MAX_SAMPLES * sizeof(int16_t))));
+        uint8_t* read_buf = read_mem.get();
+        int16_t* pcm_buf = pcm_mem.get();
+        int16_t* resample_buf = resample_mem.get();
 
         if (!read_buf || !pcm_buf || !resample_buf) {
             ESP_LOGE("AlertFileDecoder", "Failed to allocate memory for alert decoding");
-            if (read_buf) free(read_buf);
-            if (pcm_buf) heap_caps_free(pcm_buf);
-            if (resample_buf) heap_caps_free(resample_buf);
-            fclose(f);
             return false;
         }
 
         std::unique_ptr<IAudioDecoder> decoder;
         size_t payload_len = 0;
         size_t current_offset = 0;
+        size_t samples_queued = 0;
         auto& bm = BufferManager::getInstance();
 
         while (true) {
             if (payload_len == 0 || current_offset >= payload_len) {
-                payload_len = fread(read_buf, 1, READ_BUF_SIZE, f);
+                payload_len = f.read(read_buf, READ_BUF_SIZE);
                 current_offset = 0;
                 if (payload_len == 0) break; // EOF
             }
 
             if (!decoder) {
-                // Temporary diagnostics: the factory has reported valid OggS files as
-                // "ambiguous"; log exactly what the sniffer sees.
-                const uint8_t* h = read_buf + current_offset;
-                size_t hl = payload_len - current_offset;
-                ESP_LOGI("AlertFileDecoder", "sniff: len=%u off=%u bytes=%02x %02x %02x %02x buf=%s ferror=%d int_free=%u",
-                         (unsigned)hl, (unsigned)current_offset,
-                         hl > 0 ? h[0] : 0, hl > 1 ? h[1] : 0, hl > 2 ? h[2] : 0, hl > 3 ? h[3] : 0,
-                         esp_ptr_external_ram(read_buf) ? "psram" : "internal", ferror(f),
-                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
                 decoder = AudioDecoderFactory::createDecoder(read_buf + current_offset, payload_len - current_offset);
                 if (decoder) {
                     decoder->init(MIXER_SAMPLE_RATE, 1);
                 } else {
+                    ESP_LOGW("AlertFileDecoder", "Unrecognised audio format: %s", path);
                     break;
                 }
             }
@@ -120,6 +116,7 @@ public:
                 resampler.resample(pcm_mono, mono_samples, resample_buf, resampled_count, 1);
 
                 bm.send(Buffers::ALERT_RX_BUF, resample_buf, resampled_count * sizeof(int16_t), pdMS_TO_TICKS(100));
+                samples_queued += resampled_count;
             }
 
             if (bytes_consumed > 0) {
@@ -129,10 +126,9 @@ public:
             }
         }
 
-        free(read_buf);
-        heap_caps_free(pcm_buf);
-        heap_caps_free(resample_buf);
-        fclose(f);
-        return true;
+        if (samples_queued == 0) {
+            ESP_LOGW("AlertFileDecoder", "No audio decoded from %s", path);
+        }
+        return samples_queued > 0;
     }
 };
