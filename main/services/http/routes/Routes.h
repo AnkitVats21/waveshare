@@ -25,6 +25,7 @@ void registerAlerts(Http::Server& server);  // /api/alerts*
 void registerTime(Http::Server& server);    // /api/time*
 void registerAssistant(Http::Server& server); // /api/assistant/*
 void registerDb(Http::Server& server);        // /api/db/<name>
+void registerRecordings(Http::Server& server); // /api/recordings*
 void registerFrontend(Http::Server& server); // GET /* catch-all: frontend bundle; register last
 
 } // namespace Routes

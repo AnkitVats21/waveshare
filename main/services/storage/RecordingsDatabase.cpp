@@ -207,6 +207,28 @@ void openTask(void*) {
     vTaskDeleteWithCaps(nullptr);
 }
 
+// The new file name for `name`, keeping the extension of `old_file`; empty
+// if `name` isn't allowed.
+std::string cleanName(std::string name, const std::string& old_file) {
+    size_t dot = old_file.rfind('.');
+    std::string ext = dot == std::string::npos ? "" : old_file.substr(dot);
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    while (!name.empty() && name.front() == ' ') name.erase(0, 1);
+    if (!ext.empty() && name.size() > ext.size() &&
+        strcasecmp(name.c_str() + name.size() - ext.size(), ext.c_str()) == 0) {
+        name.resize(name.size() - ext.size());
+    }
+    if (name.empty() || name.size() > MAX_RECORDING_NAME || name[0] == '.') return "";
+    for (char c : name) {
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                  strchr(" -_.()", c) != nullptr;
+        if (!ok) return "";
+    }
+    return name + ext;
+}
+
+std::string pathOf(const std::string& file) { return std::string(RECORDINGS_DIR) + "/" + file; }
+
 }  // namespace
 
 ndb::recordings::RecordingsDb& recordingsDb() {
@@ -252,6 +274,54 @@ bool addRecording(const char* path, uint32_t started, RecordingMode mode, uint32
     ESP_LOGI(TAG, "Added %s as id %s (%u ms, %u bytes)", name, key.c_str(), unsigned(doc.duration_ms),
              unsigned(doc.size));
     return true;
+}
+
+RecordingResult renameRecording(int id, const std::string& name, std::string& new_file) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto& db = recordingsDb();
+    if (!db.db().isOpen()) return RecordingResult::Unavailable;
+    std::string key = std::to_string(id);
+    RecordingDoc doc;
+    if (id <= 0 || !db.recordings().get(key, doc)) return RecordingResult::NotFound;
+    new_file = cleanName(name, doc.file);
+    if (new_file.empty()) return RecordingResult::BadName;
+    if (new_file == doc.file) return RecordingResult::Ok;
+
+    std::string from = pathOf(doc.file), to = pathOf(new_file);
+    // FAT names are case-insensitive: a change of case alone is the same file.
+    bool case_only = strcasecmp(new_file.c_str(), doc.file.c_str()) == 0;
+    if (!case_only && sd_storage::Fs::exists(to.c_str())) return RecordingResult::Taken;
+    if (!sd_storage::Fs::rename(from.c_str(), to.c_str())) {
+        ESP_LOGW(TAG, "Could not rename %s to %s", doc.file.c_str(), new_file.c_str());
+        return RecordingResult::Failed;
+    }
+    RecordingDoc update;
+    update.file = new_file;
+    if (!db.recordings().merge(key, update, RecordingDoc::F_FILE)) {
+        // Put the file back so the list stays true.
+        sd_storage::Fs::rename(to.c_str(), from.c_str());
+        return RecordingResult::Failed;
+    }
+    ESP_LOGI(TAG, "Renamed id %d: %s -> %s", id, doc.file.c_str(), new_file.c_str());
+    return RecordingResult::Ok;
+}
+
+RecordingResult deleteRecording(int id) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto& db = recordingsDb();
+    if (!db.db().isOpen()) return RecordingResult::Unavailable;
+    std::string key = std::to_string(id);
+    RecordingDoc doc;
+    if (id <= 0 || !db.recordings().get(key, doc)) return RecordingResult::NotFound;
+    std::string path = pathOf(doc.file);
+    if (sd_storage::Fs::exists(path.c_str()) && !sd_storage::Fs::remove(path.c_str())) {
+        ESP_LOGW(TAG, "Could not delete %s", doc.file.c_str());
+        return RecordingResult::Failed;
+    }
+    // If this write fails, the next boot's check drops the entry.
+    db.recordings().remove(key);
+    ESP_LOGI(TAG, "Deleted id %d: %s", id, doc.file.c_str());
+    return RecordingResult::Ok;
 }
 
 }  // namespace Services

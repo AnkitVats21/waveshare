@@ -108,6 +108,7 @@ bool HttpService::startServer() {
     Routes::registerTime(m_server);
     Routes::registerAssistant(m_server);
     Routes::registerDb(m_server);
+    Routes::registerRecordings(m_server);
     // CORS preflight for every /api/* endpoint.
     m_server.on("/api/*", HTTP_OPTIONS, Http::corsPreflight);
     // Wildcard GET must come after every other GET route (first match wins).

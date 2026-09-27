@@ -50,6 +50,7 @@ set(srcs
             "services/http/routes/TimeRoutes.cpp"
             "services/http/routes/AssistantRoutes.cpp"
             "services/http/routes/DbRoutes.cpp"
+            "services/http/routes/RecordingRoutes.cpp"
             "services/storage/SysDbSyncReactor.cpp"
             "services/storage/SystemDatabase.cpp"
             "services/storage/generated/SystemDb.generated.cpp"
