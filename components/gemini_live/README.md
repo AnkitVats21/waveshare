@@ -8,11 +8,11 @@ Gemini actually control the device.
 
 - **`GeminiProtocol`** — the WebSocket client (`esp_websocket_client` via
   the `WssClient` RAII wrapper) talking directly to
-  `wss://generativelanguage.googleapis.com`, no proxy. Loads the API key
-  from `/sdcard/gemini_config.json` (`api_key` field only) if present,
-  falling back to the `GEMINI_API_KEY` Kconfig value. The Gemini model
-  itself (`gemini-3.1-flash-live-preview` at time of writing) is baked
-  into the generated setup handshake, not configurable via that JSON file.
+  `wss://generativelanguage.googleapis.com`, no proxy. The API key comes
+  from NVS (`credentials::geminiApiKey()`), with the `GEMINI_API_KEY`
+  Kconfig value as a fallback. Model, voice, system prompt and transcript
+  options come from the settings in system.ndb (set from the dashboard),
+  read at each session start.
 - **`GeminiAudioPump`** — Core 1 task pumping `MicCapture` (16kHz PCM)
   uplink audio into the WS connection and Gemini's 24kHz downlink audio
   out to the speaker path (resampled to 32kHz by `audio_core`'s
@@ -24,6 +24,9 @@ Gemini actually control the device.
   router. Dispatches parsed Gemini function calls to `AppController` (in
   `main/app`) via `IDeviceCommandDelegate`, which is the actual command
   entry point the rest of the firmware exposes.
+- **`TranscriptLog`** — the last few turns of the conversation as text
+  (from Gemini's input and output transcriptions), for
+  `/api/assistant/transcript` and the dashboard.
 - **`IVoiceTransport`** — an abstraction the header comments describe as
   supporting both a "Direct Mode" (`GeminiProtocol`) and a "Relayed Mode"
   (`RelayVoiceClient`, via a local hub). **Only `GeminiProtocol` actually
@@ -39,23 +42,31 @@ is compiled by `scripts/generate_gemini_skills.py` into
 automatically on build, same pattern as `core_sysdb`'s schema compiler).
 To add/change a tool, edit the JSON schema, not the generated files.
 
-Current tools (verify against `gemini_skills_generated.cpp`'s
-`SETUP_HANDSHAKE_JSON` if this drifts):
+Current tools (25; `schema/gemini_skills_schema.json` is the source):
 
 | Function | Purpose |
 |---|---|
-| `play(query)` | Play a track immediately (clears queue) |
-| `play_next(query)` | Queue a track to play right after the current one |
-| `pause` / `resume` / `stop` | Playback transport |
-| `next` / `previous` | Skip within queue/history |
-| `volume(level)` | Speaker volume (0-100) |
-| `mute` | Volume to 0 (unmute with `volume`) |
-| `autoplay(enabled)` | Toggle autoplay recommendations |
-| `set_caching(enabled)` | Toggle SD-card stream caching |
-| `set_led_strip(r,g,b)` | Solid status LED color |
+| `play(query)` / `play_next(query)` | Play now (clears the queue) / right after the current track |
+| `pause` / `resume` / `stop` / `next` / `previous` | Playback transport |
+| `volume(level)` / `mute` | Speaker volume (0-100) |
+| `autoplay(enabled)` / `set_caching(enabled)` | Recommendations after the queue; saving streams to the card |
+| `set_led_strip(r,g,b)` | Solid LED colour |
 | `read_file(path)` / `write_file(path, content)` | Text notes, confined to `/sdcard/notes/` (plain file names only) |
-| `save_to_memory(text)` | Append to a persistent long-term memory file |
-| `set_alarm(hour, minute, tone_file?, enabled?)` / `stop_active_alarm` | Saved via `Services::AlarmService` (ringing task not started yet) |
+| `save_to_memory(text)` | Append to a long-term memory file |
+| `set_alarm` / `list_alarms` / `cancel_alarm` | Alarms (`main/services/alarm`, stored in system.ndb) |
+| `stop_active_alarm` / `snooze_alarm` | The ringing alarm |
+| `set_timer` | Countdown timer |
+| `set_reminder` / `list_reminders` / `cancel_reminder` / `acknowledge_reminders` | Reminders |
+
+The alarm, timer and reminder handlers live in
+`main/services/alarm/AlarmTools.cpp`, reached through
+`IDeviceCommandDelegate` (`AppController::handleAlarmTool`).
+
+## Known limits
+
+- Gemini 3.x Live models reject the `googleSearch` tool with our key and
+  end the session; Live 2.5 native-audio accepts it. Search is therefore
+  not declared.
 
 ## Depends on
 

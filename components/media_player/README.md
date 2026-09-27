@@ -1,39 +1,85 @@
 # media_player
 
-The streaming music engine: Invidious search/resolution, Opus decoding,
-gapless prefetch/autoplay, and SD card caching + a binary on-device track
-catalog.
+The music engine: Invidious search and stream resolution, Opus decoding
+(WebM and Ogg), seeking, the queue with autoplay, the SD card cache and the
+track library.
+
+## Layers
+
+```
+MusicPlaybackService   queue, history, autoplay, commands (media_worker task)
+        │
+NexusPlayer            one track: local file or stream, pause, seek, end
+        │
+StorageManager / StreamManager   bytes from the card / from HTTP
+        │
+AudioEngine            decode task (OpusEngine, core 0, internal stack)
+        │  IAudioDecoder: WebMOpusDecoder | OggOpusDecoderStrategy
+        ▼
+MEDIA_RX_BUF → speaker mixer (audio_core)
+```
 
 ## What's here
 
-- **`NexusPlayer`** — high-level player interface; owns playback state and
-  drives `AudioOrchestrator` (in `audio_core`) for output.
-- **`MusicPlaybackService`** — queue, prefetch, and autoplay manager.
-  Monitors queue depth with a low-watermark algorithm
-  (`QUEUE_LOW_WATERMARK = 2`) and proactively resolves/prefetches upcoming
-  tracks in the background so transitions are gapless. Background prefetch
-  (`bg_prefetch`) and replenishment (`bg_replenish`) tasks run with
-  `MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT` stacks to keep internal SRAM free.
-- **`InvidiousClient` / `InvidiousInstanceResolver`** — search + stream
-  resolution against Invidious-compatible instances. The resolver
-  maintains a rotating list of public instances with health checks
-  (`testInstance()`) and automatic failover (`markInstanceFailed()`); call
-  `setCustomInstance()` to pin a specific host. There's no Kconfig option
-  for this — it's entirely runtime-resolved.
-- **`AudioDecoderFactory`** + **`OggOpusDecoderStrategy`** / **`WebMOpusDecoder`**
-  — strategy-based Opus decoding for Ogg and WebM containers (`micro-opus`).
-- **`StorageManager`** — SD card stream caching. When SysDb's
-  `media.cache_downloads` is enabled, downloaded audio streams are saved
-  to `/sdcard/cache/<videoId>.opus` for offline replay.
-- **`CatalogDB`** — the real, active on-device track catalog: a compact
-  packed binary record format (`TrackRecord`) tracking cached files,
-  thumbnails, and pin/eviction flags. This is what backs the web
-  dashboard's SD Library view. Its seek table is no longer used: seeks
-  read the WebM file's own index (`WebmSeek`).
-- **`StreamManager` / `HttpClientStream`** — HTTP stream lifecycle and
-  buffering for the audio pipeline.
+- **`MusicPlaybackService`** — the entry point for everything that plays:
+  voice tools, `/api/music/*`, `/api/ws`, keys. Commands go through a queue
+  to the `media_worker` task; search, stream resolution and thumbnails run
+  on `media_aux` (both with PSRAM stacks). It keeps the queue and history,
+  refills the queue with recommendations when autoplay is on
+  (`QUEUE_LOW_WATERMARK`), and prefetches the next stream URL. Ways to
+  start a track: `play(query)`, `playTrack`, `playDirect(track, url)`,
+  `playLocal(id)` (library), `playFile(track, path)` (a file outside the
+  library, e.g. a recording: track id `file:<n>`, kept out of the library,
+  history and autoplay, stops at the end).
+- **`NexusPlayer`** — plays one track. A song saved on the card plays from
+  the file; otherwise it streams, saving to the card at the same time when
+  caching is on and the track is at most `MAX_CACHE_DURATION_MS` long. It
+  owns the playback state in sysdb (`media.state`, `position_ms`,
+  `duration_ms`, `seekable`); fills in a missing length from the WebM
+  header or the stream URL's `dur`; defers a play or resume while an
+  assistant session is active; and has an alarm owner mode, in which an
+  alarm song preempts music and the music is restored afterwards.
+- **Seeking** — `NexusPlayer::seekTo()` stops the decoder, moves the
+  reader and restarts decoding at the target:
+  - WebM files: the Cues index in the first few KB (`WebmSeek`) gives the
+    cluster; the decoder skips blocks to the exact time.
+  - Streams: the same index read from the stream's head, then a new HTTP
+    range request from that cluster.
+  - Ogg files (recordings): no index, so the reader starts at a byte
+    estimate and `OggSeek` finds the page holding the target; the decoder
+    gets the header pages again, renumbered, and drops frames to the exact
+    time.
+- **`StorageManager`** — the card side: cached songs in
+  `/sdcard/music/<videoId>.webm` (also `.opus`/`.ogg`), written as `.tmp`
+  and renamed when complete; a reader task feeding the decoder; files
+  opened by full path for `playFile`.
+- **`StreamManager` / `HttpClientStream`** — HTTPS download of a stream,
+  with a `Range` header on every request (YouTube's CDN throttles requests
+  without one) and restarts at a byte offset for seeks.
+- **`InvidiousClient` / `InvidiousInstanceResolver`** — search and stream
+  resolution against Invidious instances, with health checks and failover;
+  `setCustomInstance()` pins one.
+- **`AudioEngine`** + **`AudioDecoderFactory`** — the decode task. The
+  format is sniffed from the first bytes (EBML → WebM, `OggS` → Ogg). The
+  decoded audio is downmixed to mono and resampled to the mixer rate.
+- **`CatalogDB`** — the library: one packed `TrackRecord` per saved song
+  (title, artist, length, play count, thumbnail) in
+  `/sdcard/music/catalog.db`. The dashboard's library reads that file
+  directly. It is due to move to `music.ndb` (nexus_db step 5).
+
+## Tests
+
+Host tests (`host_tests/`): `test_webm_seek.py` (Cues, cluster search,
+block timecodes, Duration) and `test_ogg_seek.py` (pages, header
+renumbering, the seek scan). The rest needs the device.
+
+## Limits
+
+See `docs/known-issues.md`: stream seeks take a few seconds, seeking a song
+while it is being saved stops the saving, and resuming mid-track after an
+assistant session or alarm hasn't been tested on the device.
 
 ## Depends on
 
-`core_sysdb` (state/schema), `audio_core` (`AudioOrchestrator` output),
-`esp_http_client`, `mbedtls`, `cjson` — see `CMakeLists.txt`.
+`core_sysdb`, `audio_core`, `sd_storage`, `esp_http_client`, `mbedtls`,
+`micro-opus` — see `CMakeLists.txt`.

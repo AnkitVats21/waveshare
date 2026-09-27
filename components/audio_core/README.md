@@ -16,14 +16,24 @@ Core 1 (`CORE_AUDIO`).
   orchestrator currently has active and writes it out with jitter control.
 - **`MicCapture`** — the I2S DMA reader task feeding both the wake-word
   engine and the Gemini Live uplink (`GeminiAudioPump`, in `gemini_live`).
-- **`WakeWordEngine`** — wraps ESP-SR WakeNet + AFE (AEC/VAD). Gated by
-  `CONFIG_WAVESHARE_WAKEWORD_ENABLE` (off by default); when enabled it
-  notifies `AssistantService` (in `gemini_live`) on detection.
-- **`AlertPlayer`** — chime/tone playback (used for the wake/confirm chime
-  and other short system sounds).
+- **`WakeWordEngine`** — wraps ESP-SR WakeNet + AFE (AEC/BSS/NS/VAD).
+  Gated by `CONFIG_WAVESHARE_WAKEWORD_ENABLE` (off in `Kconfig`, on in the
+  device's config); on detection it notifies `AssistantService` (in
+  `gemini_live`). The AFE output is also what the recorder saves in
+  "processed" mode.
+- **`AlertPlayer`** / **`AlertMixer`** — chimes and short system sounds.
+  `AlertMixer` holds decoded clips (mono PCM in PSRAM) and mixes one at a
+  time into the speaker output; a new alert fades out the playing one, and
+  a burst of requests plays only the last. The clips themselves come from
+  `main/services/alerts/AlertLibrary` (per-alert settings in system.ndb).
+  `AlertTones` synthesises tones from note lists; `AlertPlayer::startAlarmTone()`
+  loops the built-in alarm tone that alarms fall back to.
+- **`IAudioFeedSource`** — the raw 4-channel mic frames the AFE reads
+  (format string such as `"RMNM"`), so the wake-word engine doesn't depend
+  on the I2S driver.
 - **`Resampler`** — fixed-point linear resampler; primarily used to
   convert Gemini Live's 24kHz downlink audio to the board's native 32kHz
-  I2S output rate on the fly.
+  I2S output rate (`LOCAL_SAMPLE_RATE`, `core_sysdb/AudioRates.h`) on the fly.
 
 ## Header layout
 
@@ -44,6 +54,11 @@ new code.
 
 ## Gotchas
 
+- The AFE's CPU load depends heavily on the data-cache configuration
+  (64-byte lines and a 64 KB cache freed 20-30 points of CPU); don't shrink
+  the cache to win RAM without measuring.
+- The AFE ring can overflow under load ("ring full" in the log); see
+  `docs/known-issues.md`.
 - `AudioOrchestrator` ducking is cooperative: a source must call into it
   rather than writing to `SpeakerPlayback` directly, or it'll bypass the
   priority hierarchy entirely and cause overlapping audio.

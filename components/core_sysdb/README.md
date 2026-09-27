@@ -43,14 +43,27 @@ task base class (`ReactorTask`).
 `Pipeline`, `Assistant`, `Led`, `Alarm`, `Bluetooth`, `Media`), each with
 its own bit in a 32-bit `ComponentMask` and its own field set. Component
 ids aren't contiguous (`id=5` is retired, formerly `Mqtt`) — `starc`
-doesn't require contiguity, so don't assume a gap means a bug.
+doesn't require contiguity, so don't assume a gap means a bug. `Bluetooth`
+is left over from the retired Bluetooth companion board; its fields stay
+false.
+
+`EmbeddedSysDb` is live state in RAM. What must survive a restart (volume,
+settings, alarms) is saved to `/sdcard/db/system.ndb` by
+`main/services/storage/SysDbSyncReactor` and loaded at boot; see
+`docs/nexus-db-design.md`.
+
+## Tasks
+
+`thread_config.h` holds every task priority, stack size and core
+assignment: audio DSP on core 1, network and SD I/O on core 0. Add new
+tasks there rather than hard-coding numbers.
 
 ## Mutation example
 
 ```cpp
 EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
     s.audio.speaker_volume = 90;
-    s.audio.autoplay_enabled = true;
+    s.media.autoplay_enabled = true;
 });
 ```
 
