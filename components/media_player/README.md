@@ -26,9 +26,10 @@ catalog.
   `media.cache_downloads` is enabled, downloaded audio streams are saved
   to `/sdcard/cache/<videoId>.opus` for offline replay.
 - **`CatalogDB`** — the real, active on-device track catalog: a compact
-  packed binary record format (`TrackRecord`, `SeekEntry`) tracking
-  cached files, seek tables, thumbnails, and pin/eviction flags. This is
-  what backs the web dashboard's SD Library view.
+  packed binary record format (`TrackRecord`) tracking cached files,
+  thumbnails, and pin/eviction flags. This is what backs the web
+  dashboard's SD Library view. Its seek table is no longer used: seeks
+  read the WebM file's own index (`WebmSeek`).
 - **`StreamManager` / `HttpClientStream`** — HTTP stream lifecycle and
   buffering for the audio pipeline.
 

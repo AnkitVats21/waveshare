@@ -50,7 +50,9 @@ struct TrackRecord {
     uint16_t codecId;           // 0 = WebM/Opus, 1 = PCM/WAV, 2 = Ogg/Opus
 
     // ── 5. Inline Seek Table (804 bytes) ─────────────────────────────────
-    // Stores up to 100 keyframes inline. At 10s intervals, covers 16.6 minutes.
+    // No longer written or read: the player seeks from the file's own index
+    // (docs/nexus-db-design.md, "Seeking"). Kept so the layout stays the same
+    // until the catalog moves to music.ndb.
     uint16_t seekEntryCount;    // Populated entries in seekTable[] (max 100)
     uint16_t _reservedSeek;
     SeekEntry seekTable[100];   // 100 × 8 bytes = 800 bytes
@@ -105,11 +107,6 @@ public:
     std::vector<TrackRecord> getAll();
     std::vector<TrackRecord> search(const char* query);
     size_t getTrackCount() const;
-
-    // Seek table
-    bool setSeekTable(const char* videoId, const SeekEntry* entries, uint16_t count);
-    bool lookupSeekEntry(const char* videoId, uint32_t targetMs,
-                         uint32_t& outTimecodeMs, uint32_t& outByteOffset);
 
     // Thumbnails & Metadata
     bool setThumbnailCached(const char* videoId, bool cached);

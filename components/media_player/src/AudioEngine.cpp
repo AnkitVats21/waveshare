@@ -1,6 +1,5 @@
 #include "AudioEngine.h"
 #include "AudioDecoderFactory.h"
-#include "WebMOpusDecoder.h"
 #include "BufferManager.h"
 #include "common/audio/Resampler.h"
 #include "esp_heap_caps.h"
@@ -75,10 +74,6 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
         if (_decoder) {
             _decoder->init(_sampleRate, _channels);
             _decoderIdentified = true;
-            if (_seekIndexCb) {
-                auto webm = dynamic_cast<WebMOpusDecoder*>(_decoder.get());
-                if (webm) webm->setSeekIndexCallback(_seekIndexCb);
-            }
             ESP_LOGI(TAG, "Initialized decoder strategy: %s", _decoder->getName());
         }
     }
@@ -153,7 +148,6 @@ void AudioEngine::runDecodeLoop() {
     if (_startPending && _decoder) {
         // Mid-file start: keep the decoder and tell it where the input begins.
         _decoder->reset();
-        _decoder->setStreamByteOffset(_startOffset);
         _decoder->setSeekTarget(_startTargetMs);
     } else {
         _decoderIdentified = false;
@@ -263,8 +257,7 @@ void AudioEngine::start() {
     spawnTask();
 }
 
-void AudioEngine::startAt(uint32_t byteOffset, uint32_t targetMs, bool paused,
-                          const uint8_t* head, size_t headLen) {
+void AudioEngine::startAt(uint32_t targetMs, bool paused, const uint8_t* head, size_t headLen) {
     if (_decoderTaskHandle != nullptr) {
         ESP_LOGW(TAG, "startAt while running; ignored");
         return;
@@ -273,10 +266,6 @@ void AudioEngine::startAt(uint32_t byteOffset, uint32_t targetMs, bool paused,
         _decoder = AudioDecoderFactory::createDecoder(head, headLen);
         if (_decoder) {
             _decoder->init(_sampleRate, _channels);
-            if (_seekIndexCb) {
-                auto webm = dynamic_cast<WebMOpusDecoder*>(_decoder.get());
-                if (webm) webm->setSeekIndexCallback(_seekIndexCb);
-            }
         }
     }
     if (!_decoder) {
@@ -285,7 +274,6 @@ void AudioEngine::startAt(uint32_t byteOffset, uint32_t targetMs, bool paused,
         return;
     }
     _decoderIdentified = true;
-    _startOffset = byteOffset;
     _startTargetMs = targetMs;
     _startPending = true;
     _isPlaying = true;
@@ -362,14 +350,6 @@ void AudioEngine::decoderTaskThunk(void* pvParameters) {
     vTaskDelete(NULL);
 }
 
-void AudioEngine::setSeekIndexCallback(std::function<void(uint32_t, uint32_t)> cb) {
-    _seekIndexCb = cb;
-    if (_decoder) {
-        auto webm = dynamic_cast<WebMOpusDecoder*>(_decoder.get());
-        if (webm) webm->setSeekIndexCallback(_seekIndexCb);
-    }
-}
-
 uint32_t AudioEngine::getPositionMs() const {
     if (!_decoder) return 0;
     const uint32_t decoded = _decoder->getPositionMs();
@@ -379,15 +359,4 @@ uint32_t AudioEngine::getPositionMs() const {
     return decoded > bufferedMs ? decoded - bufferedMs : 0;
 }
 
-void AudioEngine::resetDecoder() {
-    if (_decoder) _decoder->reset();
-}
-
-void AudioEngine::setStreamByteOffset(uint32_t offset) {
-    if (_decoder) _decoder->setStreamByteOffset(offset);
-}
-
-void AudioEngine::setSeekTarget(uint32_t positionMs) {
-    if (_decoder) _decoder->setSeekTarget(positionMs);
-}
 

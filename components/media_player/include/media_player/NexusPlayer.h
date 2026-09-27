@@ -103,11 +103,7 @@ private:
     // Registered playback lifecycle observers
     std::vector<IPlaybackObserver*> _observers;
 
-    // Active seek table tracking
     std::string _activeDownloadUrl;
-    std::vector<SeekEntry> _sessionSeekTable;
-    std::mutex _sessionSeekTableMutex;   // filled from the decode task
-    void commitSessionSeekTable();
 
     // Local playback: the file's seek index (WebM Cues), empty if it has none.
     bool _localSource = false;

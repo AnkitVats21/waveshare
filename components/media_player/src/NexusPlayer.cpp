@@ -79,13 +79,6 @@ bool NexusPlayer::begin() {
     }
 
     AudioOrchestrator::getInstance().addObserver(this);
-    _audioEngine.setSeekIndexCallback([this](uint32_t timecodeMs, uint32_t byteOffset) {
-        // Not the player mutex: a seek holds it while waiting for this task to stop.
-        std::lock_guard<std::mutex> lock(_sessionSeekTableMutex);
-        if (_sessionSeekTable.size() < 100) {
-            _sessionSeekTable.push_back({timecodeMs, byteOffset});
-        }
-    });
     return _audioEngine.initialize(MIXER_SAMPLE_RATE, 1);
 }
 
@@ -201,10 +194,6 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
     strncpy(_activeSongId, songId, sizeof(_activeSongId) - 1);
     _activeSongId[sizeof(_activeSongId) - 1] = '\0';
     _activeDownloadUrl = downloadUrl ? downloadUrl : "";
-    {
-        std::lock_guard<std::mutex> lock(_sessionSeekTableMutex);
-        _sessionSeekTable.clear();
-    }
     _cues.clear();
     _localSource = false;
     _caching = false;
@@ -241,7 +230,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
             ESP_LOGI(TAG, "Starting at %u ms: byte %u", (unsigned)startPosMs, (unsigned)offset);
             _storageManager.seekTo(offset);
             BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
-            _audioEngine.startAt(offset, startPosMs, false, head, headLen);
+            _audioEngine.startAt(startPosMs, false, head, headLen);
         } else {
             _audioEngine.start();
         }
@@ -316,7 +305,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
             if (startPosMs > 0) {
                 // The network task finds the cluster; the decoder skips to the exact time.
                 const bool webm = isWebmUrl(downloadUrl);
-                _audioEngine.startAt(0, startPosMs, false, webm ? EBML_MAGIC : nullptr, webm ? sizeof(EBML_MAGIC) : 0);
+                _audioEngine.startAt(startPosMs, false, webm ? EBML_MAGIC : nullptr, webm ? sizeof(EBML_MAGIC) : 0);
                 streamOk = _streamManager.beginStreamingAt(downloadUrl, startPosMs);
             } else {
                 _audioEngine.start();
@@ -406,7 +395,6 @@ void NexusPlayer::stop() {
 }
 
 void NexusPlayer::stopActivePipelines() {
-    commitSessionSeekTable();
     auto& bm = BufferManager::getInstance();
 
     // 1. Signal the decoder to stop, then clear the rings it feeds on/into so it
@@ -612,17 +600,6 @@ void NexusPlayer::yieldAlarm() {
     if (_alarmOwner && _alarmYield) _alarmYield();
 }
 
-void NexusPlayer::commitSessionSeekTable() {
-    std::vector<SeekEntry> table;
-    {
-        std::lock_guard<std::mutex> lock(_sessionSeekTableMutex);
-        table.swap(_sessionSeekTable);
-    }
-    if (_activeSongId[0] != '\0' && !table.empty()) {
-        CatalogDB::getInstance().setSeekTable(_activeSongId, table.data(), table.size());
-    }
-}
-
 uint8_t* NexusPlayer::loadLocalIndex(size_t& headLen) {
     const int64_t t0 = esp_timer_get_time();
     _cues.clear();
@@ -698,7 +675,7 @@ void NexusPlayer::seekTo(uint32_t positionMs) {
         const uint32_t offset = localSeekOffset(positionMs);
         haltDecoder();
         _storageManager.seekTo(offset);
-        _audioEngine.startAt(offset, positionMs, paused);
+        _audioEngine.startAt(positionMs, paused);
         ESP_LOGI(TAG, "Seek to %u ms: byte %u (%s), set up in %lld us", (unsigned)positionMs, (unsigned)offset,
                  _cues.empty() ? "estimate" : "index", (long long)(esp_timer_get_time() - t0));
         return;
@@ -724,7 +701,7 @@ void NexusPlayer::seekTo(uint32_t positionMs) {
     auto& bm = BufferManager::getInstance();
     bm.flush(_playbackId);
     bm.flush(_storageId);
-    _audioEngine.startAt(0, positionMs, paused);
+    _audioEngine.startAt(positionMs, paused);
     _streamManager.beginStreamingAt(_activeDownloadUrl.c_str(), positionMs);
     ESP_LOGI(TAG, "Seek to %u ms: stream restarted in %lld us", (unsigned)positionMs,
              (long long)(esp_timer_get_time() - t0));

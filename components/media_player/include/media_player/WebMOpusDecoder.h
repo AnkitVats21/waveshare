@@ -3,11 +3,9 @@
 #include "IAudioDecoder.h"
 #include <vector>
 #include <cstdint>
-#include <functional>
 
 struct OpusDecoder;
 
-using SeekIndexCallback = std::function<void(uint32_t timecodeMs, uint32_t byteOffset)>;
 
 class WebMOpusDecoder : public IAudioDecoder {
 public:
@@ -24,11 +22,7 @@ public:
     uint8_t getSourceChannels() const override { return _channels; }
 
     uint32_t getPositionMs() const override;
-    void setStreamByteOffset(uint32_t offset) override;
     void setSeekTarget(uint32_t positionMs) override;
-
-    void setSeekIndexCallback(SeekIndexCallback cb) { _seekIndexCb = cb; }
-    void clearSeekIndexCallback() { _seekIndexCb = nullptr; }
 
 private:
     OpusDecoder* _opusDecoder = nullptr;
@@ -38,10 +32,6 @@ private:
     // Streaming assembly buffer for cross-chunk EBML elements
     std::vector<uint8_t> _buffer;
     size_t _skipRemaining = 0; // Bytes to skip from non-audio/unwanted elements
-
-    // Stream byte position tracking (for accurate keyframe seek indexing)
-    uint32_t _streamByteOffset = 0;
-    uint32_t _currentClusterOffset = 0xFFFFFFFF;
 
     uint32_t _lastClusterTimeMs = 0;
     uint64_t _timecodeScale = 1000000; // 1ms default in WebM
@@ -57,8 +47,6 @@ private:
     // bytes until the next Cluster before parsing.
     bool _findCluster = false;
     size_t _bytesBeforeCluster = 0;
-
-    SeekIndexCallback _seekIndexCb = nullptr;
 
     bool initOpusDecoder();
     void cleanupOpusDecoder();

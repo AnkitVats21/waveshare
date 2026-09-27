@@ -92,8 +92,6 @@ void WebMOpusDecoder::reset() {
     cleanupOpusDecoder();
     _buffer.clear();
     _skipRemaining = 0;
-    _streamByteOffset = 0;
-    _currentClusterOffset = 0xFFFFFFFF;
     _lastClusterTimeMs = 0;
     _timecodeScale = 1000000;
     _blockTimeMs = 0;
@@ -103,12 +101,6 @@ void WebMOpusDecoder::reset() {
     _findCluster = false;
     _bytesBeforeCluster = 0;
     initOpusDecoder();
-}
-
-void WebMOpusDecoder::setStreamByteOffset(uint32_t offset) {
-    _streamByteOffset = offset;
-    _currentClusterOffset = 0xFFFFFFFF;
-    _samplesSinceBlock = 0;
 }
 
 void WebMOpusDecoder::setSeekTarget(uint32_t positionMs) {
@@ -163,7 +155,6 @@ DecodeResult WebMOpusDecoder::decode(const uint8_t* inData, size_t inLen,
         size_t toAppend = std::min(inLen - inOffset, static_cast<size_t>(16384 - _buffer.size()));
         _buffer.insert(_buffer.end(), inData + inOffset, inData + inOffset + toAppend);
         inOffset += toAppend;
-        _streamByteOffset += toAppend;
     }
     bytesConsumed = inOffset;
 
@@ -219,10 +210,6 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
 
         // Master element container: descend into it
         if (isMasterElement(elemId)) {
-            if (elemId == 0x1F43B675) { // Cluster
-                // Calculate absolute byte offset in the stream
-                _currentClusterOffset = (_streamByteOffset - _buffer.size()) + elemStart;
-            }
             continue;
         }
 
@@ -238,11 +225,6 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
             }
             offset += elemSize;
             _lastClusterTimeMs = static_cast<uint32_t>((tc * _timecodeScale) / 1000000);
-
-            if (_seekIndexCb && _currentClusterOffset != 0xFFFFFFFF) {
-                _seekIndexCb(_lastClusterTimeMs, _currentClusterOffset);
-                _currentClusterOffset = 0xFFFFFFFF;
-            }
             continue;
         }
 
