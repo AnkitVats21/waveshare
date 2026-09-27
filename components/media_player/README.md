@@ -55,7 +55,13 @@ MEDIA_RX_BUF → speaker mixer (audio_core)
   opened by full path for `playFile`.
 - **`StreamManager` / `HttpClientStream`** — HTTPS download of a stream,
   with a `Range` header on every request (YouTube's CDN throttles requests
-  without one) and restarts at a byte offset for seeks.
+  without one) and restarts at a byte offset for seeks. Redirects are
+  followed (googlevideo sends one when the URL was signed for another
+  address, e.g. a resolver behind a VPN) and the target is remembered for
+  the track. A connection lost before the end (a pause of a few minutes
+  lets the server close it) is reopened at the byte where it stopped; a
+  403 renews the URL through `MusicPlaybackService` (on `media_aux`) and
+  continues if it is the same file. Stream URLs are kept in RAM only.
 - **`InvidiousClient` / `InvidiousInstanceResolver`** — search and stream
   resolution against Invidious instances, with health checks and failover;
   `setCustomInstance()` pins one.

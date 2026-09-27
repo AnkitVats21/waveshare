@@ -103,6 +103,10 @@ bool MusicPlaybackService::begin() {
     }
 
     NexusPlayer::getInstance().addObserver(this);
+    NexusPlayer::getInstance().setUrlRenewer(
+        [this](const std::string& videoId, std::string& outUrl, const std::function<bool()>& cancelled) {
+            return renewStreamUrl(videoId, outUrl, cancelled);
+        });
     _autoplayEnabled = EmbeddedSysDb::getInstance().snapshot().media.autoplay_enabled;
     _initialized = true;
     ESP_LOGI(TAG, "MusicPlaybackService initialized with persistent worker queues (autoplay=%s, caching=%s)",
@@ -333,7 +337,7 @@ void MusicPlaybackService::auxWorkerLoop() {
         if (xQueueReceive(m_aux_queue, &cmd, portMAX_DELAY) == pdTRUE) {
             {
                 std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-                if (cmd.generation != _queueGeneration) {
+                if (cmd.type != MediaAuxCmdType::RENEW_URL && cmd.generation != _queueGeneration) {
                     ESP_LOGD(TAG, "Aux command discarded (gen %lu != %lu)",
                              (unsigned long)cmd.generation, (unsigned long)_queueGeneration);
                     if (cmd.type == MediaAuxCmdType::PREFETCH) _prefetchInProgress = false;
@@ -342,7 +346,9 @@ void MusicPlaybackService::auxWorkerLoop() {
                 }
             }
 
-            if (cmd.type == MediaAuxCmdType::PREFETCH) {
+            if (cmd.type == MediaAuxCmdType::RENEW_URL) {
+                handleRenewUrl(cmd.targetId, cmd.generation);
+            } else if (cmd.type == MediaAuxCmdType::PREFETCH) {
                 handlePrefetch(cmd.targetId, cmd.generation);
             } else if (cmd.type == MediaAuxCmdType::REPLENISH) {
                 handleReplenish(cmd.targetId, cmd.baseAuthor, cmd.baseTitle, cmd.generation);
@@ -874,6 +880,57 @@ void MusicPlaybackService::handlePrefetch(const char* targetId, uint32_t generat
         ESP_LOGW(TAG, "Pre-fetch failed for %s: %s", targetId, esp_err_to_name(err));
     }
     _prefetchInProgress = false;
+}
+
+bool MusicPlaybackService::renewStreamUrl(const std::string& videoId, std::string& outUrl,
+                                          const std::function<bool()>& cancelled) {
+    // Files and URLs played directly have no video id to resolve.
+    if (videoId.empty() || videoId.rfind(FILE_TRACK_PREFIX, 0) == 0 || !m_aux_queue) return false;
+    uint32_t seq;
+    {
+        std::lock_guard<std::mutex> lock(_renewMutex);
+        seq = ++_renewSeq;
+        _renewDone = false;
+        _renewOk = false;
+        _renewUrl.clear();
+    }
+    MediaAuxCommand cmd{};
+    cmd.type = MediaAuxCmdType::RENEW_URL;
+    cmd.generation = seq;
+    strncpy(cmd.targetId, videoId.c_str(), sizeof(cmd.targetId) - 1);
+    if (xQueueSend(m_aux_queue, &cmd, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGW(TAG, "Aux queue full, can't renew the URL for %s", videoId.c_str());
+        return false;
+    }
+    // media_aux may be busy with a prefetch first; a resolve takes up to ~12 s.
+    constexpr int64_t TIMEOUT_US = 40LL * 1000 * 1000;
+    const int64_t deadline = esp_timer_get_time() + TIMEOUT_US;
+    while (!cancelled() && esp_timer_get_time() < deadline) {
+        {
+            std::lock_guard<std::mutex> lock(_renewMutex);
+            if (_renewDone && _renewSeq == seq) {
+                if (_renewOk) outUrl = std::move(_renewUrl);
+                return _renewOk;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    return false;
+}
+
+void MusicPlaybackService::handleRenewUrl(const char* videoId, uint32_t seq) {
+    {
+        std::lock_guard<std::mutex> lock(_renewMutex);
+        if (seq != _renewSeq) return;   // the stream gave up waiting
+    }
+    std::string url;
+    const esp_err_t err = _invidious.resolveWebMOpusStreamUrl(videoId, url);
+    std::lock_guard<std::mutex> lock(_renewMutex);
+    if (seq != _renewSeq) return;
+    _renewOk = err == ESP_OK && !url.empty();
+    _renewUrl = std::move(url);
+    _renewDone = true;
+    ESP_LOGI(TAG, "Renewed stream URL for %s: %s", videoId, _renewOk ? "ok" : esp_err_to_name(err));
 }
 
 void MusicPlaybackService::checkAndReplenishQueue() {

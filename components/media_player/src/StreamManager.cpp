@@ -15,6 +15,9 @@ static const char* TAG = "StreamManager";
 // read in progress: 8 KB takes ~100 ms at the ~70 KB/s the TCP window allows.
 // Saving keeps full chunks: the SD writer syncs once per chunk.
 static constexpr size_t NET_READ_SIZE = 8 * 1024;
+// A connection lost before the end is reopened at the byte where it stopped:
+// the first try at once, then 1 s and 2 s later.
+static constexpr int MAX_RECONNECTS = 3;
 
 StreamManager::StreamManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId)
     : _bm(BufferManager::getInstance()),
@@ -34,19 +37,20 @@ double StreamManager::urlNumberParam(const char* url, const char* key) {
     return 0;
 }
 
-bool StreamManager::beginStreaming(const char* url, bool cacheMode) {
-    return start(url, cacheMode, 0, false, 0);
+bool StreamManager::beginStreaming(const char* url, bool cacheMode, const char* trackId) {
+    return start(url, cacheMode, 0, false, 0, trackId);
 }
 
-bool StreamManager::beginStreamingFrom(const char* url, uint32_t byteOffset, bool cacheMode) {
-    return start(url, cacheMode, byteOffset, false, 0);
+bool StreamManager::beginStreamingFrom(const char* url, uint32_t byteOffset, bool cacheMode, const char* trackId) {
+    return start(url, cacheMode, byteOffset, false, 0, trackId);
 }
 
-bool StreamManager::beginStreamingAt(const char* url, uint32_t targetMs) {
-    return start(url, false, 0, true, targetMs);
+bool StreamManager::beginStreamingAt(const char* url, uint32_t targetMs, const char* trackId) {
+    return start(url, false, 0, true, targetMs, trackId);
 }
 
-bool StreamManager::start(const char* url, bool cacheMode, uint32_t byteOffset, bool atTime, uint32_t targetMs) {
+bool StreamManager::start(const char* url, bool cacheMode, uint32_t byteOffset, bool atTime, uint32_t targetMs,
+                          const char* trackId) {
     if (!url) return false;
     stopStreaming();
 
@@ -54,7 +58,10 @@ bool StreamManager::start(const char* url, bool cacheMode, uint32_t byteOffset, 
         _cues.clear();
         _cuesUrl = url;
         _indexKnown = false;
+        _renewedUrl.clear();
+        _redirectedUrl.clear();
     }
+    _trackId = trackId ? trackId : "";
     _startByteOffset = byteOffset;
     _startAtTime = atTime;
     _targetMs = targetMs;
@@ -132,9 +139,9 @@ void StreamManager::runStreamLoop() {
     if (_startByteOffset == 0 && !_indexKnown) _headWant = 4096;
 
     const int64_t connectStart = esp_timer_get_time();
-    if (!_http.open(_url, _startByteOffset)) {
-        ESP_LOGE(TAG, "Failed to connect to stream (offset=%u): %s",
-                 (unsigned int)_startByteOffset, _url.c_str());
+    if (!openStream(_startByteOffset)) {
+        ESP_LOGE(TAG, "Failed to connect to stream (offset=%u, status=%d)",
+                 (unsigned int)_startByteOffset, _http.lastStatus());
         AudioChunkHeader err_chunk = {ChunkType::ERROR, 0};
         _bm.send(targetBuf, &err_chunk, sizeof(err_chunk), portMAX_DELAY);
         _isStreaming = false;
@@ -160,10 +167,17 @@ void StreamManager::runStreamLoop() {
 
     bool error_occurred = false;
     bool completed = false;
+    // Where the next byte comes from, and where the file ends (0: unknown).
+    uint32_t nextByte = _startByteOffset;
+    const int64_t bodyLen = _http.contentLength();
+    const uint32_t endByte = bodyLen > 0 ? _startByteOffset + static_cast<uint32_t>(bodyLen) : 0;
+    int reconnects = 0;
 
-    while (_isStreaming && _http.isConnected()) {
-        int bytes_read = _http.read(payload, readSize);
+    while (_isStreaming) {
+        int bytes_read = _http.isConnected() ? _http.read(payload, readSize) : -1;
         if (bytes_read > 0) {
+            nextByte += bytes_read;
+            reconnects = 0;
             if (_headWant > 0) captureHead(payload, bytes_read);
             header->type = ChunkType::DATA;
             header->size = bytes_read;
@@ -176,14 +190,33 @@ void StreamManager::runStreamLoop() {
             while (_isStreaming && !sent) {
                 sent = _bm.send(targetBuf, net_buf, sizeof(AudioChunkHeader) + bytes_read, pdMS_TO_TICKS(20));
             }
-        } else if (bytes_read == 0) {
+        } else if (bytes_read == 0 && (endByte == 0 || nextByte >= endByte)) {
             ESP_LOGI(TAG, "Network stream completed naturally");
             completed = true;
             break;
         } else {
-            ESP_LOGE(TAG, "Network stream read error!");
-            error_occurred = true;
-            break;
+            // Closed or failed before the end: the server drops a connection
+            // left idle by a pause after a few minutes, or Wi-Fi dropped.
+            // Reopen at the next byte; the decoder (and a file being saved)
+            // gets the rest of the same file, as if nothing happened.
+            if (!_isStreaming) break;
+            if (reconnects >= MAX_RECONNECTS) {
+                ESP_LOGE(TAG, "Network stream read error! Gave up after %d reconnects at byte %u of %u",
+                         reconnects, (unsigned)nextByte, (unsigned)endByte);
+                error_occurred = true;
+                break;
+            }
+            ++reconnects;
+            ESP_LOGW(TAG, "Connection lost at byte %u of %u (%s); reconnecting (%d/%d)", (unsigned)nextByte,
+                     (unsigned)endByte, bytes_read == 0 ? "closed early" : "read error", reconnects,
+                     MAX_RECONNECTS);
+            _http.close();
+            if (!waitWhileStreaming((reconnects - 1) * 1000)) break;
+            const int64_t t0 = esp_timer_get_time();
+            if (openStream(nextByte)) {
+                ESP_LOGI(TAG, "Reconnected at byte %u in %lld ms", (unsigned)nextByte,
+                         (long long)((esp_timer_get_time() - t0) / 1000));
+            }
         }
     }
 
@@ -214,9 +247,61 @@ void StreamManager::runStreamLoop() {
     ESP_LOGI(TAG, "Network Task exiting");
 }
 
+bool StreamManager::waitWhileStreaming(uint32_t ms) {
+    for (uint32_t waited = 0; waited < ms && _isStreaming; waited += 50) vTaskDelay(pdMS_TO_TICKS(50));
+    return _isStreaming;
+}
+
+bool StreamManager::openAndRemember(const std::string& url, uint32_t offset) {
+    if (!_http.open(url, offset)) return false;
+    if (!_http.finalUrl().empty() && _http.finalUrl() != _redirectedUrl) {
+        _redirectedUrl = _http.finalUrl();
+        ESP_LOGI(TAG, "Remembering the redirect for this track");
+    }
+    return true;
+}
+
+bool StreamManager::openStream(uint32_t offset) {
+    if (!_redirectedUrl.empty()) {
+        ESP_LOGI(TAG, "Using the remembered redirect");
+        if (_http.open(_redirectedUrl, offset)) return true;
+        if (!_isStreaming) return false;
+        ESP_LOGW(TAG, "Remembered redirect failed (status %d); using the track's URL", _http.lastStatus());
+        _redirectedUrl.clear();
+    }
+    if (openAndRemember(currentUrl(), offset)) return true;
+    // googlevideo answers an expired (or revoked) URL with 403.
+    const int status = _http.lastStatus();
+    if ((status != 403 && status != 410) || !_isStreaming || !renewUrl()) return false;
+    return openAndRemember(currentUrl(), offset);
+}
+
+bool StreamManager::renewUrl() {
+    if (!_urlRenewer || _trackId.empty()) return false;
+    ESP_LOGW(TAG, "Stream URL rejected (status %d): resolving %s again", _http.lastStatus(), _trackId.c_str());
+    const int64_t t0 = esp_timer_get_time();
+    std::string fresh;
+    if (!_urlRenewer(_trackId, fresh, [this] { return !_isStreaming; }) || fresh.empty()) {
+        ESP_LOGE(TAG, "Could not renew the stream URL for %s", _trackId.c_str());
+        return false;
+    }
+    // Byte offsets (the index, the reconnect point, a file being saved) hold
+    // only for the same file; a different format or size can't continue.
+    const double oldLen = urlNumberParam(currentUrl().c_str(), "clen");
+    const double newLen = urlNumberParam(fresh.c_str(), "clen");
+    if (oldLen > 0 && newLen != oldLen) {
+        ESP_LOGE(TAG, "Renewed URL is a different file (%.0f bytes, was %.0f)", newLen, oldLen);
+        return false;
+    }
+    _renewedUrl = std::move(fresh);
+    _redirectedUrl.clear();
+    ESP_LOGI(TAG, "Stream URL renewed in %lld ms", (long long)((esp_timer_get_time() - t0) / 1000));
+    return true;
+}
+
 void StreamManager::fetchIndex() {
     const int64_t t0 = esp_timer_get_time();
-    if (!_http.open(_url, 0)) {
+    if (!openStream(0)) {
         ESP_LOGW(TAG, "Index request failed");
         return;
     }

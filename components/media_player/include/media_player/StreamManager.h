@@ -2,6 +2,7 @@
 #include "HttpClientStream.h"
 #include "services/BufferManager.h"
 #include "media_player/WebmSeek.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -10,18 +11,27 @@ public:
     StreamManager(BufferManager::BufferId playbackId, BufferManager::BufferId storageId);
     ~StreamManager();
 
-    bool beginStreaming(const char* url, bool cacheMode = false);
-    bool beginStreamingFrom(const char* url, uint32_t byteOffset, bool cacheMode = false);
+    // trackId names the track for a URL renewal (see setUrlRenewer).
+    bool beginStreaming(const char* url, bool cacheMode = false, const char* trackId = nullptr);
+    bool beginStreamingFrom(const char* url, uint32_t byteOffset, bool cacheMode = false,
+                            const char* trackId = nullptr);
     // Streams from the cluster at or before targetMs. The network task finds
     // it in the stream's index, fetching the index first if it is not known
     // yet, or estimates it from the URL's clen/dur, aiming 5 s early.
-    bool beginStreamingAt(const char* url, uint32_t targetMs);
+    bool beginStreamingAt(const char* url, uint32_t targetMs, const char* trackId = nullptr);
     void stopStreaming();
     bool isStreaming() const { return _isStreaming; }
 
     // Numeric query parameter of a stream URL (googlevideo carries
     // dur=<seconds> and clen=<bytes>); 0 when absent.
     static double urlNumberParam(const char* url, const char* key);
+
+    // Resolves a track's stream URL again when the server rejects the one in
+    // use (expired). Runs on the network task and may take seconds; returns
+    // false on failure or once cancelled() is true. Set once at startup.
+    using UrlRenewer = std::function<bool(const std::string& trackId, std::string& outUrl,
+                                          const std::function<bool()>& cancelled)>;
+    void setUrlRenewer(UrlRenewer renewer) { _urlRenewer = std::move(renewer); }
 
 private:
     BufferManager& _bm;
@@ -38,7 +48,24 @@ private:
     
     bool _startAtTime = false;   // beginStreamingAt: resolve _targetMs to an offset
     uint32_t _targetMs = 0;
-    bool start(const char* url, bool cacheMode, uint32_t byteOffset, bool atTime, uint32_t targetMs);
+    bool start(const char* url, bool cacheMode, uint32_t byteOffset, bool atTime, uint32_t targetMs,
+               const char* trackId);
+
+    // The URL the player passed is the key for the current track; the two
+    // below stand in for it while that track plays (seeks and reconnects
+    // pass the same key), in RAM only, cleared when the track changes.
+    std::string _trackId;
+    std::string _renewedUrl;     // a fresh URL for the key, after it expired
+    std::string _redirectedUrl;  // where the last redirect led (skips the 302)
+    UrlRenewer _urlRenewer;
+    // Opens the stream at offset: the remembered redirect first, then the
+    // current URL, renewing it once if the server rejects it as expired.
+    bool openStream(uint32_t offset);
+    bool openAndRemember(const std::string& url, uint32_t offset);
+    bool renewUrl();
+    const std::string& currentUrl() const { return _renewedUrl.empty() ? _url : _renewedUrl; }
+    // Waits ms while streaming continues; false if stopped meanwhile.
+    bool waitWhileStreaming(uint32_t ms);
 
     // The stream's seek index (WebM Cues), read from its first bytes while it
     // streams from the start, or by a separate request. Touched only by the

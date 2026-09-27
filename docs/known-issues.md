@@ -7,14 +7,13 @@ commit.
 
 ## Bugs
 
-### Stream seeks take about 4 seconds
-Seeking in a song that is streaming (not saved on the card) resumes 3-4 s
-later; seeks in saved songs and recordings take well under a second.
+### Stream seeks take about 3 seconds
+Seeking in a song that is streaming (not saved on the card) resumes about
+3 s later; seeks in saved songs and recordings take well under a second.
 **Cause:** a seek reconnects (TLS, ~0.6 s) and downloads from the nearest
-index point, up to 10 s of audio before the target, at ~70 KB/s. When the
-resolver runs behind a VPN (WARP), every connect also follows a 302 to a
-nearby cache (~0.6 s more), because the URL is signed for the VPN's
-address. The
+index point, up to 10 s of audio before the target, at ~70 KB/s. (A
+redirect to a nearby cache, which googlevideo sends when the resolver runs
+behind a VPN, is followed once per track and then remembered.) The
 download is slow because the TCP receive window is small
 (`CONFIG_LWIP_TCP_WND_DEFAULT` 5760), which is small because internal RAM is
 short. **Options:** a bigger window if RAM allows, or start decoding
@@ -39,6 +38,13 @@ stopped (ten plays lost ~950 B internal, ~15 KB PSRAM). It predates the
 seek work. With ~27 KB of internal RAM free while playing, it matters
 after a few hundred tracks without a restart. **Next step:** a heap trace
 over many plays.
+
+### Reconnecting after a long pause is tested with a forced drop only
+A paused stream's idle connection is closed by the server after a few
+minutes; on resume the stream reopens at the byte where it stopped, and
+renews the URL if it has expired (403). Tested on the device by dropping
+the connection on purpose and with a rejected URL; a real pause of several
+minutes (and one past the URL's ~6 h expiry) hasn't been run since.
 
 ### Resuming mid-track is untested on the device
 Starting a song or stream part-way (after an alarm rings over music, or a

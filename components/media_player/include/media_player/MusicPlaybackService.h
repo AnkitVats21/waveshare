@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include <functional>
 #include <string>
 #include <deque>
 #include <vector>
@@ -40,7 +41,8 @@ struct MediaCommand {
 enum class MediaAuxCmdType : uint8_t {
     PREFETCH,
     REPLENISH,
-    FETCH_THUMBNAIL
+    FETCH_THUMBNAIL,
+    RENEW_URL      // generation carries the renewal's request number instead
 };
 
 struct MediaAuxCommand {
@@ -145,6 +147,17 @@ private:
     uint32_t _queueGeneration = 0;
     std::string _prefetchedVideoId;
     std::string _prefetchedUrl;
+
+    // Stream URL renewal (an expired URL after a long pause): the network
+    // task asks, media_aux resolves (it has the stack for HTTPS + JSON), and
+    // the network task waits for the answer to its request number.
+    std::mutex _renewMutex;
+    uint32_t _renewSeq = 0;
+    bool _renewDone = false;
+    bool _renewOk = false;
+    std::string _renewUrl;
+    bool renewStreamUrl(const std::string& videoId, std::string& outUrl, const std::function<bool()>& cancelled);
+    void handleRenewUrl(const char* videoId, uint32_t seq);
 
     // Persistent concurrency queues and worker tasks
     QueueHandle_t m_cmd_queue = nullptr;

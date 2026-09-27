@@ -62,6 +62,9 @@ public:
     // MusicPlaybackService calls yieldAlarm() before a user music command; the
     // handler (AlarmService) stops the alarm without restoring the old music.
     void setAlarmYieldHandler(std::function<void()> handler) { _alarmYield = std::move(handler); }
+    // Resolves a track's stream URL again when the one playing has expired
+    // (a long pause); called on the network task. Set once at startup.
+    void setUrlRenewer(StreamManager::UrlRenewer renewer) { _streamManager.setUrlRenewer(std::move(renewer)); }
     void yieldAlarm();
     StorageManager& getStorageManager() { return _storageManager; }
 

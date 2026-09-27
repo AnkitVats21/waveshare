@@ -25,6 +25,11 @@ esp_err_t HttpClientStream::_httpEventThunk(esp_http_client_event_t *evt) {
             break;
         case HTTP_EVENT_ON_HEADER:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            // Kept for the redirect: esp_http_client_get_url() drops the query
+            // string, which holds a googlevideo URL's signature.
+            if (evt->user_data && strcasecmp(evt->header_key, "Location") == 0) {
+                static_cast<HttpClientStream*>(evt->user_data)->_location = evt->header_value;
+            }
             break;
         case HTTP_EVENT_ON_FINISH:
             ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
@@ -37,10 +42,14 @@ esp_err_t HttpClientStream::_httpEventThunk(esp_http_client_event_t *evt) {
 
 bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
     close(); // Ensure any previous session is dead
+    _finalUrl.clear();
+    _lastStatus = 0;
+    _contentLength = -1;
 
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.event_handler = _httpEventThunk;
+    config.user_data = this;
     config.is_async = false;
     config.timeout_ms = 10000;
 
@@ -105,6 +114,7 @@ bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
         }
 
         status = esp_http_client_get_status_code(_clientHandle);
+        _lastStatus = status;
         const bool isRedirect = status == HttpStatus_MovedPermanently || status == HttpStatus_Found ||
                                 status == HttpStatus_SeeOther || status == HttpStatus_TemporaryRedirect ||
                                 status == HttpStatus_PermanentRedirect;
@@ -116,6 +126,14 @@ bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
         }
 
         esp_http_client_flush_response(_clientHandle, nullptr);
+        // An absolute Location is remembered, so the next open (a seek or a
+        // reconnect) can go straight to it; a relative one is only followed.
+        if (_location.rfind("http", 0) == 0) {
+            _finalUrl = _location;
+        } else {
+            _finalUrl.clear();
+        }
+        _location.clear();
         if (esp_http_client_set_redirection(_clientHandle) != ESP_OK) {
             ESP_LOGE(TAG, "HTTP %d without a usable Location", status);
             close();
@@ -139,10 +157,15 @@ bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
         close();
         return false;
     }
-    if (startByteOffset > 0 && status != 206) {
-        ESP_LOGW(TAG, "Server responded with %d instead of 206 Partial Content", status);
+    if (startByteOffset > 0 && status != HttpStatus_PartialContent) {
+        // The whole file from byte 0: continuing a seek or a reconnect with it
+        // would feed the decoder the wrong bytes.
+        ESP_LOGE(TAG, "Server ignored the range (status %d at offset %u)", status, (unsigned)startByteOffset);
+        close();
+        return false;
     }
 
+    _contentLength = content_length;
     _is_connected = true;
     esp_http_client_set_header(_clientHandle, "Connection", "keep-alive");
     return true;

@@ -289,7 +289,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
                 s.media.position_ms = 0;
             });
 
-            if (!_streamManager.beginStreaming(downloadUrl, true)) {
+            if (!_streamManager.beginStreaming(downloadUrl, true, songId)) {
                 ESP_LOGE(TAG, "Failed to start streaming");
                 stopActivePipelines();
                 _state = STATE_IDLE;
@@ -317,10 +317,10 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
                 // The network task finds the cluster; the decoder skips to the exact time.
                 const bool webm = isWebmUrl(downloadUrl);
                 _audioEngine.startAt(startPosMs, false, webm ? EBML_MAGIC : nullptr, webm ? sizeof(EBML_MAGIC) : 0);
-                streamOk = _streamManager.beginStreamingAt(downloadUrl, startPosMs);
+                streamOk = _streamManager.beginStreamingAt(downloadUrl, startPosMs, songId);
             } else {
                 _audioEngine.start();
-                streamOk = _streamManager.beginStreaming(downloadUrl, false);
+                streamOk = _streamManager.beginStreaming(downloadUrl, false, songId);
             }
 
             if (!streamOk) {
@@ -734,7 +734,7 @@ void NexusPlayer::seekTo(uint32_t positionMs) {
     bm.flush(_playbackId);
     bm.flush(_storageId);
     _audioEngine.startAt(positionMs, paused);
-    _streamManager.beginStreamingAt(_activeDownloadUrl.c_str(), positionMs);
+    _streamManager.beginStreamingAt(_activeDownloadUrl.c_str(), positionMs, _activeSongId);
     ESP_LOGI(TAG, "Seek to %u ms: stream restarted in %lld us", (unsigned)positionMs,
              (long long)(esp_timer_get_time() - t0));
 }
