@@ -54,6 +54,26 @@ play deferred until an assistant session ends) uses code paths that were
 tested on the PC and with a temporary hook, but not end to end on the
 device.
 
+### The silence timeout can end a session just as the reply starts
+In a session over music (2026-09-27), the question was heard and
+transcribed. 3 s after the person stopped talking, the local silence
+timeout ("VAD: Silence threshold reached") closed the session, and
+Gemini's reply audio arrived 150 ms later, and no reply was heard. (That
+late audio also left the player thinking the assistant was still talking:
+the music stayed paused and every later session's microphone was muted
+until a reboot. Fixed: reply audio is dropped once the session closes,
+and returning to Idle ends any voice still marked as playing.) **Cause:** the timeout counts silence
+from the person's side only, not whether a reply is pending; the setup
+exchange had also taken ~4.8 s before the microphone went live. Without
+music, replies had arrived inside the 3 s.
+
+### `nexus.local` doesn't resolve from the PC
+The device answers mDNS queries sent to it directly (unicast), but not
+the usual multicast ones (0 of 10), with the mDNS task in internal RAM or
+PSRAM alike. **Cause:** not isolated (router multicast forwarding, Wi-Fi
+power save, or the device's group membership). **Workaround:** use the
+IP address.
+
 ### Recordings renamed through the file API
 A recording renamed or deleted with the generic `/api/files` routes (not
 `/api/recordings`) keeps its old entry in the recordings list until the
