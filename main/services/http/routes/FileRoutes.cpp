@@ -138,6 +138,31 @@ esp_err_t listHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+// "bytes=A-B", "bytes=A-" or "bytes=-N" (the last N bytes) against a file
+// of `size` bytes. False if malformed or outside the file.
+bool parseRange(const char* value, long size, long& first, long& last) {
+    if (strncmp(value, "bytes=", 6) != 0 || size <= 0) return false;
+    const char* p = value + 6;
+    char* end = nullptr;
+    if (*p == '-') {
+        long n = strtol(p + 1, &end, 10);
+        if (end == p + 1 || n <= 0) return false;
+        first = n >= size ? 0 : size - n;
+        last = size - 1;
+        return true;
+    }
+    first = strtol(p, &end, 10);
+    if (end == p || *end != '-' || first < 0 || first >= size) return false;
+    p = end + 1;
+    last = size - 1;
+    if (*p != '\0') {
+        long l = strtol(p, &end, 10);
+        if (end == p || *end != '\0' || l < first) return false;
+        if (l < last) last = l;
+    }
+    return true;
+}
+
 esp_err_t downloadHandler(httpd_req_t* req) {
     if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
@@ -152,8 +177,28 @@ esp_err_t downloadHandler(httpd_req_t* req) {
     auto chunk = chunkBuffer();
     if (!chunk) return Http::sendError(req, 500, "Out of memory");
 
-    httpd_resp_set_type(req, mimeType(path));
+    // Range requests let a browser's <audio> seek without fetching the whole
+    // file. One range only; the header strings must outlive the response.
+    long size = f.size();
+    long first = 0, last = size - 1;
+    char range[48];
+    char range_hdr[64];
+    bool partial = httpd_req_get_hdr_value_str(req, "Range", range, sizeof(range)) == ESP_OK;
+    if (partial) {
+        if (!parseRange(range, size, first, last)) {
+            snprintf(range_hdr, sizeof(range_hdr), "bytes */%ld", size);
+            httpd_resp_set_hdr(req, "Content-Range", range_hdr);
+            return Http::sendError(req, 416, "Range not satisfiable");
+        }
+        snprintf(range_hdr, sizeof(range_hdr), "bytes %ld-%ld/%ld", first, last, size);
+        httpd_resp_set_status(req, "206 Partial Content");
+        httpd_resp_set_hdr(req, "Content-Range", range_hdr);
+        if (!f.seek(first)) return Http::sendError(req, 500, "Seek failed");
+    }
+    // After the error replies above, which set their own CORS header.
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Accept-Ranges", "bytes");
+    httpd_resp_set_type(req, mimeType(path));
 
     const char* filename = strrchr(path.c_str(), '/');
     filename = (filename != nullptr) ? filename + 1 : path.c_str();
@@ -161,9 +206,13 @@ esp_err_t downloadHandler(httpd_req_t* req) {
     snprintf(disp_hdr, sizeof(disp_hdr), "inline; filename=\"%s\"", filename);
     httpd_resp_set_hdr(req, "Content-Disposition", disp_hdr);
 
-    while (size_t n = f.read(chunk.get(), CHUNK_SIZE)) {
+    long remaining = last - first + 1;
+    while (remaining > 0) {
+        size_t n = f.read(chunk.get(), remaining < long(CHUNK_SIZE) ? size_t(remaining) : CHUNK_SIZE);
+        if (n == 0) break;
         esp_err_t err = httpd_resp_send_chunk(req, chunk.get(), n);
         if (err != ESP_OK) return err;
+        remaining -= long(n);
     }
     return httpd_resp_send_chunk(req, nullptr, 0);
 }

@@ -34,6 +34,9 @@ public:
     bool isRecording() const { return m_active; }
     const char* activePath() const { return m_active_path; }
     uint32_t encodeRate() const { return m_encode_rate; }
+    RecordMode mode() const { return m_mode; }
+    /** Milliseconds since the active recording started; 0 when idle. */
+    uint32_t elapsedMs() const { return m_active ? pdTICKS_TO_MS(xTaskGetTickCount() - m_started_ticks) : 0; }
 
 private:
     AudioRecorder() = default;

@@ -307,7 +307,12 @@ void ControlChannel::pushState() {
     st["speaker_volume"] = snap.audio.speaker_volume;
     st["mic_gain_db"] = snap.audio.mic_gain_db;
     st["mic_enabled"] = snap.audio.mic_enabled;
-    st["is_recording"] = AudioRecorder::getInstance().isRecording();
+    auto& recorder = AudioRecorder::getInstance();
+    st["is_recording"] = recorder.isRecording();
+    if (recorder.isRecording()) {
+        st["record_ms"] = recorder.elapsedMs();
+        st["record_mode"] = recorder.mode() == AudioRecorder::RecordMode::STEREO ? "stereo" : "processed";
+    }
     st["sample_rate"] = snap.audio.sample_rate;
 
     JsonObject led = doc["led"].to<JsonObject>();
