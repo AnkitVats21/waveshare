@@ -63,4 +63,9 @@ public:
      * @brief Inform the decoder of a known absolute stream byte offset (e.g. on seek).
      */
     virtual void setStreamByteOffset(uint32_t offset) {}
+
+    /**
+     * @brief After a jump to a point before `positionMs`, drop the audio up to it.
+     */
+    virtual void setSeekTarget(uint32_t positionMs) {}
 };

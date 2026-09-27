@@ -1,4 +1,5 @@
 #include "WebMOpusDecoder.h"
+#include "media_player/WebmSeek.h"
 
 #include "opus.h"
 #include "esp_log.h"
@@ -94,21 +95,32 @@ void WebMOpusDecoder::reset() {
     _streamByteOffset = 0;
     _currentClusterOffset = 0xFFFFFFFF;
     _lastClusterTimeMs = 0;
-    _samplesDecodedSinceCluster = 0;
     _timecodeScale = 1000000;
+    _blockTimeMs = 0;
+    _samplesSinceBlock = 0;
+    _seeking = false;
+    _seekTargetMs = 0;
     initOpusDecoder();
 }
 
 void WebMOpusDecoder::setStreamByteOffset(uint32_t offset) {
     _streamByteOffset = offset;
     _currentClusterOffset = 0xFFFFFFFF;
-    _samplesDecodedSinceCluster = 0;
+    _samplesSinceBlock = 0;
+}
+
+void WebMOpusDecoder::setSeekTarget(uint32_t positionMs) {
+    _seeking = positionMs > 0;
+    _seekTargetMs = positionMs;
+    _blockTimeMs = positionMs;   // report the target until the first block is read
+    _samplesSinceBlock = 0;
 }
 
 uint32_t WebMOpusDecoder::getPositionMs() const {
-    if (_channels == 0 || _targetSampleRate == 0) return _lastClusterTimeMs;
-    uint64_t elapsedMs = (_samplesDecodedSinceCluster * 1000) / (_channels * _targetSampleRate);
-    return _lastClusterTimeMs + static_cast<uint32_t>(elapsedMs);
+    // Opus always decodes at 48 kHz, whatever rate the mixer runs at.
+    if (_channels == 0) return _blockTimeMs;
+    uint64_t elapsedMs = (_samplesSinceBlock * 1000) / (_channels * 48000u);
+    return _blockTimeMs + static_cast<uint32_t>(elapsedMs);
 }
 
 bool WebMOpusDecoder::resyncToCluster(size_t& offset) {
@@ -211,7 +223,6 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
             }
             offset += elemSize;
             _lastClusterTimeMs = static_cast<uint32_t>((tc * _timecodeScale) / 1000000);
-            _samplesDecodedSinceCluster = 0;
 
             if (_seekIndexCb && _currentClusterOffset != 0xFFFFFFFF) {
                 _seekIndexCb(_lastClusterTimeMs, _currentClusterOffset);
@@ -245,16 +256,39 @@ DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, 
                 break;
             }
 
+            int16_t relative = 0;
+            if (Media::readBlockTimecode(_buffer.data() + offset, elemSize, relative)) {
+                int64_t ms = int64_t(_lastClusterTimeMs) + int64_t(relative) * int64_t(_timecodeScale) / 1000000;
+                _blockTimeMs = ms > 0 ? static_cast<uint32_t>(ms) : 0;
+                _samplesSinceBlock = 0;
+            }
+
+            Media::SeekAction action = _seeking ? Media::seekAction(_blockTimeMs, _seekTargetMs)
+                                                : Media::SeekAction::Play;
+            if (action == Media::SeekAction::Skip) {
+                offset += elemSize;
+                continue;
+            }
+
             size_t blockDecoded = 0;
             DecodeResult res = decodeSimpleBlockPayload(
                 _buffer.data() + offset, elemSize,
                 outPcm + samplesDecoded, maxSamples - samplesDecoded,
                 blockDecoded
             );
-
             offset += elemSize;
+
+            if (action == Media::SeekAction::Preroll) {
+                continue;   // settles the decoder; the audio is dropped
+            }
+            if (_seeking) {
+                _seeking = false;
+                ESP_LOGI(TAG, "Seek landed at %u ms (target %u ms)",
+                         (unsigned)_blockTimeMs, (unsigned)_seekTargetMs);
+            }
+
             samplesDecoded += blockDecoded;
-            _samplesDecodedSinceCluster += blockDecoded;
+            _samplesSinceBlock += blockDecoded;
 
             if (res != DecodeResult::OK && res != DecodeResult::NEED_MORE_DATA) {
                 ESP_LOGW(TAG, "SimpleBlock decode warning: %d", (int)res);

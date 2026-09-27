@@ -25,6 +25,7 @@ public:
 
     uint32_t getPositionMs() const override;
     void setStreamByteOffset(uint32_t offset) override;
+    void setSeekTarget(uint32_t positionMs) override;
 
     void setSeekIndexCallback(SeekIndexCallback cb) { _seekIndexCb = cb; }
     void clearSeekIndexCallback() { _seekIndexCb = nullptr; }
@@ -42,10 +43,16 @@ private:
     uint32_t _streamByteOffset = 0;
     uint32_t _currentClusterOffset = 0xFFFFFFFF;
 
-    // Sub-cluster position interpolation
     uint32_t _lastClusterTimeMs = 0;
-    uint64_t _samplesDecodedSinceCluster = 0;
     uint64_t _timecodeScale = 1000000; // 1ms default in WebM
+
+    // Position: the current block's start plus what has been decoded of it.
+    uint32_t _blockTimeMs = 0;
+    uint64_t _samplesSinceBlock = 0;
+
+    // Exact seek: blocks before the target are skipped (Media::seekAction).
+    bool _seeking = false;
+    uint32_t _seekTargetMs = 0;
 
     SeekIndexCallback _seekIndexCb = nullptr;
 

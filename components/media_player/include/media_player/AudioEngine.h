@@ -30,6 +30,7 @@ public:
     uint32_t getPositionMs() const;
     void resetDecoder();
     void setStreamByteOffset(uint32_t offset);
+    void setSeekTarget(uint32_t positionMs);
     void setSeekIndexCallback(std::function<void(uint32_t timecodeMs, uint32_t byteOffset)> cb);
 
 private:

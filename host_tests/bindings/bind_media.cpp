@@ -1,5 +1,5 @@
 #include "bindings.h"
-#include "media_player/WebmCues.h"
+#include "media_player/WebmSeek.h"
 #include <nanobind/stl/string.h>
 #include <string>
 
@@ -36,4 +36,22 @@ void init_media(nb::module_& m) {
         return nb::make_tuple(c.time_ms, c.offset);
     });
     m.attr("MAX_CUES") = Media::MAX_CUES;
+
+    // "skip", "preroll" or "play".
+    m.def("seek_action", [](uint32_t block_ms, uint32_t target_ms) -> std::string {
+        switch (Media::seekAction(block_ms, target_ms)) {
+        case Media::SeekAction::Skip: return "skip";
+        case Media::SeekAction::Preroll: return "preroll";
+        default: return "play";
+        }
+    });
+    m.attr("SEEK_PREROLL_MS") = Media::SEEK_PREROLL_MS;
+    // The relative timecode, or None if the header is incomplete.
+    m.def("read_block_timecode", [](nb::bytes payload) -> nb::object {
+        int16_t rel = 0;
+        if (!Media::readBlockTimecode(reinterpret_cast<const uint8_t*>(payload.c_str()), payload.size(), rel)) {
+            return nb::none();
+        }
+        return nb::int_(rel);
+    });
 }

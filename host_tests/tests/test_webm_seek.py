@@ -1,4 +1,5 @@
-"""parseWebmCues: the seek index at the start of a WebM file.
+"""WebM seeking: the index at the start of the file (parseWebmCues) and the
+exact seek inside a cluster (seekAction, readBlockTimecode).
 
 The fixtures are the first bytes of two YouTube audio files, up to the first
 Cluster (headers and Cues, no audio). The expected cues were checked against
@@ -199,3 +200,51 @@ def test_cue_at_or_before(t, expected):
 
 def test_cue_before_the_first_is_the_first():
     assert wh.cue_at_or_before([(500, 10), (10500, 99)], 100) == (500, 10)
+
+
+# ── Exact seek inside a cluster ──────────────────────────────────────────────
+
+def block(rel, track=b"\x81", flags=0x80, frame=b"\xfc\xff\xfe"):
+    return track + (rel & 0xFFFF).to_bytes(2, "big") + bytes([flags]) + frame
+
+
+@pytest.mark.parametrize("rel", [0, 20, 9980, 32767, -1, -32768])
+def test_block_timecode_is_signed_16_bit(rel):
+    assert wh.read_block_timecode(block(rel)) == rel
+
+
+def test_block_timecode_after_a_two_byte_track_number():
+    assert wh.read_block_timecode(block(500, track=b"\x40\x02")) == 500
+
+
+@pytest.mark.parametrize("payload", [b"", b"\x81", b"\x81\x00", b"\x81\x00\x14", b"\x00" * 12])
+def test_incomplete_block_header(payload):
+    assert wh.read_block_timecode(payload) is None
+
+
+@pytest.mark.parametrize("block_ms,target_ms,action", [
+    (97000, 97000, "play"),
+    (97020, 97000, "play"),
+    (96999, 97000, "preroll"),
+    (97000 - wh.SEEK_PREROLL_MS, 97000, "preroll"),
+    (97000 - wh.SEEK_PREROLL_MS - 1, 97000, "skip"),
+    (90001, 97000, "skip"),
+    (0, 0, "play"),
+])
+def test_seek_action(block_ms, target_ms, action):
+    assert wh.seek_action(block_ms, target_ms) == action
+
+
+def test_seek_through_a_cluster_of_20_ms_blocks():
+    # Seek to 1:37 in the 7:50 track: start at the 1:30 cluster, whose blocks
+    # are 20 ms Opus frames.
+    target = 97000
+    start, _ = wh.cue_at_or_before(CUES_4DS, target)
+    actions = [(t, wh.seek_action(t, target)) for t in range(start, start + 10000, 20)]
+    skipped = [t for t, a in actions if a == "skip"]
+    preroll = [t for t, a in actions if a == "preroll"]
+    first_play = next(t for t, a in actions if a == "play")
+    assert start == 90001
+    assert len(preroll) == wh.SEEK_PREROLL_MS // 20           # 4 frames decoded and dropped
+    assert len(skipped) == (target - start - wh.SEEK_PREROLL_MS) // 20 + 1
+    assert target <= first_play < target + 20                 # lands within one frame

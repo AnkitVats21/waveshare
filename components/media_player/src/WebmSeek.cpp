@@ -1,4 +1,4 @@
-#include "media_player/WebmCues.h"
+#include "media_player/WebmSeek.h"
 
 #include <algorithm>
 
@@ -189,6 +189,21 @@ const CuePoint& cueAtOrBefore(const std::vector<CuePoint>& cues, uint32_t time_m
     auto it = std::upper_bound(cues.begin(), cues.end(), time_ms,
                                [](uint32_t t, const CuePoint& c) { return t < c.time_ms; });
     return it == cues.begin() ? *it : *(it - 1);
+}
+
+SeekAction seekAction(uint32_t block_ms, uint32_t target_ms) {
+    if (block_ms >= target_ms) return SeekAction::Play;
+    if (target_ms - block_ms <= SEEK_PREROLL_MS) return SeekAction::Preroll;
+    return SeekAction::Skip;
+}
+
+bool readBlockTimecode(const uint8_t* payload, size_t len, int16_t& relative) {
+    if (len == 0) return false;
+    size_t trackLen = 1;
+    while (trackLen <= 8 && !(payload[0] & (0x80 >> (trackLen - 1)))) ++trackLen;
+    if (trackLen > 8 || trackLen + 3 > len) return false;
+    relative = int16_t(uint16_t(payload[trackLen]) << 8 | payload[trackLen + 1]);
+    return true;
 }
 
 } // namespace Media

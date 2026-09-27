@@ -329,3 +329,7 @@ void AudioEngine::setStreamByteOffset(uint32_t offset) {
     if (_decoder) _decoder->setStreamByteOffset(offset);
 }
 
+void AudioEngine::setSeekTarget(uint32_t positionMs) {
+    if (_decoder) _decoder->setSeekTarget(positionMs);
+}
+

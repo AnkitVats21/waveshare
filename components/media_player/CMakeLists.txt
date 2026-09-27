@@ -8,7 +8,7 @@ idf_component_register(
         "src/InvidiousClient.cpp"
         "src/InvidiousInstanceResolver.cpp"
         "src/WebMOpusDecoder.cpp"
-        "src/WebmCues.cpp"
+        "src/WebmSeek.cpp"
         "src/OggOpusDecoderStrategy.cpp"
         "src/AudioDecoderFactory.cpp"
         "src/MusicPlaybackService.cpp"
