@@ -6,6 +6,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include <cstring>
+#include <memory>
 #include <algorithm>
 #include <cstdlib>
 #include "app/audio/SpeakerPlayback.h"
@@ -206,16 +207,19 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
     notifyTrackStarted(songId);
     AudioOrchestrator::getInstance().notifyMediaStarted();
 
-    if (_storageManager.fileExists(songId)) {
+    // A full path instead of a URL: a file outside the music cache (a recording).
+    const bool byPath = downloadUrl && downloadUrl[0] == '/';
+    if (byPath || _storageManager.fileExists(songId)) {
         ESP_LOGI(TAG, "Cache Hit! Playing local file for songId: %s", songId);
         _state = STATE_LOCAL_PLAYBACK;
 
-        if (!_storageManager.openFileForReading(songId)) {
+        if (!(byPath ? _storageManager.openPathForReading(downloadUrl) : _storageManager.openFileForReading(songId))) {
             ESP_LOGE(TAG, "Failed to open local file for reading");
             stopActivePipelines();
             _state = STATE_IDLE;
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                 s.media.state = MediaPlaybackState::ERROR_STATE;
+                s.media.seekable = false;
                 s.media.active_song_id[0] = '\0';
             });
             notifyPlaybackError(songId, -1);
@@ -225,6 +229,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
         _localSource = true;
         size_t headLen = 0;
         uint8_t* head = loadLocalIndex(headLen);
+        fillUnknownDuration(songId, _fileDurationMs);
         if (startPosMs > 0) {
             const uint32_t offset = localSeekOffset(startPosMs);
             ESP_LOGI(TAG, "Starting at %u ms: byte %u", (unsigned)startPosMs, (unsigned)offset);
@@ -237,6 +242,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
         heap_caps_free(head);
         EmbeddedSysDb::getInstance().mutate([songId, startPosMs](SystemState& s) {
             s.media.state = MediaPlaybackState::PLAYING;
+            s.media.seekable = true;
             s.media.output_target = MediaOutputTarget::LOCAL;
             strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
             s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
@@ -255,6 +261,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
         }
 
         _state = STATE_STREAMING_AND_CACHING;
+        fillUnknownDuration(songId, durMs);
 
         if (doCache) {
             ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);
@@ -264,6 +271,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
                 _state = STATE_IDLE;
                 EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                     s.media.state = MediaPlaybackState::ERROR_STATE;
+                    s.media.seekable = false;
                     s.media.active_song_id[0] = '\0';
                 });
                 notifyPlaybackError(songId, -2);
@@ -274,6 +282,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
             _audioEngine.start();
             EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
                 s.media.state = MediaPlaybackState::PLAYING;
+                s.media.seekable = true;
                 s.media.output_target = MediaOutputTarget::LOCAL;
                 strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
                 s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
@@ -286,6 +295,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
                 _state = STATE_IDLE;
                 EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                     s.media.state = MediaPlaybackState::ERROR_STATE;
+                    s.media.seekable = false;
                     s.media.active_song_id[0] = '\0';
                 });
                 notifyPlaybackError(songId, -3);
@@ -295,6 +305,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
             ESP_LOGI(TAG, "Streaming songId: %s (startPos: %u ms)", songId, (unsigned int)startPosMs);
             EmbeddedSysDb::getInstance().mutate([songId, startPosMs](SystemState& s) {
                 s.media.state = MediaPlaybackState::PLAYING;
+                s.media.seekable = true;
                 s.media.output_target = MediaOutputTarget::LOCAL;
                 strncpy(s.media.active_song_id, songId, sizeof(s.media.active_song_id) - 1);
                 s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
@@ -318,6 +329,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
                 _state = STATE_IDLE;
                 EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                     s.media.state = MediaPlaybackState::ERROR_STATE;
+                    s.media.seekable = false;
                     s.media.active_song_id[0] = '\0';
                 });
                 notifyPlaybackError(songId, -3);
@@ -390,6 +402,7 @@ void NexusPlayer::stop() {
     AudioOrchestrator::getInstance().notifyMediaStopped();
     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
         s.media.state = MediaPlaybackState::IDLE;
+        s.media.seekable = false;
         s.media.active_song_id[0] = '\0';
     });
 }
@@ -523,6 +536,7 @@ void NexusPlayer::checkPlaybackFinished() {
                     observers = currentObservers();
                     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                         s.media.state = MediaPlaybackState::IDLE;
+                        s.media.seekable = false;
                         s.media.active_song_id[0] = '\0';
                     });
                 }
@@ -603,6 +617,7 @@ void NexusPlayer::yieldAlarm() {
 uint8_t* NexusPlayer::loadLocalIndex(size_t& headLen) {
     const int64_t t0 = esp_timer_get_time();
     _cues.clear();
+    _fileDurationMs = 0;
     headLen = 0;
     size_t want = 4096;
     uint8_t* head = nullptr;
@@ -621,13 +636,30 @@ uint8_t* NexusPlayer::loadLocalIndex(size_t& headLen) {
                          : index.status == Media::CuesStatus::NeedMore ? "cut off"
                                                                        : "not WebM";
     if (index.status == Media::CuesStatus::Found) _cues = std::move(index.cues);
-    ESP_LOGI(TAG, "Seek index: %s, %u cues, %u header bytes, %lld us", status, (unsigned)_cues.size(),
-             (unsigned)headLen, (long long)(esp_timer_get_time() - t0));
+    _fileDurationMs = index.duration_ms;
+    ESP_LOGI(TAG, "Seek index: %s, %u cues, %u header bytes, duration %u ms, %lld us", status,
+             (unsigned)_cues.size(), (unsigned)headLen, (unsigned)_fileDurationMs,
+             (long long)(esp_timer_get_time() - t0));
     if (headLen == 0) {
         heap_caps_free(head);
         return nullptr;
     }
     return head;
+}
+
+void NexusPlayer::fillUnknownDuration(const char* songId, uint32_t durationMs) {
+    if (durationMs == 0 || EmbeddedSysDb::getInstance().snapshot().media.duration_ms != 0) return;
+    EmbeddedSysDb::getInstance().mutate([durationMs](SystemState& s) {
+        if (s.media.duration_ms == 0) s.media.duration_ms = durationMs;
+    });
+    auto rec = std::make_unique<TrackRecord>();
+    auto& catalog = CatalogDB::getInstance();
+    if (catalog.get(songId, *rec) && rec->durationMs == 0) {
+        rec->durationMs = durationMs;
+        catalog.upsert(*rec);
+    }
+    ESP_LOGI(TAG, "Length of %s was unknown: %u ms from the %s", songId, (unsigned)durationMs,
+             _localSource ? "file" : "stream URL");
 }
 
 uint32_t NexusPlayer::localSeekOffset(uint32_t positionMs) {

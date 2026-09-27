@@ -306,6 +306,15 @@ RecordingResult renameRecording(int id, const std::string& name, std::string& ne
     return RecordingResult::Ok;
 }
 
+RecordingResult findRecording(int id, RecordingDoc& doc, std::string& path) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto& db = recordingsDb();
+    if (!db.db().isOpen()) return RecordingResult::Unavailable;
+    if (id <= 0 || !db.recordings().get(std::to_string(id), doc)) return RecordingResult::NotFound;
+    path = pathOf(doc.file);
+    return RecordingResult::Ok;
+}
+
 RecordingResult deleteRecording(int id) {
     std::lock_guard<std::mutex> lock(g_mutex);
     auto& db = recordingsDb();

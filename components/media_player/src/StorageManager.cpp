@@ -122,13 +122,20 @@ bool StorageManager::openFileForCaching(const char* songId, size_t expectedBytes
 
 bool StorageManager::openFileForReading(const char* songId) {
     if (!songId || !sd_storage::SdCard::instance().isMounted()) return false;
-    closeActiveFile();
-
     char path[128];
     if (!getValidCachedPath(songId, path, sizeof(path))) {
         ESP_LOGE(TAG, "No valid local audio file found for songId: %s", songId);
         return false;
     }
+    if (!openPathForReading(path)) return false;
+    strncpy(_currentSongId, songId, sizeof(_currentSongId) - 1);
+    _currentSongId[sizeof(_currentSongId) - 1] = '\0';
+    return true;
+}
+
+bool StorageManager::openPathForReading(const char* path) {
+    if (!path || !sd_storage::SdCard::instance().isMounted()) return false;
+    closeActiveFile();
 
     _readFile = sd_storage::File::open(path, sd_storage::Mode::Read);
     ESP_LOGI(TAG, "Opening local playback stream at: %s (size=%ld bytes)", path, _readFile.size());
@@ -137,8 +144,7 @@ bool StorageManager::openFileForReading(const char* songId) {
         return false;
     }
 
-    strncpy(_currentSongId, songId, sizeof(_currentSongId) - 1);
-    _currentSongId[sizeof(_currentSongId) - 1] = '\0';
+    _currentSongId[0] = '\0';
     _downloadComplete = true; // Local playback is already complete
     _isWritingMode = false;
     _readerAtEof = false;

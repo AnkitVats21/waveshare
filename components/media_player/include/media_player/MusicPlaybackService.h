@@ -64,6 +64,13 @@ public:
     bool play(const char* query);
     bool playDirect(const InvidiousTrack& track, const char* streamUrl);
     bool playLocal(const char* songIdOrPath);
+    // Plays a file outside the library (a recording) by its full path. The
+    // track's id must start with FILE_TRACK_PREFIX. Kept out of the library,
+    // history and autoplay; playback stops when it ends.
+    static constexpr const char* FILE_TRACK_PREFIX = "file:";
+    bool playFile(const InvidiousTrack& track, const char* path);
+    // Stops playback if the file track `id` is playing (before deleting it).
+    void stopFileTrack(const std::string& id);
     bool playNext(const char* query);
     bool queue(const char* query);
     bool next();
@@ -119,6 +126,7 @@ public:
     static constexpr int MAX_SKIP_ON_ADVANCE = 6;
 
 private:
+    void endFileTrack();
     MusicPlaybackService();
     ~MusicPlaybackService() override = default;
 

@@ -1,5 +1,6 @@
 #include "services/http/routes/Routes.h"
 #include "services/http/routes/MusicStatus.h"
+#include "common/sysdb/EmbeddedSysDb.h"
 #include "http_server/HttpUtil.h"
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/CatalogDB.h"
@@ -192,16 +193,18 @@ void MusicStatus::fill(JsonObject out) {
 
     auto& music = MusicPlaybackService::getInstance();
     InvidiousTrack cur = music.getCurrentTrack();
+    // The player fills in a length the track didn't come with.
+    const uint32_t duration_ms = EmbeddedSysDb::getInstance().snapshot().media.duration_ms;
 
     out["state"] = state_str;
     out["position_ms"] = music.getPositionMs();
-    out["duration_ms"] = cur.durationSeconds * 1000;
+    out["duration_ms"] = duration_ms;
     out["seekable"] = (state == STATE_LOCAL_PLAYBACK || state == STATE_STREAMING_AND_CACHING || state == STATE_PAUSED);
     JsonObject t = out["current_track"].to<JsonObject>();
     t["id"] = cur.videoId;
     t["title"] = cur.title;
     t["artist"] = cur.author;
-    t["duration"] = cur.durationSeconds;
+    t["duration"] = duration_ms / 1000;
     out["repeat_mode"] = static_cast<int>(music.getRepeatMode());
     out["autoplay"] = music.isAutoplayEnabled();
     out["caching"] = music.isCachingEnabled();

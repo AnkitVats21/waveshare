@@ -16,6 +16,9 @@ public:
     
     // Cache Hit Path (local file read and playback)
     bool openFileForReading(const char* songId);
+    // A file outside the music cache (a recording), by its full path: no
+    // size check, never deleted.
+    bool openPathForReading(const char* path);
     
     // Moves local playback to byteOffset. The playback ring is flushed and a
     // chunk read before the move is dropped, so everything after the call

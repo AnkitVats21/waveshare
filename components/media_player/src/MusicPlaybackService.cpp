@@ -17,6 +17,13 @@
 
 static const char* TAG = "MusicPlayback";
 
+// Files played by path (recordings): not library tracks.
+namespace {
+bool isFileTrack(const char* id) {
+    return id && strncmp(id, MusicPlaybackService::FILE_TRACK_PREFIX, strlen(MusicPlaybackService::FILE_TRACK_PREFIX)) == 0;
+}
+}
+
 MusicPlaybackService& MusicPlaybackService::getInstance() {
     static MusicPlaybackService instance;
     return instance;
@@ -1010,9 +1017,7 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
         strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
         strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-        s.media.duration_ms = track.durationSeconds * 1000;
         s.media.position_ms = 0;
-        s.media.seekable = true;
     });
 
     ESP_LOGI(TAG, "playDirect: Started '%s' (%s)", track.title.c_str(), track.videoId.c_str());
@@ -1051,6 +1056,10 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
     }
 
     CatalogDB::getInstance().recordPlay(rec->videoId);
+    // Before play: the player reads it, and fills it in from the file if 0.
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.duration_ms = track.durationSeconds * 1000;
+    });
     NexusPlayer::getInstance().play(rec->videoId, "");
 
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
@@ -1059,13 +1068,64 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
         strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
         strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-        s.media.duration_ms = track.durationSeconds * 1000;
         s.media.position_ms = 0;
-        s.media.seekable = true;
     });
 
     ESP_LOGI(TAG, "playLocal: Playing '%s' (%s)", track.title.c_str(), track.videoId.c_str());
     return true;
+}
+
+bool MusicPlaybackService::playFile(const InvidiousTrack& track, const char* path) {
+    if (!path || path[0] != '/' || track.videoId.rfind(FILE_TRACK_PREFIX, 0) != 0) return false;
+    NexusPlayer::getInstance().yieldAlarm();
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        _queueGeneration++;
+        _currentTrack = track;
+    }
+    // Before play: the player reads the length (Ogg files don't carry one).
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.duration_ms = track.durationSeconds * 1000;
+    });
+    NexusPlayer::getInstance().play(track.videoId.c_str(), path);
+    EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
+        s.media.state = MediaPlaybackState::PLAYING;
+        strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+        s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
+        s.media.title[sizeof(s.media.title) - 1] = '\0';
+        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+        s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        s.media.position_ms = 0;
+    });
+    ESP_LOGI(TAG, "playFile: '%s' (%s)", track.title.c_str(), path);
+    return true;
+}
+
+void MusicPlaybackService::stopFileTrack(const std::string& id) {
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        if (_currentTrack.videoId != id) return;
+    }
+    NexusPlayer::getInstance().stop();
+    endFileTrack();
+}
+
+// A file track ended or failed: stop there, leaving the queue alone.
+void MusicPlaybackService::endFileTrack() {
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        _currentTrack = InvidiousTrack();
+    }
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.media.state = MediaPlaybackState::IDLE;
+        s.media.active_song_id[0] = '\0';
+        s.media.title[0] = '\0';
+        s.media.artist[0] = '\0';
+        s.media.position_ms = 0;
+        s.media.duration_ms = 0;
+        s.media.seekable = false;
+    });
 }
 
 bool MusicPlaybackService::playNext(const char* query) {
@@ -1086,7 +1146,8 @@ bool MusicPlaybackService::nextInternal() {
 
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-        if (!_currentTrack.videoId.empty() && (_history.empty() || _history.back().videoId != _currentTrack.videoId)) {
+        if (!_currentTrack.videoId.empty() && !isFileTrack(_currentTrack.videoId.c_str()) &&
+            (_history.empty() || _history.back().videoId != _currentTrack.videoId)) {
             _history.push_back(_currentTrack);
             if (_history.size() > 20) {
                 _history.erase(_history.begin());
@@ -1223,6 +1284,7 @@ void MusicPlaybackService::stop() {
 
 void MusicPlaybackService::onTrackStarted(const char* songId) {
     ESP_LOGI(TAG, "Observer event: Track started [%s]", songId ? songId : "");
+    if (isFileTrack(songId)) return;
     if (isAutoplayEnabled()) {
         checkAndReplenishQueue();
     }
@@ -1231,6 +1293,10 @@ void MusicPlaybackService::onTrackStarted(const char* songId) {
 
 void MusicPlaybackService::onTrackFinished(const char* songId) {
     ESP_LOGI(TAG, "Observer event: Track finished [%s]", songId ? songId : "");
+    if (isFileTrack(songId)) {
+        endFileTrack();
+        return;
+    }
     InvidiousTrack curr;
     RepeatMode mode;
     {
@@ -1260,6 +1326,10 @@ void MusicPlaybackService::onTrackFinished(const char* songId) {
 
 void MusicPlaybackService::onPlaybackError(const char* songId, int errorCode) {
     ESP_LOGE(TAG, "Observer event: Playback error %d for [%s]", errorCode, songId ? songId : "");
+    if (isFileTrack(songId)) {   // not in the cache: nothing to delete or stream instead
+        endFileTrack();
+        return;
+    }
     InvidiousTrack curr;
     bool hasQueue = false;
     {

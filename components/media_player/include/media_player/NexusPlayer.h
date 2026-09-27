@@ -110,6 +110,11 @@ private:
     // Streaming while saving to the card (the decoder reads the partial file).
     bool _caching = false;
     std::vector<Media::CuePoint> _cues;
+    // The local file's length from its header, 0 if it has none.
+    uint32_t _fileDurationMs = 0;
+    // Publishes a length found by the player when the track's is unknown,
+    // and saves it with the library entry.
+    void fillUnknownDuration(const char* songId, uint32_t durationMs);
     // Reads the index; returns the head bytes (PSRAM, caller frees) for the
     // decoder to identify the format, or nullptr.
     uint8_t* loadLocalIndex(size_t& headLen);
