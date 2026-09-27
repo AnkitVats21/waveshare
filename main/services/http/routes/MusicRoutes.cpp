@@ -171,12 +171,16 @@ esp_err_t libraryDeleteHandler(httpd_req_t* req) {
         return Http::sendError(req, 400, "Missing id parameter");
     }
 
-    bool ok = CatalogDB::getInstance().remove(id.c_str());
+    if (!CatalogDB::getInstance().exists(id.c_str())) {
+        return Http::sendError(req, 404, "Track not found in library");
+    }
+    // The entry stays (not saved), keeping its play history.
+    bool ok = MusicPlaybackService::getInstance().deleteSaved(id);
     JsonDocument doc;
     doc["status"] = ok ? "ok" : "error";
     doc["id"] = id;
-    if (!ok) doc["message"] = "Track not found in library";
-    return Http::sendJson(req, ok ? 200 : 404, doc);
+    if (!ok) doc["message"] = "The file could not be deleted";
+    return Http::sendJson(req, ok ? 200 : 500, doc);
 }
 
 } // namespace

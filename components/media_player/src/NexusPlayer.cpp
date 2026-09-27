@@ -656,12 +656,7 @@ void NexusPlayer::fillUnknownDuration(const char* songId, uint32_t durationMs) {
     EmbeddedSysDb::getInstance().mutate([durationMs](SystemState& s) {
         if (s.media.duration_ms == 0) s.media.duration_ms = durationMs;
     });
-    auto rec = std::make_unique<TrackRecord>();
-    auto& catalog = CatalogDB::getInstance();
-    if (catalog.get(songId, *rec) && rec->durationMs == 0) {
-        rec->durationMs = durationMs;
-        catalog.upsert(*rec);
-    }
+    CatalogDB::getInstance().setDurationIfUnknown(songId, durationMs);
     ESP_LOGI(TAG, "Length of %s was unknown: %u ms from the %s", songId, (unsigned)durationMs,
              _localSource ? "file" : "stream URL");
 }

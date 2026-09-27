@@ -51,10 +51,10 @@ void addNow(JsonDocument& r) {
 std::string findTone(const std::string& query, std::string& title) {
     if (query.empty()) return "";
     auto& storage = NexusPlayer::getInstance().getStorageManager();
-    for (const TrackRecord& rec : CatalogDB::getInstance().search(query.c_str())) {
-        if (storage.fileExists(rec.videoId)) {
-            title = rec.title;
-            return rec.videoId;
+    for (const LibraryTrack& t : CatalogDB::getInstance().search(query.c_str())) {
+        if (storage.fileExists(t.id.c_str())) {
+            title = t.doc.title;
+            return t.id;
         }
     }
     return "";
@@ -77,8 +77,12 @@ void alarmToJson(int id, const AlarmDoc& a, JsonObject o, int64_t now) {
     if (!a.label.empty()) o["label"] = a.label;
     o["enabled"] = a.enabled;
     if (!a.tone.empty()) {
-        TrackRecord rec;
-        o["tone"] = CatalogDB::getInstance().get(a.tone.c_str(), rec) ? rec.title : a.tone.c_str();
+        ndb::music::TrackDoc rec;
+        if (CatalogDB::getInstance().get(a.tone.c_str(), rec)) {
+            o["tone"] = rec.title;
+        } else {
+            o["tone"] = a.tone;
+        }
     }
     const int64_t next = AlarmService::nextFireOf(a, now);
     if (next) o["next"] = localText(next);

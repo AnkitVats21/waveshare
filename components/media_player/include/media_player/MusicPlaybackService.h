@@ -73,6 +73,9 @@ public:
     bool playFile(const InvidiousTrack& track, const char* path);
     // Stops playback if the file track `id` is playing (before deleting it).
     void stopFileTrack(const std::string& id);
+    // Deletes a library song's saved file and thumbnail; its entry stays, as
+    // not saved. Stops playback first if it is the current track.
+    bool deleteSaved(const std::string& id);
     bool playNext(const char* query);
     bool queue(const char* query);
     bool next();

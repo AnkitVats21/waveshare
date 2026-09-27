@@ -341,13 +341,13 @@ void AlarmService::handle(Command& cmd) {
         m_fallback_reason.clear();
         bool has_song = false;
         if (!m_tone.empty()) {
-            auto rec = std::make_unique<TrackRecord>();
-            if (!CatalogDB::getInstance().get(m_tone.c_str(), *rec)) {
+            ndb::music::TrackDoc rec;
+            if (!CatalogDB::getInstance().get(m_tone.c_str(), rec)) {
                 m_fallback_reason = "tone not in the library";
             } else if (!NexusPlayer::getInstance().getStorageManager().fileExists(m_tone.c_str())) {
                 m_fallback_reason = "tone file missing";
             } else {
-                m_tone_title = rec->title;
+                m_tone_title = rec.title;
                 has_song = true;
             }
         }

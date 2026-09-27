@@ -6,6 +6,7 @@
 #include <cstring>
 #include <algorithm>
 #include "PlayerTypes.h"
+#include "media_player/CatalogDB.h"
 #include "common/thread_config.h"
 #include "freertos/idf_additions.h"
 
@@ -63,6 +64,7 @@ bool StorageManager::deleteFile(const char* songId) {
     }
     if (deleted) {
         ESP_LOGI(TAG, "Deleted local cached audio file(s) for songId: %s", songId);
+        CatalogDB::getInstance().setSaved(songId, 0);
     }
     return deleted;
 }
@@ -216,6 +218,7 @@ void StorageManager::closeActiveFile() {
                 ESP_LOGE(TAG, "Failed to commit cached file %s", targetPath);
             } else {
                 ESP_LOGI(TAG, "Successfully committed cache file: %s", targetPath);
+                CatalogDB::getInstance().setSaved(_currentSongId, static_cast<uint32_t>(_bytesWritten));
             }
         } else {
             ESP_LOGI(TAG, "Download incomplete or aborted. Cleaning up temp cache: %s", tempPath);

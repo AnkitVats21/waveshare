@@ -335,7 +335,9 @@ void MusicPlaybackService::auxWorkerLoop() {
     ESP_LOGI(TAG, "Persistent media_aux started");
     MediaAuxCommand cmd;
     while (true) {
-        if (xQueueReceive(m_aux_queue, &cmd, portMAX_DELAY) == pdTRUE) {
+        // Wakes every second to write the library's batched changes.
+        CatalogDB::getInstance().flushIfDue();
+        if (xQueueReceive(m_aux_queue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
             {
                 std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
                 if (cmd.type != MediaAuxCmdType::RENEW_URL && cmd.generation != _queueGeneration) {
@@ -384,7 +386,7 @@ void MusicPlaybackService::auxWorkerLoop() {
                                     got += r;
                                 }
                                 if (got == clen && sd_storage::Fs::writeAtomic(thumbPath, img, clen)) {
-                                    CatalogDB::getInstance().setThumbnailCached(cmd.targetId, true);
+                                    CatalogDB::getInstance().setThumbnail(cmd.targetId, true);
                                     ESP_LOGI(TAG, "Saved album art thumbnail to %s", thumbPath);
                                 } else {
                                     ESP_LOGW(TAG, "Thumbnail %s not saved (%lld of %lld bytes)", cmd.targetId, got, clen);
@@ -1036,26 +1038,9 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
         }
     }
 
-    // Index into local SD library. An existing record only gets fresh
-    // metadata: rebuilding it would reset the saved-file size and seek table.
-    auto rec = std::make_unique<TrackRecord>();
-    if (!CatalogDB::getInstance().get(track.videoId.c_str(), *rec)) {
-        strncpy(rec->videoId, track.videoId.c_str(), sizeof(rec->videoId) - 1);
-        rec->cachedAt = static_cast<uint32_t>(time(nullptr));
-        rec->sampleRate = 48000;
-        rec->channels = 2;
-        rec->codecId = 0; // WebM/Opus
-    }
-    if (!track.title.empty() && track.title != track.videoId) {
-        memset(rec->title, 0, sizeof(rec->title));
-        strncpy(rec->title, track.title.c_str(), sizeof(rec->title) - 1);
-    }
-    if (!track.author.empty()) {
-        memset(rec->artist, 0, sizeof(rec->artist));
-        strncpy(rec->artist, track.author.c_str(), sizeof(rec->artist) - 1);
-    }
-    if (track.durationSeconds > 0) rec->durationMs = track.durationSeconds * 1000;
-    CatalogDB::getInstance().upsert(*rec);
+    // Add it to the library, or refresh an entry's title, artist and length.
+    CatalogDB::getInstance().noteTrack(track.videoId.c_str(), track.title, track.author,
+                                       track.durationSeconds * 1000);
     CatalogDB::getInstance().recordPlay(track.videoId.c_str());
 
     // Dispatch thumbnail prefetch to background aux task
@@ -1087,21 +1072,21 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
     NexusPlayer::getInstance().yieldAlarm();
 
     std::string id = songIdOrPath;
-    auto rec = std::make_unique<TrackRecord>();
-    if (!CatalogDB::getInstance().get(id.c_str(), *rec)) {
-        // Fallback: sync filesystem and search again
+    ndb::music::TrackDoc rec;
+    if (!CatalogDB::getInstance().get(id.c_str(), rec) || rec.file_size == 0) {
+        // A file copied onto the card, or saved since: look again.
         CatalogDB::getInstance().scanAndSync();
-        if (!CatalogDB::getInstance().get(id.c_str(), *rec)) {
-            ESP_LOGW(TAG, "playLocal: Track %s not found in CatalogDB", id.c_str());
+        if (!CatalogDB::getInstance().get(id.c_str(), rec) || rec.file_size == 0) {
+            ESP_LOGW(TAG, "playLocal: %s is not saved on the card", id.c_str());
             return false;
         }
     }
 
     InvidiousTrack track;
-    track.videoId = rec->videoId;
-    track.title = rec->title;
-    track.author = rec->artist;
-    track.durationSeconds = rec->durationMs / 1000;
+    track.videoId = id;
+    track.title = rec.title;
+    track.author = rec.artist;
+    track.durationSeconds = rec.duration_ms / 1000;
 
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
@@ -1113,12 +1098,12 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
         }
     }
 
-    CatalogDB::getInstance().recordPlay(rec->videoId);
+    CatalogDB::getInstance().recordPlay(id.c_str());
     // Before play: the player reads it, and fills it in from the file if 0.
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
         s.media.duration_ms = track.durationSeconds * 1000;
     });
-    NexusPlayer::getInstance().play(rec->videoId, "");
+    NexusPlayer::getInstance().play(id.c_str(), "");
 
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
         s.media.state = MediaPlaybackState::PLAYING;
@@ -1167,6 +1152,19 @@ void MusicPlaybackService::stopFileTrack(const std::string& id) {
     }
     NexusPlayer::getInstance().stop();
     endFileTrack();
+}
+
+bool MusicPlaybackService::deleteSaved(const std::string& id) {
+    bool current;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        current = !id.empty() && _currentTrack.videoId == id;
+    }
+    if (current) {
+        NexusPlayer::getInstance().stop();  // closes the file before it is deleted
+        stop();
+    }
+    return CatalogDB::getInstance().removeFiles(id.c_str());
 }
 
 // A file track ended or failed: stop there, leaving the queue alone.
