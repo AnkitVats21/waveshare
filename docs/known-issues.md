@@ -11,7 +11,10 @@ commit.
 Seeking in a song that is streaming (not saved on the card) resumes 3-4 s
 later; seeks in saved songs and recordings take well under a second.
 **Cause:** a seek reconnects (TLS, ~0.6 s) and downloads from the nearest
-index point, up to 10 s of audio before the target, at ~70 KB/s. The
+index point, up to 10 s of audio before the target, at ~70 KB/s. When the
+resolver runs behind a VPN (WARP), every connect also follows a 302 to a
+nearby cache (~0.6 s more), because the URL is signed for the VPN's
+address. The
 download is slow because the TCP receive window is small
 (`CONFIG_LWIP_TCP_WND_DEFAULT` 5760), which is small because internal RAM is
 short. **Options:** a bigger window if RAM allows, or start decoding

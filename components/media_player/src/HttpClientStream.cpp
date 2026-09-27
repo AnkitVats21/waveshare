@@ -1,8 +1,10 @@
 #include "HttpClientStream.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
+#include <cstring>
 
 static const char* TAG = "HttpStream";
+static constexpr int kMaxRedirects = 5;
 
 HttpClientStream::HttpClientStream() {}
 
@@ -41,7 +43,6 @@ bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
     config.event_handler = _httpEventThunk;
     config.is_async = false;
     config.timeout_ms = 10000;
-    config.max_redirection_count = 5;
 
     // --- HTTPS Security Layer Enhancements ---
     if (url.rfind("https://", 0) == 0) {
@@ -82,23 +83,62 @@ bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
 
     // Open the connection and fetch headers only. The body is then consumed
     // incrementally via esp_http_client_read() in the network task.
-    esp_err_t err = esp_http_client_open(_clientHandle, 0);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
-        close();
-        return false;
+    // esp_http_client follows redirects only inside esp_http_client_perform(),
+    // so they are followed here. googlevideo answers with a 302 to a nearby
+    // cache when the URL was signed for another address (a resolver behind a
+    // VPN such as WARP); headers set above, including Range, carry over.
+    int64_t content_length = -1;
+    int status = 0;
+    for (int redirects = 0;; ++redirects) {
+        esp_err_t err = esp_http_client_open(_clientHandle, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
+            close();
+            return false;
+        }
+
+        content_length = esp_http_client_fetch_headers(_clientHandle);
+        if (content_length < 0) {
+            ESP_LOGE(TAG, "HTTP fetch headers failed: %lld", (long long)content_length);
+            close();
+            return false;
+        }
+
+        status = esp_http_client_get_status_code(_clientHandle);
+        const bool isRedirect = status == HttpStatus_MovedPermanently || status == HttpStatus_Found ||
+                                status == HttpStatus_SeeOther || status == HttpStatus_TemporaryRedirect ||
+                                status == HttpStatus_PermanentRedirect;
+        if (!isRedirect) break;
+        if (redirects >= kMaxRedirects) {
+            ESP_LOGE(TAG, "Too many redirects (%d)", redirects);
+            close();
+            return false;
+        }
+
+        esp_http_client_flush_response(_clientHandle, nullptr);
+        if (esp_http_client_set_redirection(_clientHandle) != ESP_OK) {
+            ESP_LOGE(TAG, "HTTP %d without a usable Location", status);
+            close();
+            return false;
+        }
+        esp_http_client_close(_clientHandle);
+
+        // Log the host only: the query string is a signed, IP-bound URL.
+        char next[128] = {};
+        esp_http_client_get_url(_clientHandle, next, sizeof(next));
+        if (char* q = strchr(next, '?')) *q = '\0';
+        ESP_LOGI(TAG, "HTTP %d, following redirect to %s", status, next);
     }
 
-    int64_t content_length = esp_http_client_fetch_headers(_clientHandle);
-    if (content_length < 0) {
-        ESP_LOGE(TAG, "HTTP fetch headers failed: %lld", (long long)content_length);
-        close();
-        return false;
-    }
-
-    int status = esp_http_client_get_status_code(_clientHandle);
     ESP_LOGI(TAG, "HTTP stream opened (status=%d, offset=%u, content_length=%lld)",
              status, (unsigned int)startByteOffset, (long long)content_length);
+    if (status != HttpStatus_Ok && status != HttpStatus_PartialContent) {
+        // An error page (e.g. 403 for an expired link) is not audio; failing
+        // here reports a playback error instead of a track that "finished".
+        ESP_LOGE(TAG, "HTTP stream failed with status %d", status);
+        close();
+        return false;
+    }
     if (startByteOffset > 0 && status != 206) {
         ESP_LOGW(TAG, "Server responded with %d instead of 206 Partial Content", status);
     }
