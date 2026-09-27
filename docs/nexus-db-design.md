@@ -315,6 +315,19 @@ the next boot moves it into NVS and deletes it.
 
 Each step is its own commit and is tested on the device before the next.
 
+Status (2026-09-27): steps 1–4 and 6 are done; 5 (music.ndb) is next; 7 is
+done for recordings (the library still reads `catalog.db`, alarms read
+system.ndb through `/api/alarms`).
+
+| Step | Commits |
+|---|---|
+| 1 NVS credentials | 0dc1886 |
+| 2 engine + starc | 6dc1614 |
+| 3 system.ndb | 8b9e0f5, b5f730c, 8febe42 (alarms: db05c52, 37ae691) |
+| 4 seeking | fab45b8, 27c76f0, 7cc6f91, be3f8eb, 2916a6d; Ogg: 0a3d733 |
+| 5 music.ndb | not started |
+| 6 recordings.ndb | ea126e9, 2a325a6, be285df (play on the device) |
+
 1. **NVS credentials + migration.** Gemini key and Wi-Fi from NVS; import and
    delete the JSON files. Test: fresh import, reboot, session config read, key
    never in any response or log.
