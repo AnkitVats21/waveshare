@@ -131,6 +131,14 @@ HTTP routes are in `main/services/http/routes/` (table in
 **Network and audio**
 - YouTube's CDN throttles audio to ~32 KB/s unless the request carries a
   `Range` header; the stream client always sends one.
+- Every HTTPS client verifies the server: call `Tls::secure(config)`
+  (`media_player/TlsConfig.h`) or attach `esp_crt_bundle_attach` with the
+  hostname check on. The build has no unverified fallback
+  (`CONFIG_ESP_TLS_INSECURE` off), so a client without it fails to connect.
+- Stream URLs are signed, IP-bound and expire (~6 h); they live in RAM only,
+  never in a database or a log line (log the host). googlevideo may answer
+  with a 302 to a nearby cache; `HttpClientStream` follows it, since
+  `esp_http_client` follows redirects only in `perform()`.
 - `/api/ws` accepts one client at a time (the dashboard). Test scripts use
   the REST API, not the WebSocket.
 - Chimes, playback and recording start/stop are audible: check with the

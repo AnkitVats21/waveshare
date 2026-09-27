@@ -62,6 +62,8 @@ MEDIA_RX_BUF → speaker mixer (audio_core)
   lets the server close it) is reopened at the byte where it stopped; a
   403 renews the URL through `MusicPlaybackService` (on `media_aux`) and
   continues if it is the same file. Stream URLs are kept in RAM only.
+- **`TlsConfig.h`** — `Tls::secure()`: CA bundle and hostname check for
+  every HTTPS client here (stream, thumbnails, Invidious).
 - **`InvidiousClient` / `InvidiousInstanceResolver`** — search and stream
   resolution against Invidious instances, with health checks and failover;
   `setCustomInstance()` pins one.
