@@ -19,6 +19,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/core_sysdb/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/audio_core/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/nexus_db/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/media_player/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
@@ -54,6 +55,8 @@ nanobind_add_module(waveshare_host
     ../components/nexus_db/src/Database.cpp
     ../components/nexus_db/src/Crc32.cpp
     ${NDB_GEN_DIR}/TestdbDb.generated.cpp
+    bindings/bind_media.cpp
+    ../components/media_player/src/WebmCues.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)

@@ -1,0 +1,39 @@
+#include "bindings.h"
+#include "media_player/WebmCues.h"
+#include <nanobind/stl/string.h>
+#include <string>
+
+namespace {
+
+std::string statusName(Media::CuesStatus s) {
+    switch (s) {
+    case Media::CuesStatus::Found: return "found";
+    case Media::CuesStatus::NeedMore: return "need_more";
+    case Media::CuesStatus::NotFound: return "not_found";
+    case Media::CuesStatus::Invalid: return "invalid";
+    default: return "";
+    }
+}
+
+} // namespace
+
+void init_media(nb::module_& m) {
+    // (status, [(time_ms, offset), ...], need); status is "found", "need_more",
+    // "not_found" or "invalid".
+    m.def("parse_webm_cues", [](nb::bytes data) {
+        auto r = Media::parseWebmCues(reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
+        nb::list cues;
+        for (const auto& c : r.cues) cues.append(nb::make_tuple(c.time_ms, c.offset));
+        return nb::make_tuple(statusName(r.status), cues, r.need);
+    });
+    m.def("cue_at_or_before", [](nb::list pairs, uint32_t time_ms) {
+        std::vector<Media::CuePoint> cues;
+        for (auto p : pairs) {
+            auto t = nb::cast<nb::tuple>(p);
+            cues.push_back({nb::cast<uint32_t>(t[0]), nb::cast<uint32_t>(t[1])});
+        }
+        const auto& c = Media::cueAtOrBefore(cues, time_ms);
+        return nb::make_tuple(c.time_ms, c.offset);
+    });
+    m.attr("MAX_CUES") = Media::MAX_CUES;
+}

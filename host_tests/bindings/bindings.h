@@ -9,3 +9,4 @@ void init_resampler(nb::module_& m);
 void init_nexus_db(nb::module_& m);
 void init_alerts(nb::module_& m);
 void init_alarm(nb::module_& m);
+void init_media(nb::module_& m);
