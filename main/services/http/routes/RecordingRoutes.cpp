@@ -87,7 +87,7 @@ esp_err_t deleteHandler(httpd_req_t* req) {
     std::string val;
     if (!Http::queryParam(req, "id", val)) return Http::sendError(req, 400, "Missing id");
     const int id = atoi(val.c_str());
-    // The card doesn't lock open files: stop the player reading it first.
+    // Deleting fails while the file is open (sd_storage): stop the player first.
     if (id > 0) MusicPlaybackService::getInstance().stopFileTrack(fileTrackId(id));
     RecordingResult r = Services::deleteRecording(id);
     if (r != RecordingResult::Ok) return sendResult(req, r);

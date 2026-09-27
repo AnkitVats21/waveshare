@@ -29,7 +29,7 @@ enum class RecordingResult { Ok, Unavailable, NotFound, BadName, Taken, Failed }
 // Renames the recording's file and rewrites its `file` field; the id stays.
 // `name` may omit the extension; the file keeps its own. Letters, digits,
 // space and - _ . ( ) only, at most MAX_RECORDING_NAME characters before the
-// extension. Failed: the card refused the change.
+// extension. Failed covers a file that is open (being played).
 constexpr size_t MAX_RECORDING_NAME = 60;
 RecordingResult renameRecording(int id, const std::string& name, std::string& new_file);
 // Deletes the file and its document.

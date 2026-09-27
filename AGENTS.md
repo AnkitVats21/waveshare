@@ -117,9 +117,11 @@ HTTP routes are in `main/services/http/routes/` (table in
   block that ends before the delete.
 
 **Storage**
-- FAT file locking is off (`CONFIG_FATFS_FS_LOCK=0`): the card doesn't
-  refuse to delete or rename an open file. Stop readers first (deleting a
-  recording stops its playback).
+- FAT file locking is off (`CONFIG_FATFS_FS_LOCK=0`); `sd_storage::File`
+  tracks open files instead: a second writer (or a reader against a writer)
+  waits then fails, and `Fs::remove` / `Fs::rename` fail while the file is
+  open. Always go through `sd_storage`, and stop readers before deleting or
+  renaming (deleting a recording stops its playback first).
 - nexus_db databases are append-only logs with an in-RAM index; writes are
   cheap appends, a periodic cleanup rewrites the file. See
   `docs/nexus-db-design.md`.
