@@ -8,8 +8,8 @@ Reminders share the scheduler: same "when", different delivery. A reminder does 
 take over the device; it chimes and speaks its text over whatever is going on (see
 *Reminders*).
 
-Status: design. Step A (ringing) is next; B–D follow the same pattern as the alert
-refactor (storage, routes, dashboard) and cover alarms and reminders together.
+Status: steps A–D built (2026-09-27). Briefing alarms are the next addition
+(see *Later: briefing alarms*).
 
 ## Where we start
 
@@ -294,8 +294,8 @@ On the device, 2026-09-27:
 - **One-shot alarm:** rang on the minute and was disabled after firing.
 - **Snooze across a restart:** snoozed (1 min), rebooted; rang again on time
   from the saved `snooze_until`, which stop then cleared. While the saved
-  snooze waits, `/api/alarms/status` says `idle` (the live state is not
-  restored); step D's banner needs it.
+  snooze waited, `/api/alarms/status` said `idle`; fixed in `c9a48f2`, it now
+  reports `snoozed` (alarm id, time left) and Stop cancels it.
 - **Reminder, offline path:** chime three times 2.5 s apart; pending until
   acknowledged.
 - **Reminder, spoken:** chime, session, text turn after `setupComplete`;
@@ -303,3 +303,20 @@ On the device, 2026-09-27:
   connect, 1.5 s to the reply). The follow-up window works as usual.
 - **Not yet checked:** the 25 s no-speech fallback, a reminder due during a
   ringing alarm or mid-turn, two reminders in one turn.
+
+## Steps C and D: built
+
+- **Voice (C):** Gemini tools `set_alarm` (repeat days as words, a day for a
+  one-time alarm, label, tone by song name), `snooze_alarm`, `list_alarms`,
+  `cancel_alarm`, `set_timer`, `set_reminder`, `list_reminders`,
+  `cancel_reminder`, `acknowledge_reminders`. A voice alarm is one-time unless
+  days are given; a repeated tool call updates the same alarm instead of adding
+  another. Checked by voice: timer, weekday alarm, list, cancel, reminders for
+  tomorrow and every Monday, a reminder in two minutes (spoken 4.5 s after due).
+- **Routes (C):** `/api/alarms`, `/api/reminders`, `/api/alarms/{status,snooze,ring}`
+  and `/api/time`.
+- **Dashboard (D):** Alarms page with alarms (repeat days or a date, label,
+  library song as tone with a 15 s test ring, snooze length, volume), timers
+  (countdown, cancel), reminders (due time, acknowledge) and a clock card. The
+  ringing banner offers Stop and Snooze, and shows a snoozed alarm with Stop.
+  Home shows the next alarm, running timers and due reminders.
