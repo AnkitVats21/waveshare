@@ -292,10 +292,13 @@ void AudioEngine::stop() {
 }
 
 bool AudioEngine::waitUntilStopped(uint32_t timeoutMs) {
-    uint32_t waited = 0;
-    while (_decoderTaskHandle != nullptr && waited < timeoutMs) {
-        vTaskDelay(pdMS_TO_TICKS(5));
-        waited += 5;
+    // Sleep a whole tick per poll. At 100 Hz pdMS_TO_TICKS(5) is 0, and a zero
+    // delay never lets the lower-priority decoder task (5, vs the player's 7 on
+    // the same core) run, so the wait used to expire without it moving.
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t limit = pdMS_TO_TICKS(timeoutMs);
+    while (_decoderTaskHandle != nullptr && xTaskGetTickCount() - start < limit) {
+        vTaskDelay(1);
     }
     return _decoderTaskHandle == nullptr;
 }

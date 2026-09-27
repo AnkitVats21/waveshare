@@ -34,7 +34,7 @@ void SpeakerPlaybackTask::stop() {
   if (m_task_handle != nullptr) {
     m_running = false;
     while (m_task_handle != nullptr) {
-      vTaskDelay(pdMS_TO_TICKS(5));
+      vTaskDelay(1);   // pdMS_TO_TICKS(5) is 0 at 100 Hz and would never sleep
     }
   }
 }
