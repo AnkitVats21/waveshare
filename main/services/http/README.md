@@ -22,14 +22,14 @@ matching HTTP status.
 
 | Area | Routes |
 |---|---|
-| Music | `POST /api/music/play` (`stream_url`, `id`, `title`, `artist`, `duration`), `POST /api/music/play_local` (`id`), `POST /api/music/control` (`action`: pause, resume, toggle, stop, next, prev, seek, repeat, autoplay, caching, shuffle, clear_queue; `value`), `GET /api/music/status`, `POST /api/music/library/scan`, `DELETE /api/music/library?id=` |
+| Music | `POST /api/music/play` (`stream_url`, `id`, `title`, `artist`, `duration`), `POST /api/music/play_local` (`id`), `POST /api/music/control` (`action`: pause, resume, toggle, stop, next, prev, seek, repeat, autoplay, caching, shuffle, clear_queue; `value`), `GET /api/music/status`, `POST /api/music/library/scan` (checks the library against the card), `DELETE /api/music/library?id=` (deletes the saved file; the entry stays); the library is `GET /api/db/music` |
 | Recordings | `POST /api/recordings/play` (`id`), `POST /api/recordings/rename` (`id`, `name`), `DELETE /api/recordings?id=`; the list is `GET /api/db/recordings`; recording itself: `POST /api/audio/record/start?mode=stereo\|processed`, `POST /api/audio/record/stop` |
 | Assistant | `POST /api/assistant/wake`, `/start`, `/stop`, `GET /api/assistant/status`, `GET /api/assistant/transcript` |
 | Audio | `POST /api/audio/volume`, `/mic_gain`, `/mic_mute`, `/alert` |
 | Alerts (chimes) | `GET /api/alerts`; `POST /api/alerts/<name>` (enabled, gain, source), `/<name>/upload`, `/<name>/play`, `/<name>/reset` |
 | Alarms | `GET/POST/DELETE /api/alarms`, `POST /api/alarms/*`, `GET /api/alarms/status`; `GET/POST/DELETE /api/reminders`, `POST /api/reminders/*` |
 | Files | `GET /api/files?path=` (list), `GET /api/files/download?path=` (Range requests: 206 / 416), `POST /api/files/upload?path=` (raw body), `POST /api/files/mkdir`, `POST /api/files/rename`, `DELETE /api/files?path=`. Paths go through `sd_storage::PathPolicy`; the credential files are refused |
-| Databases | `GET /api/db/<name>` (`system`, `recordings`): the raw `.ndb` file |
+| Databases | `GET /api/db/<name>` (`system`, `recordings`, `music`): the raw `.ndb` file |
 | Config | `GET/POST /api/config/gemini` (model, voice, prompt, transcript options; the key is write-only), `GET/POST /api/config/settings` (timezone, …) |
 | Time | `GET/POST /api/time`, `POST /api/time/sync` |
 | Wi-Fi | `GET /api/wifi/status`, `GET /api/wifi/scan`, `POST /api/wifi/configure` |

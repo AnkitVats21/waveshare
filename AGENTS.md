@@ -49,7 +49,8 @@ one-line forwarding headers. New code includes the component path
    into NVS if present; `system.ndb` opened and saved state loaded.
 3. Wi-Fi (station, or the setup access point).
 4. Services: audio, orchestrator, alert player and chimes, assistant,
-   player, music service, Gemini audio pump, app controller.
+   player, music service (opens `music.ndb`; its media_aux task then checks
+   the library against the card), Gemini audio pump, app controller.
 5. Time sync (sets the timezone), then `recordings.ndb` checked against the
    card on a background task (file times are local), alarms, the sysdb
    persistence reactor, HTTP server and `/api/ws`.
@@ -82,6 +83,11 @@ lacks PSRAM and other settings, so a clean checkout (or a git worktree)
 builds firmware that asserts at boot. `sdkconfig` also holds the Wi-Fi
 password and API key: never commit it, never print it; grep single
 non-secret keys only.
+
+`partitions.csv` can only change over USB (`idf.py flash`): OTA writes an
+app slot, never the table. Keep NVS and the `www_0`/`www_1` offsets fixed
+so credentials and the dashboard survive; `idf.py flash` also resets
+otadata, so the device boots the factory slot.
 
 On a running device (`nexus.local`, or its IP):
 

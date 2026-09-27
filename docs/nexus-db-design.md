@@ -172,21 +172,22 @@ schema.
 One schema file per database under `schema/db/`, compiled by an extension of
 `tools/starc`. Tags are explicit and never reused, like protobuf field numbers.
 
+`schema/db/music.star` (the design had a codec, a cached-at time and a flags
+byte; the codec was dropped because the player sniffs the format, the time
+is when the entry was added, and the only flag left is the thumbnail):
+
 ```
 database music path="/sdcard/db/music.ndb" flush=batched {
-    // Key: the YouTube video id (e.g. "ApCL2GomTD4"), stored in the record
-    // header, not as a field. Thumbnails are /sdcard/music/thumbs/<key>.jpg.
-    collection tracks id=1 key=string cache {
-        field title:          string   tag=1
-        field artist:         string   tag=2
-        field album:          string   tag=3
-        field duration_ms:    u32      tag=4
-        field file_size:      u32      tag=5   // 0 = not cached
-        field codec:          u8       tag=6   // 0 WebM/Opus, 1 WAV, 2 Ogg/Opus
-        field cached_at:      u32      tag=7
-        field last_played_at: u32      tag=8
-        field play_count:     u32      tag=9
-        field flags:          u8       tag=10  // pinned, has thumbnail
+    collection tracks id=1 key=string cache doc=TrackDoc {   // key: video id
+        field title:          string tag=1
+        field artist:         string tag=2
+        field album:          string tag=3
+        field duration_ms:    u32    tag=4   // 0 = unknown
+        field file_size:      u32    tag=5   // 0 = not saved
+        field added_at:       u32    tag=6
+        field last_played_at: u32    tag=7
+        field play_count:     u32    tag=8
+        field thumbnail:      bool   tag=9   // thumbs/<key>.jpg exists
     }
 }
 ```
@@ -315,9 +316,9 @@ the next boot moves it into NVS and deletes it.
 
 Each step is its own commit and is tested on the device before the next.
 
-Status (2026-09-27): steps 1–4 and 6 are done; 5 (music.ndb) is next; 7 is
-done for recordings (the library still reads `catalog.db`, alarms read
-system.ndb through `/api/alarms`).
+Status (2026-09-27): steps 1–6 are done (5's card sync and dashboard are
+built but not yet run on the device); 7 is done for recordings and the
+library (alarms read system.ndb through `/api/alarms`).
 
 | Step | Commits |
 |---|---|
@@ -325,7 +326,7 @@ system.ndb through `/api/alarms`).
 | 2 engine + starc | 6dc1614 |
 | 3 system.ndb | 8b9e0f5, b5f730c, 8febe42 (alarms: db05c52, 37ae691) |
 | 4 seeking | fab45b8, 27c76f0, 7cc6f91, be3f8eb, 2916a6d; Ogg: 0a3d733 |
-| 5 music.ndb | not started |
+| 5 music.ndb | 887ad66, 066f2a5 (import), 5664669 (card sync); dashboard ae63bd5 |
 | 6 recordings.ndb | ea126e9, 2a325a6, be285df (play on the device) |
 
 1. **NVS credentials + migration.** Gemini key and Wi-Fi from NVS; import and
@@ -352,6 +353,9 @@ system.ndb through `/api/alarms`).
 - Recording documents hold name, start time, length, mode and size.
 - Thumbnails stay as files in `/sdcard/music/thumbs/<id>.jpg`; the dashboard
   loads them by track id.
-- No code for cleaning up leftover download `.tmp` files; they are removed by
-  hand.
+- Leftover download `.tmp` files are deleted by the library's card sync
+  (at boot and on a rescan), except the download in progress.
+- A library entry whose file is gone is kept as "not saved" (it holds the
+  play history); deleting from the library removes the file and thumbnail
+  only.
 - Credentials are never stored in a plain file on the card again.

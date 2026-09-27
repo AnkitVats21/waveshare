@@ -70,10 +70,16 @@ MEDIA_RX_BUF → speaker mixer (audio_core)
 - **`AudioEngine`** + **`AudioDecoderFactory`** — the decode task. The
   format is sniffed from the first bytes (EBML → WebM, `OggS` → Ogg). The
   decoded audio is downmixed to mono and resampled to the mixer rate.
-- **`CatalogDB`** — the library: one packed `TrackRecord` per saved song
-  (title, artist, length, play count, thumbnail) in
-  `/sdcard/music/catalog.db`. The dashboard's library reads that file
-  directly. It is due to move to `music.ndb` (nexus_db step 5).
+- **`CatalogDB`** — the library, `/sdcard/db/music.ndb` (schema
+  `schema/db/music.star`, code generated into `generated/`): one entry per
+  song played or found on the card, keyed by video id (title, artist,
+  length, saved-file size, plays, thumbnail flag). An entry whose file is
+  gone stays with size 0 ("not saved") and keeps its history; deleting from
+  the library removes the file and thumbnail only. `scanAndSync()` checks
+  the library against `/sdcard/music` at boot (on media_aux) and on a
+  rescan, and deletes leftover download `.tmp` files. The dashboard reads
+  the file through `GET /api/db/music`. The old `catalog.db` was imported
+  once and renamed `.bak`.
 
 ## Tests
 
