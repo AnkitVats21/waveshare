@@ -150,8 +150,16 @@ void AudioEngine::decodeAndPlayChunk(const uint8_t* payload_data, size_t payload
 void AudioEngine::runDecodeLoop() {
     ESP_LOGI(TAG, "AudioEngine decode task started");
     _isPlaying = true;
-    _decoderIdentified = false;
-    if (_decoder) _decoder->reset();
+    if (_startPending && _decoder) {
+        // Mid-file start: keep the decoder and tell it where the input begins.
+        _decoder->reset();
+        _decoder->setStreamByteOffset(_startOffset);
+        _decoder->setSeekTarget(_startTargetMs);
+    } else {
+        _decoderIdentified = false;
+        if (_decoder) _decoder->reset();
+    }
+    _startPending = false;
 
     AudioChunkHeader* current_chunk = nullptr;
     size_t current_offset = 0;
@@ -248,9 +256,48 @@ void AudioEngine::start() {
     _isPlaying = true;
     _isPaused = false;
     _decoderIdentified = false;
+    _startPending = false;
     if (_eventGroup) {
         xEventGroupSetBits(_eventGroup, ENGINE_RUNNING_BIT);
     }
+    spawnTask();
+}
+
+void AudioEngine::startAt(uint32_t byteOffset, uint32_t targetMs, bool paused,
+                          const uint8_t* head, size_t headLen) {
+    if (_decoderTaskHandle != nullptr) {
+        ESP_LOGW(TAG, "startAt while running; ignored");
+        return;
+    }
+    if (head && headLen >= 4) {
+        _decoder = AudioDecoderFactory::createDecoder(head, headLen);
+        if (_decoder) {
+            _decoder->init(_sampleRate, _channels);
+            if (_seekIndexCb) {
+                auto webm = dynamic_cast<WebMOpusDecoder*>(_decoder.get());
+                if (webm) webm->setSeekIndexCallback(_seekIndexCb);
+            }
+        }
+    }
+    if (!_decoder) {
+        start();   // nothing to keep: identify the format from the data
+        if (paused) pause();
+        return;
+    }
+    _decoderIdentified = true;
+    _startOffset = byteOffset;
+    _startTargetMs = targetMs;
+    _startPending = true;
+    _isPlaying = true;
+    if (paused) {
+        pause();
+    } else {
+        resume();
+    }
+    spawnTask();
+}
+
+bool AudioEngine::spawnTask() {
     // CRITICAL: the Opus/CELT decoder is FFT/MDCT-heavy and allocates large scratch
     // arrays on the task stack. A PSRAM stack makes every stack access go through the
     // cache and slows decode ~5-10x - enough that a single frame's worth of work
@@ -265,6 +312,12 @@ void AudioEngine::start() {
             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
         );
     }
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create the decode task");
+        _isPlaying = false;
+        return false;
+    }
+    return true;
 }
 
 void AudioEngine::pause() { 
@@ -318,7 +371,12 @@ void AudioEngine::setSeekIndexCallback(std::function<void(uint32_t, uint32_t)> c
 }
 
 uint32_t AudioEngine::getPositionMs() const {
-    return _decoder ? _decoder->getPositionMs() : 0;
+    if (!_decoder) return 0;
+    const uint32_t decoded = _decoder->getPositionMs();
+    const size_t buffered = _bm.getUsedBytes(_pcmOutId);
+    const uint32_t bufferedMs = static_cast<uint32_t>(
+        uint64_t(buffered) * 1000 / (sizeof(int16_t) * _channels * _sampleRate));
+    return decoded > bufferedMs ? decoded - bufferedMs : 0;
 }
 
 void AudioEngine::resetDecoder() {

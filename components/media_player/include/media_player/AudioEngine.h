@@ -19,6 +19,12 @@ public:
     bool initialize(int sampleRate = MIXER_SAMPLE_RATE, int channels = 1);
     
     void start();
+    // Starts decoding after the input was moved to byteOffset (a seek or a
+    // resume). With `head` (the file's first bytes) the decoder is picked from
+    // it; without, the current one is kept. Audio before targetMs is dropped.
+    // Only while stopped.
+    void startAt(uint32_t byteOffset, uint32_t targetMs, bool paused,
+                 const uint8_t* head = nullptr, size_t headLen = 0);
     void stop();
     // Block (bounded) until the decode task has fully exited and released any
     // ring-buffer items it held. Returns true if it stopped within timeoutMs.
@@ -27,6 +33,8 @@ public:
     void resume();
     bool isPlaying() const { return _isPlaying; }
 
+    // What is playing now: the decoder's position minus the decoded audio
+    // still waiting in the output ring.
     uint32_t getPositionMs() const;
     void resetDecoder();
     void setStreamByteOffset(uint32_t offset);
@@ -56,6 +64,12 @@ private:
     int _sampleRate;
     int _channels;
 
+    // startAt: applied to the decoder when the task starts.
+    volatile bool _startPending = false;
+    uint32_t _startOffset = 0;
+    uint32_t _startTargetMs = 0;
+
+    bool spawnTask();
     static void decoderTaskThunk(void* pvParameters);
     void runDecodeLoop();
 

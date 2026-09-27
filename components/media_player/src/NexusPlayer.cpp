@@ -3,6 +3,8 @@
 #include "media_player/CatalogDB.h"
 #include "media_player/MusicPlaybackService.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include <cstring>
 #include <algorithm>
 #include <cstdlib>
@@ -84,7 +86,8 @@ bool NexusPlayer::begin() {
 
     AudioOrchestrator::getInstance().addObserver(this);
     _audioEngine.setSeekIndexCallback([this](uint32_t timecodeMs, uint32_t byteOffset) {
-        PlayerLock lock(_mutex);
+        // Not the player mutex: a seek holds it while waiting for this task to stop.
+        std::lock_guard<std::mutex> lock(_sessionSeekTableMutex);
         if (_sessionSeekTable.size() < 100) {
             _sessionSeekTable.push_back({timecodeMs, byteOffset});
         }
@@ -204,7 +207,12 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
     strncpy(_activeSongId, songId, sizeof(_activeSongId) - 1);
     _activeSongId[sizeof(_activeSongId) - 1] = '\0';
     _activeDownloadUrl = downloadUrl ? downloadUrl : "";
-    _sessionSeekTable.clear();
+    {
+        std::lock_guard<std::mutex> lock(_sessionSeekTableMutex);
+        _sessionSeekTable.clear();
+    }
+    _cues.clear();
+    _localSource = false;
 
     // Flush buffers before starting new stream
     BufferManager::getInstance().flush(_playbackId);
@@ -230,20 +238,19 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
             return;
         }
 
+        _localSource = true;
+        size_t headLen = 0;
+        uint8_t* head = loadLocalIndex(headLen);
         if (startPosMs > 0) {
-            uint32_t nearestTime = 0;
-            uint32_t nearestOffset = 0;
-            bool hasOffset = CatalogDB::getInstance().lookupSeekEntry(songId, startPosMs, nearestTime, nearestOffset);
-            if (!hasOffset) {
-                nearestOffset = (startPosMs / 1000) * 16000;
-            }
-            _audioEngine.resetDecoder();
-            _audioEngine.setStreamByteOffset(nearestOffset);
-            _storageManager.seekTo(nearestOffset);
+            const uint32_t offset = localSeekOffset(startPosMs);
+            ESP_LOGI(TAG, "Starting at %u ms: byte %u", (unsigned)startPosMs, (unsigned)offset);
+            _storageManager.seekTo(offset);
             BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
+            _audioEngine.startAt(offset, startPosMs, false, head, headLen);
+        } else {
+            _audioEngine.start();
         }
-
-        _audioEngine.start();
+        heap_caps_free(head);
         EmbeddedSysDb::getInstance().mutate([songId, startPosMs](SystemState& s) {
             s.media.state = MediaPlaybackState::PLAYING;
             s.media.output_target = MediaOutputTarget::LOCAL;
@@ -615,10 +622,70 @@ void NexusPlayer::yieldAlarm() {
 }
 
 void NexusPlayer::commitSessionSeekTable() {
-    if (_activeSongId[0] != '\0' && !_sessionSeekTable.empty()) {
-        CatalogDB::getInstance().setSeekTable(_activeSongId, _sessionSeekTable.data(), _sessionSeekTable.size());
-        _sessionSeekTable.clear();
+    std::vector<SeekEntry> table;
+    {
+        std::lock_guard<std::mutex> lock(_sessionSeekTableMutex);
+        table.swap(_sessionSeekTable);
     }
+    if (_activeSongId[0] != '\0' && !table.empty()) {
+        CatalogDB::getInstance().setSeekTable(_activeSongId, table.data(), table.size());
+    }
+}
+
+uint8_t* NexusPlayer::loadLocalIndex(size_t& headLen) {
+    const int64_t t0 = esp_timer_get_time();
+    _cues.clear();
+    headLen = 0;
+    size_t want = 4096;
+    uint8_t* head = nullptr;
+    Media::WebmCues index;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        uint8_t* grown = static_cast<uint8_t*>(heap_caps_realloc(head, want, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!grown) break;
+        head = grown;
+        headLen = _storageManager.readHead(head, want);
+        index = Media::parseWebmCues(head, headLen);
+        if (index.status != Media::CuesStatus::NeedMore || headLen < want) break;
+        want = index.need;
+    }
+    const char* status = index.status == Media::CuesStatus::Found      ? "found"
+                         : index.status == Media::CuesStatus::NotFound ? "none"
+                         : index.status == Media::CuesStatus::NeedMore ? "cut off"
+                                                                       : "not WebM";
+    if (index.status == Media::CuesStatus::Found) _cues = std::move(index.cues);
+    ESP_LOGI(TAG, "Seek index: %s, %u cues, %u header bytes, %lld us", status, (unsigned)_cues.size(),
+             (unsigned)headLen, (long long)(esp_timer_get_time() - t0));
+    if (headLen == 0) {
+        heap_caps_free(head);
+        return nullptr;
+    }
+    return head;
+}
+
+uint32_t NexusPlayer::localSeekOffset(uint32_t positionMs) {
+    if (!_cues.empty()) return Media::cueAtOrBefore(_cues, positionMs).offset;
+    // No index: estimate from the average bitrate, aiming 5 s early so the
+    // decoder starts before the target and skips forward to it.
+    constexpr uint32_t EARLY_MS = 5000;
+    const uint32_t durationMs = EmbeddedSysDb::getInstance().snapshot().media.duration_ms;
+    const size_t size = _storageManager.fileSize();
+    if (durationMs == 0 || size == 0) return 0;
+    const uint32_t aim = positionMs > EARLY_MS ? positionMs - EARLY_MS : 0;
+    return static_cast<uint32_t>(uint64_t(aim) * size / durationMs);
+}
+
+void NexusPlayer::haltDecoder() {
+    auto& bm = BufferManager::getInstance();
+    _audioEngine.stop();
+    bm.flush(Buffers::MEDIA_RX_BUF);   // release the decoder's output backpressure
+    bm.flush(_playbackId);
+    // Wake a decoder parked on an empty input ring.
+    AudioChunkHeader eof_header = {ChunkType::EOF_STREAM, 0};
+    bm.send(_playbackId, &eof_header, sizeof(eof_header));
+    if (!_audioEngine.waitUntilStopped()) {
+        ESP_LOGW(TAG, "Decode task did not stop for the seek");
+    }
+    bm.flush(Buffers::MEDIA_RX_BUF);
 }
 
 uint32_t NexusPlayer::getPositionMs() const {
@@ -632,6 +699,20 @@ void NexusPlayer::seekTo(uint32_t positionMs) {
         return;
     }
 
+    if (_localSource) {
+        // Stop the decoder, move the reader, start again at the new position:
+        // nothing read or decoded before the seek reaches the speaker.
+        const int64_t t0 = esp_timer_get_time();
+        const bool paused = _state == STATE_PAUSED;
+        const uint32_t offset = localSeekOffset(positionMs);
+        haltDecoder();
+        _storageManager.seekTo(offset);
+        _audioEngine.startAt(offset, positionMs, paused);
+        ESP_LOGI(TAG, "Seek to %u ms: byte %u (%s), set up in %lld us", (unsigned)positionMs, (unsigned)offset,
+                 _cues.empty() ? "estimate" : "index", (long long)(esp_timer_get_time() - t0));
+        return;
+    }
+
     uint32_t nearestTime = 0;
     uint32_t nearestOffset = 0;
     bool hasOffset = CatalogDB::getInstance().lookupSeekEntry(_activeSongId, positionMs, nearestTime, nearestOffset);
@@ -639,12 +720,7 @@ void NexusPlayer::seekTo(uint32_t positionMs) {
     ESP_LOGI(TAG, "Seek to %u ms (nearest: time=%u ms, offset=%u, resolved=%d)",
              (unsigned int)positionMs, (unsigned int)nearestTime, (unsigned int)nearestOffset, (int)hasOffset);
 
-    if (_state == STATE_LOCAL_PLAYBACK) {
-        _audioEngine.resetDecoder();
-        _audioEngine.setStreamByteOffset(nearestOffset);
-        _storageManager.seekTo(nearestOffset);
-        BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
-    } else if (_state == STATE_STREAMING_AND_CACHING) {
+    if (_state == STATE_STREAMING_AND_CACHING) {
         if (_activeDownloadUrl.empty()) {
             ESP_LOGW(TAG, "Cannot seek online stream: stream URL empty");
             return;
@@ -657,12 +733,7 @@ void NexusPlayer::seekTo(uint32_t positionMs) {
 
         _streamManager.beginStreamingFrom(_activeDownloadUrl.c_str(), nearestOffset, false);
     } else if (_state == STATE_PAUSED) {
-        if (_storageManager.fileExists(_activeSongId)) {
-            _audioEngine.resetDecoder();
-            _audioEngine.setStreamByteOffset(nearestOffset);
-            _storageManager.seekTo(nearestOffset);
-            BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
-        } else if (!_activeDownloadUrl.empty()) {
+        if (!_activeDownloadUrl.empty()) {
             _streamManager.stopStreaming();
             _audioEngine.resetDecoder();
             _audioEngine.setStreamByteOffset(nearestOffset);

@@ -17,8 +17,15 @@ public:
     // Cache Hit Path (local file read and playback)
     bool openFileForReading(const char* songId);
     
-    // Seek active playback stream
+    // Moves local playback to byteOffset. The playback ring is flushed and a
+    // chunk read before the move is dropped, so everything after the call
+    // comes from the new position; a reader that already hit EOF restarts.
     bool seekTo(uint32_t byteOffset);
+
+    // Reads up to `len` bytes from the start of the local file (its seek
+    // index) without moving playback. Returns the bytes read.
+    size_t readHead(uint8_t* dst, size_t len);
+    size_t fileSize();
     
     void closeActiveFile();
     void setDownloadCompleteSignal(bool complete) { _downloadComplete = complete; }
@@ -26,6 +33,10 @@ public:
 private:
     SemaphoreHandle_t _streamMutex = nullptr;
     bool getValidCachedPath(const char* songId, char* outPath, size_t maxLen);
+    bool spawnReader();
+    // Local reader: sends a chunk unless a seek moved the file since it was read.
+    enum class Send { Sent, Moved, Stopped };
+    Send sendUnlessMoved(const uint8_t* buf, size_t len, uint32_t gen);
 
     BufferManager& _bm;
     BufferManager::BufferId _playbackId;
@@ -47,6 +58,12 @@ private:
     TaskHandle_t _readerTaskHandle = nullptr;
     
     bool _isWritingMode = false;
+
+    // Bumped by seekTo (under _streamMutex); the local reader drops chunks
+    // read under an older value.
+    uint32_t _readGen = 0;
+    // The local reader sent EOF and is exiting; seekTo restarts it.
+    bool _readerAtEof = false;
     
     static void sdWriterTaskThunk(void* pvParameters);
     static void sdReaderTaskThunk(void* pvParameters);

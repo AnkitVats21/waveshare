@@ -4,10 +4,12 @@
 #include "StreamManager.h"
 #include "AudioEngine.h"
 #include "CatalogDB.h"
+#include "WebmSeek.h"
 #include "IPlaybackObserver.h"
 #include "common/ReactorTask.h"
 #include "freertos/semphr.h"
 #include <functional>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -104,7 +106,20 @@ private:
     // Active seek table tracking
     std::string _activeDownloadUrl;
     std::vector<SeekEntry> _sessionSeekTable;
+    std::mutex _sessionSeekTableMutex;   // filled from the decode task
     void commitSessionSeekTable();
+
+    // Local playback: the file's seek index (WebM Cues), empty if it has none.
+    bool _localSource = false;
+    std::vector<Media::CuePoint> _cues;
+    // Reads the index; returns the head bytes (PSRAM, caller frees) for the
+    // decoder to identify the format, or nullptr.
+    uint8_t* loadLocalIndex(size_t& headLen);
+    // Where to start reading for a seek to positionMs in the local file.
+    uint32_t localSeekOffset(uint32_t positionMs);
+    // Stops the decode task and empties the rings around it, keeping the
+    // decoder for startAt.
+    void haltDecoder();
 
     // Alarm ownership
     volatile bool _alarmOwner = false;

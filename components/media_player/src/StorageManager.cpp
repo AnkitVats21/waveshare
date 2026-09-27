@@ -141,8 +141,17 @@ bool StorageManager::openFileForReading(const char* songId) {
     _currentSongId[sizeof(_currentSongId) - 1] = '\0';
     _downloadComplete = true; // Local playback is already complete
     _isWritingMode = false;
-    _readerTaskRunning = true;
+    _readerAtEof = false;
 
+    if (!spawnReader()) {
+        closeActiveFile();
+        return false;
+    }
+    return true;
+}
+
+bool StorageManager::spawnReader() {
+    _readerTaskRunning = true;
     // Spawn concurrent SD Reader task on Core 0 (off audio DSP core)
     BaseType_t ret = xTaskCreatePinnedToCoreWithCaps(
         sdReaderTaskThunk, "sd_reader_task", ThreadConfig::StackSize::STACK_STORAGE, this,
@@ -151,10 +160,9 @@ bool StorageManager::openFileForReading(const char* songId) {
     );
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to spawn sd_reader_task");
-        closeActiveFile();
+        _readerTaskRunning = false;
         return false;
     }
-
     return true;
 }
 
@@ -212,6 +220,7 @@ void StorageManager::closeActiveFile() {
     }
 
     _isWritingMode = false;
+    _readerAtEof = false;
     _downloadComplete = false;
     _bytesWritten = 0;
     _expectedBytes = 0;
@@ -224,12 +233,63 @@ bool StorageManager::seekTo(uint32_t byteOffset) {
 
     ESP_LOGI(TAG, "Seeking local stream to byte offset: %u", (unsigned int)byteOffset);
     _readFile.seek(byteOffset);
-
+    _readGen++;
     // Flush any pending data in playback buffer to avoid playing stale audio
     _bm.flush(_playbackId);
+    const bool restart = _readerAtEof;
+    _readerAtEof = false;
 
     if (_streamMutex) xSemaphoreGive(_streamMutex);
+
+    if (restart) {
+        // The reader sent EOF and is exiting; start a new one at the new position.
+        for (int i = 0; i < 50 && _readerTaskHandle != nullptr; ++i) vTaskDelay(pdMS_TO_TICKS(10));
+        if (_readerTaskHandle != nullptr) {
+            ESP_LOGW(TAG, "Reader did not exit after EOF; seek not restarted");
+            return false;
+        }
+        return spawnReader();
+    }
     return true;
+}
+
+size_t StorageManager::readHead(uint8_t* dst, size_t len) {
+    if (!_readFile || !dst) return 0;
+    if (_streamMutex) xSemaphoreTake(_streamMutex, portMAX_DELAY);
+    const long pos = _readFile.tell();
+    size_t got = 0;
+    if (pos >= 0 && _readFile.seek(0)) {
+        got = _readFile.read(dst, len);
+        _readFile.seek(pos);
+    }
+    if (_streamMutex) xSemaphoreGive(_streamMutex);
+    return got;
+}
+
+size_t StorageManager::fileSize() {
+    if (!_readFile) return 0;
+    const long size = _readFile.size();
+    return size > 0 ? size_t(size) : 0;
+}
+
+StorageManager::Send StorageManager::sendUnlessMoved(const uint8_t* buf, size_t len, uint32_t gen) {
+    // Holding the lock across the send keeps a seek from flushing the ring
+    // between the check and the send; the short timeout keeps seekTo waiting
+    // at most ~20 ms when the ring is full.
+    while (_readerTaskRunning) {
+        if (_streamMutex) xSemaphoreTake(_streamMutex, portMAX_DELAY);
+        if (gen != _readGen) {
+            if (_streamMutex) xSemaphoreGive(_streamMutex);
+            return Send::Moved;
+        }
+        const bool sent = _bm.send(_playbackId, buf, len, pdMS_TO_TICKS(20));
+        if (sent && reinterpret_cast<const AudioChunkHeader*>(buf)->type == ChunkType::EOF_STREAM) {
+            _readerAtEof = true;
+        }
+        if (_streamMutex) xSemaphoreGive(_streamMutex);
+        if (sent) return Send::Sent;
+    }
+    return Send::Stopped;
 }
 
 void StorageManager::sdWriterTaskThunk(void* pvParameters) {
@@ -362,25 +422,23 @@ void StorageManager::runReaderTaskLoop() {
             }
         } else {
             // Standard Local Cache Hit Playback
-            size_t read_bytes = 0;
             if (_streamMutex) xSemaphoreTake(_streamMutex, portMAX_DELAY);
-            read_bytes = _readFile.read(payload, AUDIO_CHUNK_SIZE);
+            const uint32_t gen = _readGen;
+            size_t read_bytes = _readFile.read(payload, AUDIO_CHUNK_SIZE);
             if (_streamMutex) xSemaphoreGive(_streamMutex);
             if (read_bytes > 0) {
                 header->type = ChunkType::DATA;
                 header->size = read_bytes;
-                // Wait indefinitely if player buffer is full to enforce backpressure
-                bool sent = false;
-                while (_readerTaskRunning && !sent) {
-                    sent = _bm.send(_playbackId, read_buf, sizeof(AudioChunkHeader) + read_bytes, pdMS_TO_TICKS(100));
-                }
+                // Backpressure: waits while the player buffer is full.
+                sendUnlessMoved(read_buf, sizeof(AudioChunkHeader) + read_bytes, gen);
             } else {
-                // EOF reached
-                ESP_LOGI(TAG, "Reader Task: Local File EOF reached");
                 header->type = ChunkType::EOF_STREAM;
                 header->size = 0;
-                _bm.send(_playbackId, read_buf, sizeof(AudioChunkHeader), portMAX_DELAY);
-                break;
+                // A seek after this read makes the EOF stale: keep reading.
+                if (sendUnlessMoved(read_buf, sizeof(AudioChunkHeader), gen) == Send::Sent) {
+                    ESP_LOGI(TAG, "Reader Task: Local File EOF reached");
+                    break;
+                }
             }
         }
     }
