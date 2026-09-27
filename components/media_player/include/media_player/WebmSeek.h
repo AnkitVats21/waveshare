@@ -31,6 +31,7 @@ struct WebmCues {
     CuesStatus status = CuesStatus::NotFound;
     std::vector<CuePoint> cues;   // ascending time and offset
     uint32_t need = 0;            // NeedMore: a prefix length that gets further
+    uint32_t duration_ms = 0;     // Found or NotFound: the Segment Info Duration, 0 if absent
 };
 
 // Longest index accepted: 64 KB of cues, about 22 h of audio at 10 s per cluster.

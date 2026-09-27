@@ -64,4 +64,10 @@ public:
      * The input may start anywhere in the file, not only at a frame boundary.
      */
     virtual void setSeekTarget(uint32_t positionMs) {}
+
+    /**
+     * @brief The first bytes of the file, for a decoder that starts mid-file
+     * without having read them (Ogg keeps its header pages for seeks).
+     */
+    virtual void setStreamHead(const uint8_t* head, size_t len) {}
 };

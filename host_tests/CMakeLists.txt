@@ -57,6 +57,7 @@ nanobind_add_module(waveshare_host
     ${NDB_GEN_DIR}/TestdbDb.generated.cpp
     bindings/bind_media.cpp
     ../components/media_player/src/WebmSeek.cpp
+    ../components/media_player/src/OggSeek.cpp
     ../main/app/audio/recording/RecordingProbe.cpp
 )
 

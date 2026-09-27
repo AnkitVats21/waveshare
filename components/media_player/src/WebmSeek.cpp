@@ -11,6 +11,7 @@ constexpr uint32_t ID_EBML = 0x1A45DFA3;
 constexpr uint32_t ID_SEGMENT = 0x18538067;
 constexpr uint32_t ID_INFO = 0x1549A966;
 constexpr uint32_t ID_TIMECODE_SCALE = 0x2AD7B1;
+constexpr uint32_t ID_DURATION = 0x4489;
 constexpr uint32_t ID_CUES = 0x1C53BB6B;
 constexpr uint32_t ID_CUE_POINT = 0xBB;
 constexpr uint32_t ID_CUE_TIME = 0xB3;
@@ -62,6 +63,25 @@ bool readUint(const uint8_t* b, const Element& e, uint64_t& out) {
     out = 0;
     for (size_t i = 0; i < e.size; ++i) out = (out << 8) | b[e.data + i];
     return true;
+}
+
+// A 4- or 8-byte big-endian IEEE float.
+bool readFloat(const uint8_t* b, const Element& e, double& out) {
+    if (e.size == 4) {
+        uint32_t bits = 0;
+        for (size_t i = 0; i < 4; ++i) bits = (bits << 8) | b[e.data + i];
+        float f;
+        memcpy(&f, &bits, sizeof(f));
+        out = f;
+        return true;
+    }
+    if (e.size == 8) {
+        uint64_t bits = 0;
+        for (size_t i = 0; i < 8; ++i) bits = (bits << 8) | b[e.data + i];
+        memcpy(&out, &bits, sizeof(out));
+        return true;
+    }
+    return false;
 }
 
 // Walks the children of [p, end), calling fn(child) for each; fn returns false
@@ -140,16 +160,23 @@ WebmCues parseWebmCues(const uint8_t* data, size_t len) {
 
     const size_t segEnd = seg.size == UNKNOWN_SIZE ? len : size_t(std::min<uint64_t>(seg.data + seg.size, len));
     uint64_t scale = 1000000;   // ns per timecode unit (WebM default: 1 ms)
+    double duration = 0;        // timecode units
+    // Found and NotFound carry the duration read so far.
+    auto withDuration = [&](WebmCues out) {
+        const double ms = duration * double(scale) / 1e6;
+        if (ms > 0 && ms < double(UINT32_MAX)) out.duration_ms = uint32_t(ms + 0.5);
+        return out;
+    };
     size_t p = seg.data;
     while (true) {
         Element e;
         r = readElement(data, p, segEnd, e);
         if (r == Read::Short) {
-            if (seg.size != UNKNOWN_SIZE && p >= seg.data + seg.size) return status(CuesStatus::NotFound);
+            if (seg.size != UNKNOWN_SIZE && p >= seg.data + seg.size) return withDuration(status(CuesStatus::NotFound));
             return needUpTo(p + MAX_HEADER);
         }
         if (r == Read::Bad) return status(CuesStatus::Invalid);
-        if (e.id == ID_CLUSTER) return status(CuesStatus::NotFound);   // audio starts: no index up front
+        if (e.id == ID_CLUSTER) return withDuration(status(CuesStatus::NotFound));   // audio starts: no index up front
         if (e.size == UNKNOWN_SIZE) return status(CuesStatus::Invalid);
 
         const uint64_t end = e.data + e.size;
@@ -157,7 +184,7 @@ WebmCues parseWebmCues(const uint8_t* data, size_t len) {
             if (end > len) return needUpTo(end);
             std::vector<RawCue> raw;
             if (!parseCues(data, e, raw)) return status(CuesStatus::Invalid);
-            if (raw.empty()) return status(CuesStatus::NotFound);
+            if (raw.empty()) return withDuration(status(CuesStatus::NotFound));
 
             WebmCues out;
             out.cues.reserve(raw.size());
@@ -173,12 +200,14 @@ WebmCues parseWebmCues(const uint8_t* data, size_t len) {
                 out.cues.push_back({uint32_t(ms), uint32_t(offset)});
             }
             out.status = CuesStatus::Found;
-            return out;
+            return withDuration(std::move(out));
         }
         if (e.id == ID_INFO) {
             if (end > len) return needUpTo(end);
             bool ok = forEachChild(data, e.data, size_t(end), [&](const Element& f) {
                 if (f.id == ID_TIMECODE_SCALE) return readUint(data, f, scale) && scale > 0;
+                // A bad Duration only loses the length, not the index.
+                if (f.id == ID_DURATION && (!readFloat(data, f, duration) || !(duration > 0))) duration = 0;
                 return true;
             });
             if (!ok) return status(CuesStatus::Invalid);

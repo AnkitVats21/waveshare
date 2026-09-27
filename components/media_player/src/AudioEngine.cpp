@@ -266,6 +266,7 @@ void AudioEngine::startAt(uint32_t targetMs, bool paused, const uint8_t* head, s
         _decoder = AudioDecoderFactory::createDecoder(head, headLen);
         if (_decoder) {
             _decoder->init(_sampleRate, _channels);
+            _decoder->setStreamHead(head, headLen);
         }
     }
     if (!_decoder) {

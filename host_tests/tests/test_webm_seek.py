@@ -13,7 +13,7 @@ import waveshare_host as wh
 
 DATA = Path(__file__).parent / "data"
 
-# 7:50 track, 48 clusters.
+# 7:54 track, 48 clusters.
 CUES_4DS = [(0, 1079)] + [(10001 + 10000 * i, o) for i, o in enumerate([
     156506, 324542, 481269, 651265, 820727, 979361, 1138237, 1304872, 1472942,
     1643130, 1813208, 1967568, 2121197, 2279596, 2456082, 2629042, 2793751,
@@ -291,3 +291,51 @@ def test_no_cluster_keeps_a_tail_that_could_start_one(tail):
 def test_short_input():
     assert wh.find_cluster(b"") == (False, 0)
     assert wh.find_cluster(b"\x1f\x43") == (False, 0)
+
+
+# ── Duration (Segment Info) ──────────────────────────────────────────────────
+
+import struct
+
+
+def info_with_duration(duration, scale=1000000, width=8):
+    fmt = ">d" if width == 8 else ">f"
+    return el(0x1549A966, uint(0x2AD7B1, scale) + el(0x4489, struct.pack(fmt, duration)))
+
+
+# Each past its last cue (470.0 s and 210.0 s), within one 10 s cluster.
+@pytest.mark.parametrize("name,expected_ms", [("4dsFQFCvVGU.head.webm", 474_421), ("2SUwOgmvzK4.head.webm", 217_361)])
+def test_real_file_duration(name, expected_ms):
+    assert wh.webm_duration_ms((DATA / name).read_bytes()) == expected_ms
+
+
+def test_duration_double_and_float():
+    data, _ = webm(info_with_duration(123456.0), CLUSTER)
+    assert wh.webm_duration_ms(data) == 123456
+    data, _ = webm(info_with_duration(2500.0, width=4), CLUSTER)
+    assert wh.webm_duration_ms(data) == 2500
+
+
+def test_duration_uses_timecode_scale():
+    # Scale 1 us per unit: 5_000_000 units = 5 s. Scale is read after Duration here.
+    payload = el(0x4489, struct.pack(">d", 5_000_000.0)) + uint(0x2AD7B1, 1000)
+    data, _ = webm(el(0x1549A966, payload), CLUSTER)
+    assert wh.webm_duration_ms(data) == 5000
+
+
+def test_duration_carried_with_cues():
+    data, seg = webm(info_with_duration(20000.0), el(0x1C53BB6B, cue(0, 100) + cue(10000, 200)), CLUSTER)
+    status, cues, _ = parse(data)
+    assert status == "found" and len(cues) == 2
+    assert wh.webm_duration_ms(data) == 20000
+
+
+def test_duration_absent_or_bad():
+    data, _ = webm(info(), CLUSTER)
+    assert wh.webm_duration_ms(data) == 0
+    bad = el(0x1549A966, uint(0x2AD7B1, 1000000) + el(0x4489, b"\x00\x00"))   # 2-byte float
+    data, _ = webm(bad, CLUSTER)
+    assert parse(data)[0] == "not_found"   # the index is unaffected
+    assert wh.webm_duration_ms(data) == 0
+    data, _ = webm(info_with_duration(-5.0), CLUSTER)
+    assert wh.webm_duration_ms(data) == 0

@@ -9,6 +9,7 @@ idf_component_register(
         "src/InvidiousInstanceResolver.cpp"
         "src/WebMOpusDecoder.cpp"
         "src/WebmSeek.cpp"
+        "src/OggSeek.cpp"
         "src/OggOpusDecoderStrategy.cpp"
         "src/AudioDecoderFactory.cpp"
         "src/MusicPlaybackService.cpp"
