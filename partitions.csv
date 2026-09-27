@@ -4,19 +4,22 @@
 # Layout:
 #   0x0000  - 0x8FFF   : bootloader
 #   0x9000  - 0xFFFF   : partition table + NVS + phy
-#   0x10000 - 0xA90000 : app partitions (factory, ota_0, ota_1 @ 3.5MB each)
-#   0xA90000+          : data, coredump, wake models (4MB),
-#                        web frontend A/B slots (www_0/www_1, 672KB each)
+#   0x10000 - 0xD90000 : app partitions (factory, ota_0, ota_1 @ 4.5MB each)
+#   0xD90000+          : data, coredump, wake models (1MB; srmodels.bin is
+#                        ~0.3MB), web frontend A/B slots (www_0/www_1, 672KB each)
+#
+# Changing this table needs a USB flash (OTA can't rewrite it). NVS and the
+# www slots keep their offsets, so credentials and the dashboard survive.
 #
 # Name,      Type,  SubType,  Offset,    Size,     Flags
 nvs,         data,  nvs,      0x9000,    0x6000,
 phy_init,    data,  phy,      0xF000,    0x1000,
-factory,     app,   factory,  0x10000,   0x380000,
-ota_0,       app,   ota_0,    0x390000,  0x380000,
-ota_1,       app,   ota_1,    0x710000,  0x380000,
-otadata,     data,  ota,      0xA90000,  0x2000,
-nvs_keys,    data,  nvs_keys, 0xA92000,  0x1000,
-coredump,    data,  coredump, 0xA93000,  0x10000,
-model,       data,  spiffs,   0xAB0000,  0x400000,
+factory,     app,   factory,  0x10000,   0x480000,
+ota_0,       app,   ota_0,    0x490000,  0x480000,
+ota_1,       app,   ota_1,    0x910000,  0x480000,
+otadata,     data,  ota,      0xD90000,  0x2000,
+nvs_keys,    data,  nvs_keys, 0xD92000,  0x1000,
+coredump,    data,  coredump, 0xD93000,  0x10000,
+model,       data,  spiffs,   0xDB0000,  0x100000,
 www_0,       data,  undefined,0xEB0000,  0xA8000,
 www_1,       data,  undefined,0xF58000,  0xA8000,
