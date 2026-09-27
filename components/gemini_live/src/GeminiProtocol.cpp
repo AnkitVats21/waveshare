@@ -187,7 +187,10 @@ bool GeminiProtocol::startClientConnection() {
 }
 
 void GeminiProtocol::closeConnection() {
-    if (sysdb.snapshot().assistant.ws_state == WsState::DISCONNECTED) {
+    // Check the client, not ws_state: a failed connect reports DISCONNECTED
+    // while the client lives on and reconnects every reconnect_timeout_ms,
+    // keeping its task and a TLS session (and a Gemini session) while idle.
+    if (!m_client && sysdb.snapshot().assistant.ws_state == WsState::DISCONNECTED) {
         return;
     }
     LOGI_NET("Closing WebSocket connection...");
