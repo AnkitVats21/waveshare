@@ -61,6 +61,7 @@ Generated at build time from schemas; edit the schema, not the output:
 - `schema/sysdb.star` → `components/core_sysdb/.../SystemState.generated.h`
   and its codec (starc).
 - `schema/db/*.star` → `main/services/storage/generated/*Db.generated.{h,cpp}`
+  (system, recordings) and `components/media_player/generated/` (music)
   (starc; the outputs are committed). The dashboard's `src/lib/ndb_schema.js`
   comes from the same schemas (`npm run ndb` there).
 - `components/gemini_live/schema/gemini_skills_schema.json` →

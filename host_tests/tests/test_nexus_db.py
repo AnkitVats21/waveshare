@@ -508,6 +508,12 @@ def test_generator_rejects_bad_schemas(bad, msg):
         ndb_gen.parse(bad, "bad.star")
 
 
+def test_all_schemas_parse():
+    paths = sorted((ROOT / "schema/db").glob("*.star"))
+    names = [ndb_gen.parse(p.read_text(), p.name).name for p in paths]
+    assert "music" in names and len(set(names)) == len(names)
+
+
 def test_system_schema_bindings():
     s = ndb_gen.parse((ROOT / "schema/db/system.star").read_text(), "system.star")
     state = next(c for c in s.collections if c.name == "state")
