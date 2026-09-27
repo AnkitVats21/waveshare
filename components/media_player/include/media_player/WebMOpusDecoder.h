@@ -53,6 +53,10 @@ private:
     // Exact seek: blocks before the target are skipped (Media::seekAction).
     bool _seeking = false;
     uint32_t _seekTargetMs = 0;
+    // A mid-file start may land inside a cluster (a seek by estimate): drop
+    // bytes until the next Cluster before parsing.
+    bool _findCluster = false;
+    size_t _bytesBeforeCluster = 0;
 
     SeekIndexCallback _seekIndexCb = nullptr;
 

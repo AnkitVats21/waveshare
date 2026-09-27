@@ -100,6 +100,8 @@ void WebMOpusDecoder::reset() {
     _samplesSinceBlock = 0;
     _seeking = false;
     _seekTargetMs = 0;
+    _findCluster = false;
+    _bytesBeforeCluster = 0;
     initOpusDecoder();
 }
 
@@ -114,6 +116,8 @@ void WebMOpusDecoder::setSeekTarget(uint32_t positionMs) {
     _seekTargetMs = positionMs;
     _blockTimeMs = positionMs;   // report the target until the first block is read
     _samplesSinceBlock = 0;
+    _findCluster = positionMs > 0;
+    _bytesBeforeCluster = 0;
 }
 
 uint32_t WebMOpusDecoder::getPositionMs() const {
@@ -167,6 +171,17 @@ DecodeResult WebMOpusDecoder::decode(const uint8_t* inData, size_t inLen,
 }
 
 DecodeResult WebMOpusDecoder::processBuffer(int16_t* outPcm, size_t maxSamples, size_t& samplesDecoded) {
+    if (_findCluster) {
+        const Media::ClusterScan scan = Media::findCluster(_buffer.data(), _buffer.size());
+        _buffer.erase(_buffer.begin(), _buffer.begin() + scan.at);
+        _bytesBeforeCluster += scan.at;
+        if (!scan.found) return DecodeResult::NEED_MORE_DATA;
+        _findCluster = false;
+        if (_bytesBeforeCluster > 0) {
+            ESP_LOGI(TAG, "Skipped %u bytes to the next cluster", (unsigned)_bytesBeforeCluster);
+        }
+    }
+
     size_t offset = 0;
 
     while (offset < _buffer.size()) {

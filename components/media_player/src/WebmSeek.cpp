@@ -1,6 +1,7 @@
 #include "media_player/WebmSeek.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace Media {
 
@@ -16,6 +17,7 @@ constexpr uint32_t ID_CUE_TIME = 0xB3;
 constexpr uint32_t ID_CUE_TRACK_POSITIONS = 0xB7;
 constexpr uint32_t ID_CUE_CLUSTER_POSITION = 0xF1;
 constexpr uint32_t ID_CLUSTER = 0x1F43B675;
+constexpr uint8_t ID_CLUSTER_TIMECODE = 0xE7;
 
 constexpr uint64_t UNKNOWN_SIZE = UINT64_MAX;
 
@@ -204,6 +206,20 @@ bool readBlockTimecode(const uint8_t* payload, size_t len, int16_t& relative) {
     if (trackLen > 8 || trackLen + 3 > len) return false;
     relative = int16_t(uint16_t(payload[trackLen]) << 8 | payload[trackLen + 1]);
     return true;
+}
+
+ClusterScan findCluster(const uint8_t* data, size_t len) {
+    static constexpr uint8_t id[4] = {ID_CLUSTER >> 24, (ID_CLUSTER >> 16) & 0xFF, (ID_CLUSTER >> 8) & 0xFF,
+                                      ID_CLUSTER & 0xFF};
+    for (size_t i = 0; i + sizeof(id) <= len; ++i) {
+        if (memcmp(data + i, id, sizeof(id)) != 0) continue;
+        Element cluster;
+        const Read r = readElement(data, i, len, cluster);
+        if (r == Read::Short || (r == Read::Ok && cluster.data >= len)) return {false, i};
+        if (r == Read::Ok && data[cluster.data] == ID_CLUSTER_TIMECODE) return {true, i};
+    }
+    // Keep a tail that could be the start of a split ID.
+    return {false, len > sizeof(id) - 1 ? len - (sizeof(id) - 1) : 0};
 }
 
 } // namespace Media

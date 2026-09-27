@@ -111,6 +111,8 @@ private:
 
     // Local playback: the file's seek index (WebM Cues), empty if it has none.
     bool _localSource = false;
+    // Streaming while saving to the card (the decoder reads the partial file).
+    bool _caching = false;
     std::vector<Media::CuePoint> _cues;
     // Reads the index; returns the head bytes (PSRAM, caller frees) for the
     // decoder to identify the format, or nullptr.

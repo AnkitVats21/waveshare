@@ -248,3 +248,46 @@ def test_seek_through_a_cluster_of_20_ms_blocks():
     assert len(preroll) == wh.SEEK_PREROLL_MS // 20           # 4 frames decoded and dropped
     assert len(skipped) == (target - start - wh.SEEK_PREROLL_MS) // 20 + 1
     assert target <= first_play < target + 20                 # lands within one frame
+
+
+# ── Starting anywhere: find the next cluster ─────────────────────────────────
+
+def test_finds_cluster_after_mid_cluster_bytes():
+    # A seek by estimate lands inside a block of the previous cluster.
+    prev = el(0xA3, block(0, frame=bytes(range(200))))
+    data = prev[57:] + CLUSTER + el(0xA3, block(0, frame=b"opus"))
+    assert wh.find_cluster(data) == (True, len(prev) - 57)
+
+
+def test_cluster_at_the_start():
+    assert wh.find_cluster(CLUSTER + el(0xA3, block(0, frame=b"x"))) == (True, 0)
+
+
+def test_cluster_id_inside_audio_without_timecode_is_skipped():
+    fake = b"\x1f\x43\xb6\x75\x85" + b"\xa3" * 5   # ID and size, but no Timecode after
+    data = b"\x00" * 10 + fake + CLUSTER
+    assert wh.find_cluster(data) == (True, 10 + len(fake))
+
+
+def test_cluster_header_cut_off_waits_at_the_id():
+    data = b"\x00" * 30 + CLUSTER[:6]   # ID and part of the 8-byte unknown size
+    assert wh.find_cluster(data) == (False, 30)
+
+
+def test_cluster_cut_off_before_its_timecode_waits_at_the_id():
+    data = b"\x00" * 30 + el(0x1F43B675, b"", UNKNOWN)
+    assert wh.find_cluster(data) == (False, 30)
+
+
+@pytest.mark.parametrize("tail", [b"", b"\x1f", b"\x1f\x43", b"\x1f\x43\xb6"])
+def test_no_cluster_keeps_a_tail_that_could_start_one(tail):
+    data = b"\x00" * 40 + tail
+    found, at = wh.find_cluster(data)
+    assert not found
+    assert at == len(data) - 3
+    assert data[at:].endswith(tail)
+
+
+def test_short_input():
+    assert wh.find_cluster(b"") == (False, 0)
+    assert wh.find_cluster(b"\x1f\x43") == (False, 0)

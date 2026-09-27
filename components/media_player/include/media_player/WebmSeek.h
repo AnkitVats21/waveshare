@@ -65,4 +65,16 @@ SeekAction seekAction(uint32_t block_ms, uint32_t target_ms);
 // `len` bytes do not hold that header.
 bool readBlockTimecode(const uint8_t* payload, size_t len, int16_t& relative);
 
+// ── Starting anywhere in the file ───────────────────────────────────────────
+
+struct ClusterScan {
+    bool found;
+    size_t at;   // found: the Cluster ID; otherwise the bytes before `at` can be dropped
+};
+
+// Finds the first Cluster in bytes read from any point of a WebM file (a seek
+// by estimate lands mid-cluster): the Cluster ID, a size, then the cluster's
+// Timecode, which muxers write as its first child.
+ClusterScan findCluster(const uint8_t* data, size_t len);
+
 } // namespace Media

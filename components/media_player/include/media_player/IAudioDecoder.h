@@ -66,6 +66,7 @@ public:
 
     /**
      * @brief After a jump to a point before `positionMs`, drop the audio up to it.
+     * The input may start anywhere in the file, not only at a frame boundary.
      */
     virtual void setSeekTarget(uint32_t positionMs) {}
 };

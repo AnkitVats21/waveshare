@@ -13,16 +13,10 @@
 #include "common/thread_config.h"
 
 namespace {
-// Numeric query parameter from a stream URL (googlevideo carries dur=<seconds> and
-// clen=<bytes>). Returns 0 when absent.
-double urlNumberParam(const char* url, const char* key) {
-    if (!url) return 0;
-    const size_t klen = strlen(key);
-    for (const char* p = strchr(url, '?'); p; p = strchr(p + 1, '&')) {
-        if (strncmp(p + 1, key, klen) == 0 && p[1 + klen] == '=') return strtod(p + 2 + klen, nullptr);
-    }
-    return 0;
-}
+// The EBML magic that starts every WebM file: enough for the decoder factory
+// to pick the WebM decoder when a stream starts mid-file.
+constexpr uint8_t EBML_MAGIC[] = {0x1A, 0x45, 0xDF, 0xA3};
+bool isWebmUrl(const char* url) { return url && strstr(url, "mime=audio%2Fwebm"); }
 } // namespace
 
 static const char* TAG = "NexusPlayer";
@@ -213,6 +207,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
     }
     _cues.clear();
     _localSource = false;
+    _caching = false;
 
     // Flush buffers before starting new stream
     BufferManager::getInstance().flush(_playbackId);
@@ -262,7 +257,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
         auto snap = EmbeddedSysDb::getInstance().snapshot();
         // Long tracks (mixes, podcasts) would fill the card; unknown length is treated as long.
         uint32_t durMs = snap.media.duration_ms;
-        if (durMs == 0) durMs = static_cast<uint32_t>(urlNumberParam(downloadUrl, "dur") * 1000);
+        if (durMs == 0) durMs = static_cast<uint32_t>(StreamManager::urlNumberParam(downloadUrl, "dur") * 1000);
         const bool cacheable = durMs > 0 && durMs <= MAX_CACHE_DURATION_MS;
         bool doCache = snap.media.cache_downloads && (startPosMs == 0) && cacheable;
         if (snap.media.cache_downloads && startPosMs == 0 && !cacheable) {
@@ -274,7 +269,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
 
         if (doCache) {
             ESP_LOGI(TAG, "Cache Miss! Downloading and streaming with caching songId: %s", songId);
-            if (!_storageManager.openFileForCaching(songId, static_cast<size_t>(urlNumberParam(downloadUrl, "clen")))) {
+            if (!_storageManager.openFileForCaching(songId, static_cast<size_t>(StreamManager::urlNumberParam(downloadUrl, "clen")))) {
                 ESP_LOGE(TAG, "Failed to open file for caching");
                 stopActivePipelines();
                 _state = STATE_IDLE;
@@ -285,6 +280,7 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
                 notifyPlaybackError(songId, -2);
                 return;
             }
+            _caching = true;
 
             _audioEngine.start();
             EmbeddedSysDb::getInstance().mutate([songId](SystemState& s) {
@@ -308,7 +304,6 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
             }
         } else {
             ESP_LOGI(TAG, "Streaming songId: %s (startPos: %u ms)", songId, (unsigned int)startPosMs);
-            _audioEngine.start();
             EmbeddedSysDb::getInstance().mutate([songId, startPosMs](SystemState& s) {
                 s.media.state = MediaPlaybackState::PLAYING;
                 s.media.output_target = MediaOutputTarget::LOCAL;
@@ -319,16 +314,12 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
 
             bool streamOk = false;
             if (startPosMs > 0) {
-                uint32_t nearestTime = 0;
-                uint32_t nearestOffset = 0;
-                bool hasOffset = CatalogDB::getInstance().lookupSeekEntry(songId, startPosMs, nearestTime, nearestOffset);
-                if (!hasOffset) {
-                    nearestOffset = (startPosMs / 1000) * 16000;
-                }
-                _audioEngine.resetDecoder();
-                _audioEngine.setStreamByteOffset(nearestOffset);
-                streamOk = _streamManager.beginStreamingFrom(downloadUrl, nearestOffset, false);
+                // The network task finds the cluster; the decoder skips to the exact time.
+                const bool webm = isWebmUrl(downloadUrl);
+                _audioEngine.startAt(0, startPosMs, false, webm ? EBML_MAGIC : nullptr, webm ? sizeof(EBML_MAGIC) : 0);
+                streamOk = _streamManager.beginStreamingAt(downloadUrl, startPosMs);
             } else {
+                _audioEngine.start();
                 streamOk = _streamManager.beginStreaming(downloadUrl, false);
             }
 
@@ -713,35 +704,28 @@ void NexusPlayer::seekTo(uint32_t positionMs) {
         return;
     }
 
-    uint32_t nearestTime = 0;
-    uint32_t nearestOffset = 0;
-    bool hasOffset = CatalogDB::getInstance().lookupSeekEntry(_activeSongId, positionMs, nearestTime, nearestOffset);
-
-    ESP_LOGI(TAG, "Seek to %u ms (nearest: time=%u ms, offset=%u, resolved=%d)",
-             (unsigned int)positionMs, (unsigned int)nearestTime, (unsigned int)nearestOffset, (int)hasOffset);
-
-    if (_state == STATE_STREAMING_AND_CACHING) {
-        if (_activeDownloadUrl.empty()) {
-            ESP_LOGW(TAG, "Cannot seek online stream: stream URL empty");
-            return;
-        }
-        _streamManager.stopStreaming();
-        _audioEngine.resetDecoder();
-        _audioEngine.setStreamByteOffset(nearestOffset);
-        BufferManager::getInstance().flush(_playbackId);
-        BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
-
-        _streamManager.beginStreamingFrom(_activeDownloadUrl.c_str(), nearestOffset, false);
-    } else if (_state == STATE_PAUSED) {
-        if (!_activeDownloadUrl.empty()) {
-            _streamManager.stopStreaming();
-            _audioEngine.resetDecoder();
-            _audioEngine.setStreamByteOffset(nearestOffset);
-            BufferManager::getInstance().flush(_playbackId);
-            BufferManager::getInstance().flush(Buffers::MEDIA_RX_BUF);
-            _streamManager.beginStreamingFrom(_activeDownloadUrl.c_str(), nearestOffset, false);
-            _audioEngine.pause();
-        }
+    if (_activeDownloadUrl.empty()) {
+        ESP_LOGW(TAG, "Cannot seek: stream URL empty");
+        return;
     }
+    // Streams: stop the download and the decoder, then download again from
+    // the cluster before the target; the decoder skips to the exact time.
+    const int64_t t0 = esp_timer_get_time();
+    const bool paused = _state == STATE_PAUSED;
+    _streamManager.stopStreaming();
+    haltDecoder();
+    if (_caching) {
+        // The decoder reads the partly saved file, which can't seek yet:
+        // stop saving and stream directly. The next play from the start saves it.
+        ESP_LOGI(TAG, "Seek while saving %s: saving stopped", _activeSongId);
+        _storageManager.closeActiveFile();
+        _caching = false;
+    }
+    auto& bm = BufferManager::getInstance();
+    bm.flush(_playbackId);
+    bm.flush(_storageId);
+    _audioEngine.startAt(0, positionMs, paused);
+    _streamManager.beginStreamingAt(_activeDownloadUrl.c_str(), positionMs);
+    ESP_LOGI(TAG, "Seek to %u ms: stream restarted in %lld us", (unsigned)positionMs,
+             (long long)(esp_timer_get_time() - t0));
 }
-

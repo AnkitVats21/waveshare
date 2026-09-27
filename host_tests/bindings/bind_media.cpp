@@ -54,4 +54,9 @@ void init_media(nb::module_& m) {
         }
         return nb::int_(rel);
     });
+    // (found, at)
+    m.def("find_cluster", [](nb::bytes data) {
+        const auto r = Media::findCluster(reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
+        return nb::make_tuple(r.found, r.at);
+    });
 }
