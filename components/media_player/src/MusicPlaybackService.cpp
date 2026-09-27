@@ -1,6 +1,7 @@
 #include "MusicPlaybackService.h"
 #include "media_player/CatalogDB.h"
 #include "esp_log.h"
+#include "media_player/TlsConfig.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_http_client.h"
@@ -363,7 +364,7 @@ void MusicPlaybackService::auxWorkerLoop() {
                     esp_http_client_config_t config = {};
                     config.url = thumbUrl.c_str();
                     config.timeout_ms = 8000;
-                    config.skip_cert_common_name_check = true;
+                    Tls::secure(config);
                     esp_http_client_handle_t client = esp_http_client_init(&config);
                     if (client) {
                         esp_err_t err = esp_http_client_open(client, 0);

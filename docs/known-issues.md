@@ -10,7 +10,9 @@ commit.
 ### Stream seeks take about 3 seconds
 Seeking in a song that is streaming (not saved on the card) resumes about
 3 s later; seeks in saved songs and recordings take well under a second.
-**Cause:** a seek reconnects (TLS, ~0.6 s) and downloads from the nearest
+**Cause:** a seek reconnects (TLS, ~1.1 s with certificate checks; ~0.6 s
+before they were turned on, cause of the difference not yet measured) and
+downloads from the nearest
 index point, up to 10 s of audio before the target, at ~70 KB/s. (A
 redirect to a nearby cache, which googlevideo sends when the resolver runs
 behind a VPN, is followed once per track and then remembered.) The
@@ -74,6 +76,10 @@ Recordings page or `/api/recordings/*`.
 - **Gemini 3.x Live and Google Search.** Gemini 3.x Live models reject the
   `googleSearch` tool with the current key and end the session (Live 2.5
   native-audio accepts it), so search isn't offered to the assistant.
+- **TLS certificate dates aren't checked.** Chains and hostnames are
+  verified against the CA bundle, but `CONFIG_MBEDTLS_HAVE_TIME_DATE` is off:
+  turning it on makes every connection fail until the clock syncs after
+  boot, so the boot order would need checking first.
 - **Log buffer.** `GET /api/logs` keeps about 80 lines, so boot messages
   scroll out; the serial console has everything.
 - **Serial port.** Only one program may open it; a second one puts the

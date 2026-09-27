@@ -69,3 +69,6 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 # and writes zeros to the card. Confirmed with a buffer-address log: every
 # corrupt download used a buffer at 0x600fe180.
 # CONFIG_ESP_SYSTEM_ALLOW_RTC_FAST_MEM_AS_HEAP is not set
+
+# Server certificates are always verified (components/media_player/include/media_player/TlsConfig.h)
+# CONFIG_ESP_TLS_INSECURE is not set

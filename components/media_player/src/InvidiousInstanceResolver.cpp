@@ -1,6 +1,6 @@
 #include "InvidiousInstanceResolver.h"
 
-#include "esp_crt_bundle.h"
+#include "media_player/TlsConfig.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include <ArduinoJson.h>
@@ -69,8 +69,7 @@ bool InvidiousInstanceResolver::testInstance(const std::string& host) {
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.timeout_ms = 4000;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
-    config.skip_cert_common_name_check = true;
+    Tls::secure(config);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) return false;
@@ -98,8 +97,7 @@ bool InvidiousInstanceResolver::queryPublicInstanceList() {
     config.event_handler = httpEventCollector;
     config.user_data = &response;
     config.timeout_ms = 5000;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
-    config.skip_cert_common_name_check = true;
+    Tls::secure(config);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) return false;

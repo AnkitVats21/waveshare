@@ -1,7 +1,7 @@
 #include "InvidiousClient.h"
 #include "InvidiousInstanceResolver.h"
 
-#include "esp_crt_bundle.h"
+#include "media_player/TlsConfig.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include <ArduinoJson.h>
@@ -103,8 +103,7 @@ esp_err_t InvidiousClient::httpGet(const std::string& pathWithQuery, std::string
     config.user_data = &outResponse;
     config.timeout_ms = 12000;
     config.buffer_size = 4096;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
-    config.skip_cert_common_name_check = true;
+    Tls::secure(config);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {

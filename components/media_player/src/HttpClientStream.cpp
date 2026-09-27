@@ -1,5 +1,5 @@
 #include "HttpClientStream.h"
-#include "esp_crt_bundle.h"
+#include "media_player/TlsConfig.h"
 #include "esp_log.h"
 #include <cstring>
 
@@ -53,20 +53,9 @@ bool HttpClientStream::open(const std::string& url, uint32_t startByteOffset) {
     config.is_async = false;
     config.timeout_ms = 10000;
 
-    // --- HTTPS Security Layer Enhancements ---
     if (url.rfind("https://", 0) == 0) {
         config.transport_type = HTTP_TRANSPORT_OVER_SSL;
-        // Audio stream CDNs (e.g. googlevideo.com) frequently rotate intermediate and
-        // cross-signed certificates (GTS Root R1 cross-signed by GlobalSign) which fail
-        // strict x509 bundle checks. We do full TLS encryption without strict CA pinning
-        // so media streaming never aborts.
-        config.crt_bundle_attach = nullptr;
-        config.skip_cert_common_name_check = true; 
-        
-        #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-        config.use_global_ca_store = false;
-        #endif
-        
+        Tls::secure(config);
         config.buffer_size_tx = 4096;
         config.buffer_size = 8192;
     } else {
