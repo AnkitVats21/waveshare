@@ -30,7 +30,15 @@ struct PsramAllocator {
 #else
         void* p = malloc(n * sizeof(T));
 #endif
-        if (!p) throw std::bad_alloc();
+        if (!p) {
+            // Builds without exceptions (CI's sdkconfig.defaults) abort, as an
+            // uncaught throw would.
+#if __cpp_exceptions
+            throw std::bad_alloc();
+#else
+            abort();
+#endif
+        }
         return static_cast<T*>(p);
     }
     void deallocate(T* p, size_t) noexcept { free(p); }
