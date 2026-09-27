@@ -2,6 +2,7 @@
 #include "core_sysdb/AsyncNetLogger.h"
 #include <cstdio>
 #include <cstring>
+#include "esp_heap_caps.h"
 
 LogRouter &LogRouter::getInstance() {
   static LogRouter instance;
@@ -13,13 +14,19 @@ LogRouter::LogRouter()
 
 void LogRouter::init() {
   m_state = State::ROUTE_CONSOLE_ONLY;
+  // 15.7 KB that used to sit in internal .bss. The logging code runs from
+  // flash/PSRAM too, so the buffer is reachable whenever it runs.
+  if (!m_ring_buffer) {
+    m_ring_buffer = static_cast<WebLogItem*>(
+        heap_caps_calloc(MAX_LOG_ENTRIES, sizeof(WebLogItem), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  }
   m_default_vprintf = esp_log_set_vprintf(&LogRouter::vprintfInterceptor);
 }
 
 void LogRouter::setNetworkStreamingState(State newState) { m_state = newState; }
 
 void LogRouter::pushLog(const char *msg) {
-  if (!msg || msg[0] == '\0') return;
+  if (!msg || msg[0] == '\0' || !m_ring_buffer) return;
   portENTER_CRITICAL(&m_spinlock);
   m_current_seq++;
   WebLogItem &item = m_ring_buffer[m_ring_head];
@@ -47,7 +54,7 @@ void LogRouter::getLogsSince(uint32_t since_seq,
   out_logs.clear();
   portENTER_CRITICAL(&m_spinlock);
   out_latest_seq = m_current_seq;
-  if (m_ring_count == 0) {
+  if (m_ring_count == 0 || !m_ring_buffer) {
     portEXIT_CRITICAL(&m_spinlock);
     return;
   }

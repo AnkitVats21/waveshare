@@ -43,7 +43,8 @@ private:
   vprintf_like_t m_default_vprintf;
 
   static constexpr size_t MAX_LOG_ENTRIES = 80;
-  WebLogItem m_ring_buffer[MAX_LOG_ENTRIES];
+  // 80 x 196 B in PSRAM, allocated by init(); nullptr until then.
+  WebLogItem* m_ring_buffer = nullptr;
   size_t m_ring_head = 0;
   size_t m_ring_count = 0;
   uint32_t m_current_seq = 0;
