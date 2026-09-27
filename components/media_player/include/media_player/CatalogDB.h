@@ -46,8 +46,11 @@ public:
     // (e.g. it is open).
     bool removeFiles(const char* videoId);
 
-    // Adds songs on the card that aren't in the library and refreshes the
-    // file size and thumbnail flag. Returns the number of audio files seen.
+    // Checks the library against the card: adds songs that aren't listed,
+    // corrects file sizes and thumbnail flags, marks entries whose file is
+    // gone as not saved, and deletes leftover download .tmp files (not the
+    // one in progress). Runs at boot on media_aux, and on a library scan.
+    // Returns the number of audio files on the card.
     size_t scanAndSync();
 
     void flushIfDue() { _db.db().flushIfDue(); }

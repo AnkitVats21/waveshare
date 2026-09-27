@@ -1,5 +1,8 @@
 #include "media_player/CatalogDB.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "media_player/NexusPlayer.h"
+#include "nexus_db/PsramAllocator.h"
 #include "esp_rom_crc.h"
 #include "sd_storage/File.h"
 #include "sd_storage/Fs.h"
@@ -110,6 +113,12 @@ std::string titleFromFileName(std::string title) {
 }
 
 uint32_t now() { return static_cast<uint32_t>(time(nullptr)); }
+
+template <typename T>
+using PsVec = std::vector<T, nexus_db::PsramAllocator<T>>;
+
+// The player treats smaller files as broken downloads (StorageManager).
+constexpr uint32_t MIN_SAVED_BYTES = 32 * 1024;
 
 } // namespace
 
@@ -309,39 +318,119 @@ bool CatalogDB::removeFiles(const char* videoId) {
 }
 
 size_t CatalogDB::scanAndSync() {
-    std::lock_guard<std::mutex> lock(_mutex);
-    struct ScanCtx {
-        CatalogDB* self;
-        size_t seen;
-    } ctx{this, 0};
+    struct FileInfo {
+        std::string id;  // video ids fit std::string's inline buffer
+        uint32_t size;
+        uint32_t mtime;
+    };
+    struct Listing {
+        PsVec<FileInfo> audio;
+        PsVec<std::string> tmps;
+        PsVec<std::string> thumbs;
+    } ls;
+    const int64_t startUs = esp_timer_get_time();
 
+    // Held from the listing on, so a download committed meanwhile records
+    // its size after this pass, not before it (which would be undone).
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_initialized) return 0;
     Fs::list(MUSIC_DIR, nullptr, true, [](const sd_storage::DirEntry& ent, void* p) {
-        auto* c = static_cast<ScanCtx*>(p);
+        auto* l = static_cast<Listing*>(p);
+        if (ent.is_dir || ent.name[0] == '.') return true;
+        const std::string name = ent.name;
         std::string id;
-        if (ent.is_dir || ent.name[0] == '.' || ent.size < 1024 || !isAudioFile(ent.name, id) || id.empty()) {
-            return true;
-        }
-        ++c->seen;
-        auto tracks = c->self->_db.tracks();
-        TrackDoc doc;
-        const bool thumb = thumbnailExists(id.c_str());
-        if (!tracks.get(id, doc)) {
-            doc.title = titleFromFileName(id);
-            doc.artist = "Local Storage";
-            doc.added_at = static_cast<uint32_t>(ent.mtime);
-            doc.file_size = static_cast<uint32_t>(ent.size);
-            doc.thumbnail = thumb;
-            tracks.put(id, doc);
-        } else if (doc.file_size != ent.size || doc.thumbnail != thumb) {
-            doc.file_size = static_cast<uint32_t>(ent.size);
-            doc.thumbnail = thumb;
-            tracks.merge(id, doc, TrackDoc::F_FILE_SIZE | TrackDoc::F_THUMBNAIL);
+        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".tmp") == 0) {
+            l->tmps.push_back(name);
+        } else if (isAudioFile(name, id) && !id.empty() && id.size() <= nexus_db::Database::MAX_KEY) {
+            l->audio.push_back({id, static_cast<uint32_t>(ent.size), static_cast<uint32_t>(ent.mtime)});
         }
         return true;
-    }, &ctx);
+    }, &ls);
+    Fs::list(THUMBS_DIR, ".jpg", true, [](const sd_storage::DirEntry& ent, void* p) {
+        const std::string name = ent.name;
+        if (ent.size > 0) static_cast<Listing*>(p)->thumbs.push_back(name.substr(0, name.size() - 4));
+        return true;
+    }, &ls);
+    std::sort(ls.thumbs.begin(), ls.thumbs.end());
+    // By id, largest first, so an id with two files (.webm and .ogg) counts once.
+    std::sort(ls.audio.begin(), ls.audio.end(), [](const FileInfo& a, const FileInfo& b) {
+        return a.id != b.id ? a.id < b.id : a.size > b.size;
+    });
+    auto hasThumb = [&](const std::string& id) { return std::binary_search(ls.thumbs.begin(), ls.thumbs.end(), id); };
+
+    auto tracks = _db.tracks();
+    size_t added = 0, changed = 0, gone = 0, tmpRemoved = 0;
+
+    // Files on the card: add new songs, correct sizes and thumbnail flags.
+    const std::string* prev = nullptr;
+    for (const FileInfo& f : ls.audio) {
+        if (prev && *prev == f.id) continue;
+        prev = &f.id;
+        // Smaller files are broken downloads; the player deletes them.
+        const uint32_t saved = f.size >= MIN_SAVED_BYTES ? f.size : 0;
+        const bool thumb = hasThumb(f.id);
+        TrackDoc doc;
+        if (!tracks.get(f.id, doc)) {
+            if (saved == 0) continue;
+            doc.title = titleFromFileName(f.id);
+            doc.artist = "Local Storage";
+            doc.added_at = f.mtime;
+            doc.file_size = saved;
+            doc.thumbnail = thumb;
+            tracks.put(f.id, doc);
+            ++added;
+        } else if (doc.file_size != saved || doc.thumbnail != thumb) {
+            doc.file_size = saved;
+            doc.thumbnail = thumb;
+            tracks.merge(f.id, doc, TrackDoc::F_FILE_SIZE | TrackDoc::F_THUMBNAIL);
+            ++changed;
+        }
+    }
+
+    // Entries whose file (or thumbnail) is gone. Collected first: forEach
+    // holds the database lock.
+    struct Entry {
+        std::string id;
+        bool saved;
+        bool thumbnail;
+    };
+    PsVec<Entry> entries;
+    tracks.forEach([&](std::string_view key, const TrackDoc& doc) {
+        entries.push_back({std::string(key), doc.file_size != 0, doc.thumbnail});
+        return true;
+    });
+    for (const Entry& e : entries) {
+        const auto it = std::lower_bound(ls.audio.begin(), ls.audio.end(), e.id,
+                                         [](const FileInfo& f, const std::string& id) { return f.id < id; });
+        if (it != ls.audio.end() && it->id == e.id) continue;  // handled above
+        const bool thumb = hasThumb(e.id);
+        if (!e.saved && e.thumbnail == thumb) continue;
+        TrackDoc doc;
+        doc.file_size = 0;
+        doc.thumbnail = thumb;
+        tracks.merge(e.id, doc, TrackDoc::F_FILE_SIZE | TrackDoc::F_THUMBNAIL);
+        if (e.saved) ++gone; else ++changed;
+    }
+
+    // Leftovers of downloads cut off by a reset or power loss. The one in
+    // progress is skipped (and sd_storage refuses to delete an open file).
+    auto& storage = NexusPlayer::getInstance().getStorageManager();
+    char path[128];
+    for (const std::string& name : ls.tmps) {
+        if (storage.isCaching(name.substr(0, name.find('.')).c_str())) continue;
+        snprintf(path, sizeof(path), "%s/%s", MUSIC_DIR, name.c_str());
+        if (Fs::remove(path)) {
+            ++tmpRemoved;
+        } else {
+            ESP_LOGW(TAG, "Could not delete %s", path);
+        }
+    }
 
     _db.db().flush();
-    return ctx.seen;
+    ESP_LOGI(TAG, "Card sync: %u files, %u added, %u no longer saved, %u updated, %u .tmp deleted (%lld ms)",
+             (unsigned)ls.audio.size(), (unsigned)added, (unsigned)gone, (unsigned)changed, (unsigned)tmpRemoved,
+             (long long)((esp_timer_get_time() - startUs) / 1000));
+    return ls.audio.size();
 }
 
 bool CatalogDB::thumbnailExists(const char* videoId) {

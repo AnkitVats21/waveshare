@@ -333,6 +333,7 @@ void MusicPlaybackService::workerLoop() {
 
 void MusicPlaybackService::auxWorkerLoop() {
     ESP_LOGI(TAG, "Persistent media_aux started");
+    CatalogDB::getInstance().scanAndSync();  // the library against the card, once per boot
     MediaAuxCommand cmd;
     while (true) {
         // Wakes every second to write the library's batched changes.

@@ -1,6 +1,7 @@
 #pragma once
 #include "core_sysdb/BufferManager.h"
 #include "sd_storage/File.h"
+#include <cstring>
 
 class StorageManager {
 public:
@@ -9,6 +10,11 @@ public:
 
     bool fileExists(const char* songId);
     bool deleteFile(const char* songId);
+    // True while songId is being downloaded (its .tmp is in use), until the
+    // file is committed.
+    bool isCaching(const char* songId) const {
+        return _isWritingMode && songId && strcmp(_currentSongId, songId) == 0;
+    }
     
     // Cache Miss Path (concurrent download, write and progressive read).
     // expectedBytes (0 = unknown) guards the commit against truncated downloads.
