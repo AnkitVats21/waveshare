@@ -181,8 +181,12 @@ void NexusPlayer::playAt(const char* songId, const char* downloadUrl, uint32_t s
 }
 
 void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uint32_t startPosMs) {
-    ESP_LOGI(TAG, "Play requested for songId: %s, url: %s, startPos: %u ms",
-             songId, downloadUrl ? downloadUrl : "(local)", (unsigned int)startPosMs);
+    // Up to the query only: a stream URL's query is its IP-bound signature.
+    const char* shown = downloadUrl ? downloadUrl : "(local)";
+    const char* query = strchr(shown, '?');
+    ESP_LOGI(TAG, "Play requested for songId: %s, url: %.*s, startPos: %u ms", songId,
+             query ? static_cast<int>(query - shown) : static_cast<int>(strlen(shown)), shown,
+             (unsigned int)startPosMs);
 
     _should_resume_after_session = false;
     _should_play_after_session = false;
