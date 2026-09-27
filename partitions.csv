@@ -6,7 +6,7 @@
 #   0x9000  - 0xFFFF   : partition table + NVS + phy
 #   0x10000 - 0xD90000 : app partitions (factory, ota_0, ota_1 @ 4.5MB each)
 #   0xD90000+          : data, coredump, wake models (1MB; srmodels.bin is
-#                        ~0.3MB), web frontend A/B slots (www_0/www_1, 672KB each)
+#                        ~0.3MB, the WN9 wake word), web frontend A/B slots (www_0/www_1, 672KB each)
 #
 # Changing this table needs a USB flash (OTA can't rewrite it). NVS and the
 # www slots keep their offsets, so credentials and the dashboard survive.

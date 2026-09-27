@@ -106,6 +106,8 @@ idf_component_register(
             nexus_db
             ${DISPLAY_REQUIRES}
             nvs_flash
+            spi_flash
+            esp_partition
             esp_wifi
             esp_netif
             esp_http_server

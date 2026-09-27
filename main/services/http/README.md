@@ -33,7 +33,7 @@ matching HTTP status.
 | Config | `GET/POST /api/config/gemini` (model, voice, prompt, transcript options; the key is write-only), `GET/POST /api/config/settings` (timezone, …) |
 | Time | `GET/POST /api/time`, `POST /api/time/sync` |
 | Wi-Fi | `GET /api/wifi/status`, `GET /api/wifi/scan`, `POST /api/wifi/configure` |
-| System | `GET /api/system/metrics`, `/init`, `/delta` (for the built-in page), `GET /api/storage/info`, `GET /api/logs?since=<seq>` (~80 lines), `POST /api/led/set`, `POST /api/system/reboot` |
+| System | `GET /api/system/metrics`, `/init`, `/delta` (for the built-in page), `GET /api/system/flash` (partitions: size and what is in use, e.g. firmware length and version), `GET /api/storage/info`, `GET /api/logs?since=<seq>` (~80 lines), `POST /api/led/set`, `POST /api/system/reboot` |
 | OTA | `POST /api/ota` (firmware image as the body), `GET /api/ota/status`; `GET/POST /api/ota/frontend` (dashboard bundle), `POST /api/ota/frontend/rollback` |
 | Pages | `GET /recovery` (built-in dashboard), `GET /setup` (captive portal), `GET /*` (the dashboard bundle; the portal while the setup access point is up) |
 | Control | `/api/ws` (WebSocket) |

@@ -6,14 +6,23 @@
 #include "core_sysdb/LogRouter.h"
 #include "core_sysdb/led_types.h"
 #include "app/audio/recording/AudioRecorder.h"
+#include "services/http/FlashUpload.h"
+#include "http_server/WebBundle.h"
 
 #include <esp_app_desc.h>
+#include <esp_app_format.h>
+#include <esp_flash.h>
+#include <esp_partition.h>
+#include <nvs.h>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <strings.h>
 
 namespace {
@@ -219,6 +228,160 @@ esp_err_t rebootHandler(httpd_req_t* req) {
     return Http::sendOk(req, "Rebooting device...");
 }
 
+// ── GET /api/system/flash ───────────────────────────────────────────────
+// The partition table with how much of each partition is in use, where that
+// can be told: app slots (the firmware image's length), the dashboard slots
+// (the bundle), the wake-word models, NVS (entries). Flash is read on the
+// FlashUpload worker: the httpd stack is in PSRAM.
+
+constexpr int MAX_PARTS = 16;
+
+struct PartUsage {
+    const esp_partition_t* part = nullptr;
+    int64_t used = -1;  // bytes; -1 = can't tell
+    char version[32] = {};
+    char detail[96] = {};
+};
+
+struct FlashReport {
+    uint32_t chip_size = 0;
+    int count = 0;
+    PartUsage parts[MAX_PARTS];
+};
+
+// Length of the app image in an app slot, from its segment headers: 0 if the
+// slot holds no image, -1 if the headers don't add up.
+int64_t appImageLength(const esp_partition_t* p) {
+    esp_image_header_t h;
+    if (esp_partition_read(p, 0, &h, sizeof(h)) != ESP_OK) return -1;
+    if (h.magic != ESP_IMAGE_HEADER_MAGIC) return 0;
+    uint32_t pos = sizeof(h);
+    for (int i = 0; i < h.segment_count; ++i) {
+        esp_image_segment_header_t seg;
+        if (esp_partition_read(p, pos, &seg, sizeof(seg)) != ESP_OK) return -1;
+        pos += sizeof(seg) + seg.data_len;
+        if (pos > p->size) return -1;
+    }
+    pos = (pos + 16) & ~15u;  // checksum byte, padded to 16 bytes
+    if (h.hash_appended) pos += 32;
+    return pos <= p->size ? pos : -1;
+}
+
+// esp-sr's model partition: a count, then per model a 32-byte name and a
+// file count, then per file a 32-byte name, start and size. Used = the end
+// of the last file.
+int64_t modelsLength(const esp_partition_t* p, char* names, size_t names_len) {
+    constexpr size_t HEAD = 2048, STR = 32;
+    std::unique_ptr<uint8_t[]> buf(new (std::nothrow) uint8_t[HEAD]);
+    if (!buf || esp_partition_read(p, 0, buf.get(), HEAD) != ESP_OK) return -1;
+    auto i32 = [&](size_t off) { int32_t v; memcpy(&v, buf.get() + off, 4); return v; };
+    size_t off = 0;
+    const int32_t models = i32(off);
+    off += 4;
+    if (models <= 0 || models > 16) return 0;
+    int64_t end = 0;
+    names[0] = '\0';
+    for (int m = 0; m < models; ++m) {
+        if (off + STR + 4 > HEAD) return -1;
+        char name[STR + 1] = {};
+        memcpy(name, buf.get() + off, STR);
+        if (names[0]) strlcat(names, ", ", names_len);
+        strlcat(names, name, names_len);
+        const int32_t files = i32(off + STR);
+        off += STR + 4;
+        if (files < 0 || off + size_t(files) * (STR + 8) > HEAD) return -1;
+        for (int f = 0; f < files; ++f) {
+            const int64_t start = i32(off + STR), size = i32(off + STR + 4);
+            end = std::max(end, start + size);
+            off += STR + 8;
+        }
+    }
+    return end <= int64_t(p->size) ? end : -1;
+}
+
+esp_err_t collectFlash(void* arg) {
+    auto* r = static_cast<FlashReport*>(arg);
+    esp_flash_get_size(nullptr, &r->chip_size);
+    auto& bundle = Http::WebBundle::instance();
+
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
+    for (; it && r->count < MAX_PARTS; it = esp_partition_next(it)) {
+        PartUsage& u = r->parts[r->count++];
+        u.part = esp_partition_get(it);
+        const esp_partition_t* p = u.part;
+        if (p->type == ESP_PARTITION_TYPE_APP) {
+            u.used = appImageLength(p);
+            esp_app_desc_t desc;
+            if (u.used > 0 && esp_ota_get_partition_description(p, &desc) == ESP_OK) {
+                strlcpy(u.version, desc.version, sizeof(u.version));
+            }
+        } else if (p->subtype == ESP_PARTITION_SUBTYPE_DATA_NVS) {
+            nvs_stats_t st;
+            if (nvs_get_stats(p->label, &st) == ESP_OK && st.total_entries) {
+                u.used = int64_t(p->size) * st.used_entries / st.total_entries;
+                snprintf(u.detail, sizeof(u.detail), "%u of %u entries", (unsigned)st.used_entries,
+                         (unsigned)st.total_entries);
+            }
+        } else if (strcmp(p->label, "model") == 0) {
+            u.used = modelsLength(p, u.detail, sizeof(u.detail));
+        } else {
+            for (int i = 0; i < Http::WebBundle::SLOT_COUNT; ++i) {
+                if (bundle.partition(i) != p) continue;
+                const auto info = bundle.info(i);
+                u.used = info.valid ? info.size : 0;
+                if (info.valid) strlcpy(u.version, info.version, sizeof(u.version));
+            }
+        }
+    }
+    esp_partition_iterator_release(it);
+    return ESP_OK;
+}
+
+const char* subtypeName(const esp_partition_t* p) {
+    if (p->type == ESP_PARTITION_TYPE_APP) {
+        if (p->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY) return "factory";
+        if (p->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MIN && p->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MAX) return "ota";
+        return "app";
+    }
+    switch (p->subtype) {
+        case ESP_PARTITION_SUBTYPE_DATA_OTA: return "otadata";
+        case ESP_PARTITION_SUBTYPE_DATA_PHY: return "phy";
+        case ESP_PARTITION_SUBTYPE_DATA_NVS: return "nvs";
+        case ESP_PARTITION_SUBTYPE_DATA_COREDUMP: return "coredump";
+        case ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS: return "nvs_keys";
+        case ESP_PARTITION_SUBTYPE_DATA_SPIFFS: return "spiffs";
+        default: return "data";
+    }
+}
+
+esp_err_t flashHandler(httpd_req_t* req) {
+    auto report = std::make_unique<FlashReport>();
+    if (FlashUpload::runInternal(collectFlash, report.get()) != ESP_OK) {
+        return Http::sendError(req, 409, "Flash is busy, try again");
+    }
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const auto& bundle = Http::WebBundle::instance();
+    const esp_partition_t* liveWww = bundle.available() ? bundle.partition(bundle.activeSlot()) : nullptr;
+
+    JsonDocument doc;
+    doc["chip_size"] = report->chip_size;
+    JsonArray arr = doc["partitions"].to<JsonArray>();
+    for (int i = 0; i < report->count; ++i) {
+        const PartUsage& u = report->parts[i];
+        JsonObject o = arr.add<JsonObject>();
+        o["label"] = u.part->label;
+        o["type"] = u.part->type == ESP_PARTITION_TYPE_APP ? "app" : "data";
+        o["subtype"] = subtypeName(u.part);
+        o["offset"] = u.part->address;
+        o["size"] = u.part->size;
+        if (u.used >= 0) o["used"] = u.used;
+        if (u.version[0]) o["version"] = u.version;
+        if (u.detail[0]) o["detail"] = u.detail;
+        if (u.part == running || u.part == liveWww) o["active"] = true;
+    }
+    return Http::sendJson(req, 200, doc);
+}
+
 } // namespace
 
 void Routes::registerSystem(Http::Server& server) {
@@ -227,5 +390,6 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/init", HTTP_GET, initHandler);
     server.on("/api/system/delta", HTTP_GET, deltaHandler);
     server.on("/api/system/reboot", HTTP_POST, rebootHandler);
+    server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/logs", HTTP_GET, logsHandler);
 }
