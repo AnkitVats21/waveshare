@@ -36,7 +36,7 @@ public:
   SpeakerPlaybackTask()
       : TaskBase({
             "speaker_playback_task",
-            8 * 1024,
+            4 * 1024,  // 1.7 KB used at worst (music + wake word + assistant)
             ThreadConfig::Priority::SPEAKER_PLAYBACK,
             ThreadConfig::CORE_AUDIO
         }) {}

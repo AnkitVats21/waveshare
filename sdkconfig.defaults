@@ -80,3 +80,8 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 # not connect over music and the stream reconnected. The tables are ROM tables
 # (flash rodata), so software AES costs no internal RAM.
 # CONFIG_MBEDTLS_HARDWARE_AES is not set
+
+# mDNS task stack and its packet allocations in PSRAM (internal RAM is the
+# scarce one; mDNS does no flash work).
+CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y

@@ -45,7 +45,7 @@ namespace ThreadConfig {
         STACK_GEMINI    = 8 * 1024,  ///< GeminiProtocol — needs room for ArduinoJson tool-call serialization
         STACK_PLAYER    = 12 * 1024, ///< NexusPlayer — handles InvidiousClient HTTPS + ArduinoJson during autoplay
         STACK_WW_FEED   = 3 * 1024,
-        STACK_WW_DET    = 8 * 1024,
+        STACK_WW_DET    = 5 * 1024,  ///< 2.3 KB used at worst (wake word over music, 2026-09-27)
     };
 
     // ── Core affinities ────────────────────────────────────────────────────
