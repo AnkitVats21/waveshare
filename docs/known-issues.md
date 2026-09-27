@@ -65,14 +65,8 @@ until a reboot. Fixed: reply audio is dropped once the session closes,
 and returning to Idle ends any voice still marked as playing.) **Cause:** the timeout counts silence
 from the person's side only, not whether a reply is pending; the setup
 exchange had also taken ~4.8 s before the microphone went live. Without
-music, replies had arrived inside the 3 s.
-
-### `nexus.local` doesn't resolve from the PC
-The device answers mDNS queries sent to it directly (unicast), but not
-the usual multicast ones (0 of 10), with the mDNS task in internal RAM or
-PSRAM alike. **Cause:** not isolated (router multicast forwarding, Wi-Fi
-power save, or the device's group membership). **Workaround:** use the
-IP address.
+music, replies had arrived inside the 3 s. **Workaround:** a longer silence timeout.
+**Fix:** don't count silence while a reply is pending.
 
 ### Recordings renamed through the file API
 A recording renamed or deleted with the generic `/api/files` routes (not
