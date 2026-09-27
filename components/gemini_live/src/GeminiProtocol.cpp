@@ -194,6 +194,7 @@ void GeminiProtocol::closeConnection() {
         return;
     }
     LOGI_NET("Closing WebSocket connection...");
+    m_accept_audio = false;
     resetTextTurn();
     if (m_client) {
         m_client.close(pdMS_TO_TICKS(1000));
@@ -362,6 +363,7 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED:
             LOGI_NET("WebSocket established.");
+            self->m_accept_audio = true;
             self->m_rx_frames = 0;
             self->m_rx_dropped_frames = 0;
             self->m_rx_audio_bytes = 0;
@@ -471,6 +473,12 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 m_text_turn_us = 0;   // the reply has started
             }
             // If transitioning to speaking, flush stale voice data and update sysdb (notifies reactors once)
+            if (!m_accept_audio) {
+                // The session was closed while this frame sat in the queue.
+                *data_end = '"';
+                payload[length] = old_char;
+                return;
+            }
             if (!sysdb.assistantSpeaking()) {
                 BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
                 sysdb.mutate([](SystemState& s) {

@@ -314,6 +314,17 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             micEnabled = false;
             connectRequested = false;
             GeminiProtocol::getInstance().closeConnection();
+            // Voice that started without a turnComplete to end it (reply audio
+            // racing the close) would leave the orchestrator "speaking": the mic
+            // stays muted in every later session and paused music stays paused.
+            if (AudioOrchestrator::getInstance().isVoiceActive()) {
+                ESP_LOGW(TAG, "Idle with assistant voice still active; ending it.");
+                sysdb.mutate([](SystemState& s) {
+                    s.audio.assistant_speaking = false;
+                    s.audio.turn_complete_pending = false;
+                });
+                AudioOrchestrator::getInstance().notifyVoiceEnded();
+            }
             break;
 
         case AssistantState::StartingSession:

@@ -6,6 +6,7 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
+#include <atomic>
 #include <new>
 #include <mutex>
 #include <string>
@@ -80,6 +81,9 @@ private:
     std::mutex m_turn_mutex;
     std::string m_pending_turn;        // waiting for setupComplete
     bool m_setup_complete = false;
+    // False from closeConnection() until the next CONNECTED: reply audio still
+    // queued in m_incoming_psram_rb must not restart "speaking" after a close.
+    std::atomic<bool> m_accept_audio{false};
     int64_t m_text_turn_us = 0;        // when the text turn was queued; 0 = none
     SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
