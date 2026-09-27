@@ -72,3 +72,11 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
 # Server certificates are always verified (components/media_player/include/media_player/TlsConfig.h)
 # CONFIG_ESP_TLS_INSECURE is not set
+
+# Software AES. The hardware AES engine uses DMA, and TLS buffers live in PSRAM
+# (MBEDTLS_EXTERNAL_MEM_ALLOC), so every record needed bounce buffers and DMA
+# descriptors from internal RAM. With the music stream and Gemini both on TLS
+# that allocation failed ("esp-aes: Failed to allocate memory"): Gemini could
+# not connect over music and the stream reconnected. The tables are ROM tables
+# (flash rodata), so software AES costs no internal RAM.
+# CONFIG_MBEDTLS_HARDWARE_AES is not set
