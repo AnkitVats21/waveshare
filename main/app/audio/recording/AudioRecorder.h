@@ -62,6 +62,7 @@ private:
     int               m_channels           = 1; // set once at startRecording, used by writer task
     uint32_t          m_encode_rate        = 0;
     TickType_t        m_started_ticks      = 0;
+    uint32_t          m_started_epoch      = 0;
 
     static constexpr const char* TAG = "AudioRecorder";
     static constexpr uint32_t MAX_DURATION_MS = 10 * 60 * 1000;

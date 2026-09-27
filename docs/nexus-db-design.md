@@ -26,7 +26,7 @@ is fast enough.
 |---|---|---|---|---|
 | system | `/sdcard/db/system.ndb` | `state`, `settings`, `alerts` (`alarms` with the alarm redesign) | no | every commit |
 | music | `/sdcard/db/music.ndb` | `tracks` | yes (scan `/sdcard/music`) | batched, ≤ 2 s |
-| recordings | `/sdcard/db/recordings.ndb` | `recordings` | yes (scan `/sdcard/recordings`) | batched, ≤ 2 s |
+| recordings | `/sdcard/db/recordings.ndb` | `recordings` | yes (scan `/sdcard/recordings`) | every commit |
 
 Later candidates: `notes.ndb` for Gemini notes and memory.
 
@@ -64,9 +64,12 @@ service), never the audio path.
 
 - `system`: `fsync` after every commit. These writes are rare (debounced state
   changes, user edits).
-- `music`, `recordings`: `fsync` at most every 2 s, and at close. Losing the
-  last records on power loss is acceptable because both can be rebuilt by
-  scanning the folders.
+- `recordings`: `fsync` after every commit too. Writes are as rare (a
+  recording stops, a file is renamed or deleted), and the check against the
+  folder at every open repairs anything a power cut loses.
+- `music`: `fsync` at most every 2 s, and at close. Losing the last records
+  on power loss is acceptable because it can be rebuilt by scanning the
+  folder.
 
 ## File format
 
@@ -323,8 +326,11 @@ Each step is its own commit and is tested on the device before the next.
 4. **Seeking from the file itself** (before music.ndb, so nothing seek-related
    is migrated): see "Seeking" below.
 5. **music.ndb**: `CatalogDB` becomes a wrapper; migration from `catalog.db`.
-6. **recordings.ndb**: `AudioRecorder` adds a record on stop; scan on first
-   open.
+6. **recordings.ndb**: `AudioRecorder` adds a record on stop. Documents are
+   keyed by an id that never changes, so a rename rewrites one field. Every
+   open checks the list against `/sdcard/recordings` (in the background,
+   after the timezone is set): new files are read (length from the last Ogg
+   page's granule, or the WAV data size) and added, missing ones dropped.
 7. **Dashboard** (separate repo and commit): `ndb.js` reader, generated
    schema, library / alarms / recordings views on `/api/db/<name>`.
 

@@ -1,5 +1,6 @@
 #include "bindings.h"
 #include "media_player/WebmSeek.h"
+#include "app/audio/recording/RecordingProbe.h"
 #include <nanobind/stl/string.h>
 #include <string>
 
@@ -59,4 +60,23 @@ void init_media(nb::module_& m) {
         const auto r = Media::findCluster(reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
         return nb::make_tuple(r.found, r.at);
     });
+
+    // (duration_ms, sample_rate, channels), or None.
+    m.def("probe_opus", [](nb::bytes head, nb::bytes tail) -> nb::object {
+        RecordingProbe::Info i;
+        if (!RecordingProbe::probeOpus(reinterpret_cast<const uint8_t*>(head.c_str()), head.size(),
+                                       reinterpret_cast<const uint8_t*>(tail.c_str()), tail.size(), i)) {
+            return nb::none();
+        }
+        return nb::make_tuple(i.duration_ms, i.sample_rate, i.channels);
+    });
+    m.def("probe_wav", [](nb::bytes head, uint64_t file_size) -> nb::object {
+        RecordingProbe::Info i;
+        if (!RecordingProbe::probeWav(reinterpret_cast<const uint8_t*>(head.c_str()), head.size(), file_size, i)) {
+            return nb::none();
+        }
+        return nb::make_tuple(i.duration_ms, i.sample_rate, i.channels);
+    });
+    m.attr("PROBE_HEAD_BYTES") = RecordingProbe::HEAD_BYTES;
+    m.attr("PROBE_TAIL_BYTES") = RecordingProbe::TAIL_BYTES;
 }

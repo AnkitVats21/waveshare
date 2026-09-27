@@ -15,6 +15,7 @@
 #include "hal/Board.h"
 #include "credentials/Credentials.h"
 #include "nexus_db/StressTest.h"
+#include "services/storage/RecordingsDatabase.h"
 #include "services/storage/SystemDatabase.h"
 #include "services/alarm/AlarmService.h"
 #include "services/time/TimeSyncHelper.h"
@@ -136,6 +137,7 @@ extern "C" void app_main(void) {
     gemini_pump.start();
     app_ctrl.begin();
     Services::TimeSyncHelper::instance().begin();
+    Services::openRecordingsDbAsync();  // after the timezone: file times are local
     Services::AlarmService::getInstance().begin();
     sync_reactor.begin();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE

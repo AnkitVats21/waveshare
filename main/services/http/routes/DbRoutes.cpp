@@ -8,6 +8,7 @@
 #include "esp_heap_caps.h"
 #include "http_server/HttpUtil.h"
 #include "sd_storage/File.h"
+#include "services/storage/RecordingsDatabase.h"
 #include "services/storage/SystemDatabase.h"
 
 namespace {
@@ -16,6 +17,7 @@ constexpr size_t CHUNK_SIZE = 4096;
 
 nexus_db::Database* findDb(const char* name) {
     if (strcmp(name, "system") == 0) return &Services::systemDb().db();
+    if (strcmp(name, "recordings") == 0) return &Services::recordingsDb().db();
     return nullptr;
 }
 

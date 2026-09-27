@@ -24,6 +24,7 @@ set(srcs
             "app/audio/recording/OggOpusEncoder.cpp"
             "app/audio/recording/PolyphaseResampler.cpp"
             "app/audio/recording/AudioRecorder.cpp"
+            "app/audio/recording/RecordingProbe.cpp"
             "app/input/KeyService.cpp"
 
             # Event and LED Services
@@ -52,6 +53,8 @@ set(srcs
             "services/storage/SysDbSyncReactor.cpp"
             "services/storage/SystemDatabase.cpp"
             "services/storage/generated/SystemDb.generated.cpp"
+            "services/storage/RecordingsDatabase.cpp"
+            "services/storage/generated/RecordingsDb.generated.cpp"
             "services/time/TimeSyncHelper.cpp"
             "services/alarm/AlarmService.cpp"
             "services/alarm/AlarmRing.cpp"
@@ -129,15 +132,18 @@ idf_component_register(
 
 
 
-# system.ndb code generated from schema/db/system.star by starc
-set(NDB_SYSTEM_SCHEMA "${CMAKE_CURRENT_SOURCE_DIR}/../schema/db/system.star")
+# system.ndb and recordings.ndb code generated from schema/db/*.star by starc
+set(NDB_SCHEMAS "${CMAKE_CURRENT_SOURCE_DIR}/../schema/db/system.star" "${CMAKE_CURRENT_SOURCE_DIR}/../schema/db/recordings.star")
 set(NDB_GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/services/storage/generated")
+set(NDB_GEN_FILES
+    "${NDB_GEN_DIR}/SystemDb.generated.h" "${NDB_GEN_DIR}/SystemDb.generated.cpp"
+    "${NDB_GEN_DIR}/RecordingsDb.generated.h" "${NDB_GEN_DIR}/RecordingsDb.generated.cpp")
 add_custom_command(
-    OUTPUT "${NDB_GEN_DIR}/SystemDb.generated.h" "${NDB_GEN_DIR}/SystemDb.generated.cpp"
-    COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/starc.py" db "${NDB_SYSTEM_SCHEMA}" --out-dir "${NDB_GEN_DIR}"
-    DEPENDS "${NDB_SYSTEM_SCHEMA}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/starc.py" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/ndb_gen.py"
-    COMMENT "Compiling nexus_db schema system.star via starc"
+    OUTPUT ${NDB_GEN_FILES}
+    COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/starc.py" db ${NDB_SCHEMAS} --out-dir "${NDB_GEN_DIR}"
+    DEPENDS ${NDB_SCHEMAS} "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/starc.py" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/ndb_gen.py"
+    COMMENT "Compiling nexus_db schemas via starc"
     VERBATIM
 )
-add_custom_target(ndb_system_schema DEPENDS "${NDB_GEN_DIR}/SystemDb.generated.h" "${NDB_GEN_DIR}/SystemDb.generated.cpp")
+add_custom_target(ndb_system_schema DEPENDS ${NDB_GEN_FILES})
 add_dependencies(${COMPONENT_LIB} ndb_system_schema)

@@ -6,6 +6,7 @@
 #include "core_sysdb/BufferManager.h"
 #include "core_sysdb/thread_config.h"
 #include "sd_storage/Fs.h"
+#include "services/storage/RecordingsDatabase.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/idf_additions.h"
@@ -116,6 +117,8 @@ bool AudioRecorder::startRecording(RecordMode mode) {
     m_padded_chunk_count = 0;
 
     // Set before the writer task starts: it checks the deadline immediately.
+    time_t now = time(nullptr);
+    m_started_epoch  = now >= 1704067200 ? uint32_t(now) : 0;  // 0 if the clock isn't set
     m_started_ticks  = xTaskGetTickCount();
     m_deadline_ticks = m_started_ticks + pdMS_TO_TICKS(MAX_DURATION_MS);
     m_active = true;
@@ -261,6 +264,10 @@ void AudioRecorder::runWriterTaskLoop() {
         m_encoder = nullptr;
     }
     m_file.close();
+    // Before m_writer_task clears, so a stop request returns with the file listed.
+    Services::addRecording(m_active_path, m_started_epoch,
+                           m_mode == RecordMode::STEREO ? Services::REC_MODE_STEREO : Services::REC_MODE_PROCESSED,
+                           m_encode_rate);
 
     if (auto_capped) {
         AlertPlayer::getInstance().playAlert(ALERT_SESSION_END);
