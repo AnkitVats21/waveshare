@@ -15,6 +15,8 @@
 #include <esp_partition.h>
 #include <nvs.h>
 #include <esp_heap_caps.h>
+#include <esp_memory_utils.h>
+#include <freertos/freertos_debug.h>
 #include <esp_ota_ops.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -47,6 +49,7 @@ esp_err_t metricsHandler(httpd_req_t* req) {
     heap["internal_free"]     = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     heap["internal_total"]    = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
     heap["internal_min_free"] = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    heap["internal_largest"]  = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     heap["psram_free"]        = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     heap["psram_total"]       = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
 
@@ -228,6 +231,49 @@ esp_err_t rebootHandler(httpd_req_t* req) {
     return Http::sendOk(req, "Rebooting device...");
 }
 
+// ── GET /api/system/tasks ───────────────────────────────────────────────
+// Every task's stack: size, the least free since it started, and whether it
+// is in internal RAM or PSRAM. For finding internal RAM to reclaim.
+esp_err_t tasksHandler(httpd_req_t* req) {
+    const UBaseType_t cap = uxTaskGetNumberOfTasks() + 8;
+    auto* st = static_cast<TaskStatus_t*>(heap_caps_malloc(cap * sizeof(TaskStatus_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!st) return Http::sendError(req, 500, "Out of memory");
+    const UBaseType_t n = uxTaskGetSystemState(st, cap, nullptr);
+
+    JsonDocument doc;
+    JsonObject heap = doc["heap"].to<JsonObject>();
+    heap["internal_free"]     = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    heap["internal_min_free"] = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    heap["internal_largest"]  = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    heap["dma_free"]          = heap_caps_get_free_size(MALLOC_CAP_DMA);
+    heap["psram_free"]        = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    heap["psram_largest"]     = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+
+    uint32_t internalStacks = 0;
+    JsonArray arr = doc["tasks"].to<JsonArray>();
+    for (UBaseType_t i = 0; i < n; ++i) {
+        const TaskStatus_t& t = st[i];
+        // The stack grows down from pxEndOfStack (its high end) to pxStackBase.
+        TaskSnapshot_t snap = {};
+        const uint32_t size = vTaskGetSnapshot(t.xHandle, &snap) == pdTRUE
+            ? reinterpret_cast<uintptr_t>(snap.pxEndOfStack) - reinterpret_cast<uintptr_t>(t.pxStackBase)
+            : 0;
+        const bool psram = esp_ptr_external_ram(t.pxStackBase);
+        if (!psram) internalStacks += size;
+        JsonObject o = arr.add<JsonObject>();
+        o["name"] = t.pcTaskName;
+        const BaseType_t core = xTaskGetCoreID(t.xHandle);
+        o["core"] = core == tskNO_AFFINITY ? -1 : static_cast<int>(core);
+        o["prio"] = t.uxCurrentPriority;
+        o["stack"] = size;
+        o["free_min"] = t.usStackHighWaterMark;  // bytes (StackType_t is a byte here)
+        o["psram"] = psram;
+    }
+    heap_caps_free(st);
+    doc["internal_stacks"] = internalStacks;
+    return Http::sendJson(req, 200, doc);
+}
+
 // ── GET /api/system/flash ───────────────────────────────────────────────
 // The partition table with how much of each partition is in use, where that
 // can be told: app slots (the firmware image's length), the dashboard slots
@@ -391,5 +437,6 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/delta", HTTP_GET, deltaHandler);
     server.on("/api/system/reboot", HTTP_POST, rebootHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);
+    server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/logs", HTTP_GET, logsHandler);
 }
