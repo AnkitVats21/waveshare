@@ -299,6 +299,7 @@ void GeminiProtocol::closeConnection() {
     m_parked = false;
     esp_timer_stop(m_park_timer);
     m_restart_requested = false;
+    m_interrupt_pending = false;
     {
         // The handle stays current for the whole connection (one is sent
         // after setup), so resume_min counts from when the conversation ended.
@@ -433,8 +434,8 @@ void GeminiProtocol::transmitToolResponse(const char* call_id, const char* json_
 void GeminiProtocol::transmitAudioUplink(const char* base64_pcm) {
     if (!m_client || !m_client.isConnected() || !base64_pcm) return;
     
-    // Suppress uplink if assistant is speaking
-    if (sysdb.assistantSpeaking()) {
+    // Half-duplex: no uplink while the assistant speaks, unless barge-in.
+    if (!m_barge_in && sysdb.assistantSpeaking()) {
         return;
     }
     
@@ -548,6 +549,11 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                 if (data->payload_offset + data->data_len >= data->payload_len) {
                     if (!self->m_frame_overflowed && self->m_assembly_idx < MAX_INCOMING_FRAME_SIZE) {
                         self->m_assembly_scratch[self->m_assembly_idx] = '\0';
+                        // Interruptions are small frames; audio frames are big.
+                        if (self->m_assembly_idx < 1024 &&
+                            strstr(reinterpret_cast<char*>(self->m_assembly_scratch), "\"interrupted\"")) {
+                            self->m_interrupt_pending = true;
+                        }
                         // Long wait on purpose: while blocked, the WS task stops reading the
                         // socket, so the TCP window closes and Gemini pauses sending.
                         BaseType_t ok = xRingbufferSend(self->m_incoming_psram_rb,
@@ -648,8 +654,9 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 m_reply_wait_us = 0;   // the reply has started
             }
             // If transitioning to speaking, flush stale voice data and update sysdb (notifies reactors once)
-            if (!m_accept_audio) {
-                // The session was closed while this frame sat in the queue.
+            if (!m_accept_audio || m_interrupt_pending) {
+                // The session was closed while this frame sat in the queue,
+                // or the person interrupted the reply it belongs to.
                 *data_end = '"';
                 payload[length] = old_char;
                 return;
@@ -686,7 +693,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                             sent = true;
                             break;
                         }
-                        if (!m_running || !sysdb.assistantSpeaking()) break;
+                        if (!m_running || !sysdb.assistantSpeaking() || m_interrupt_pending) break;
                     }
                     if (!sent) {
                         m_rx_dropped_frames++;
@@ -738,6 +745,18 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 TranscriptLog::instance().closeTurn();
                 sysdb.mutate([](SystemState& s) {
                     s.audio.turn_complete_pending = true;
+                });
+            }
+
+            if (doc["serverContent"]["interrupted"] | false) {
+                // Barge-in: Gemini heard the person over its reply. Drop what
+                // is queued; the drain after turn_complete_pending ends the
+                // voice (music, mic and state follow as after a reply).
+                LOGI_NET("Reply interrupted by the user.");
+                BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
+                m_interrupt_pending = false;
+                sysdb.mutate([](SystemState& s) {
+                    if (s.audio.assistant_speaking) s.audio.turn_complete_pending = true;
                 });
             }
 

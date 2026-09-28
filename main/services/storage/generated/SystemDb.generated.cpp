@@ -61,6 +61,7 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_RESUME_MIN) w.u8(8, resume_min);
     if (fields & F_KEEPALIVE_S) w.u8(9, keepalive_s);
     if (fields & F_ECHO_MEASURE) w.boolean(10, echo_measure);
+    if (fields & F_BARGE_IN) w.boolean(11, barge_in);
 }
 
 void Settings::decode(std::string_view value) {
@@ -79,6 +80,7 @@ void Settings::decode(std::string_view value) {
             case 8: nexus_db::FieldReader::read(v, len, resume_min); break;
             case 9: nexus_db::FieldReader::read(v, len, keepalive_s); break;
             case 10: nexus_db::FieldReader::read(v, len, echo_measure); break;
+            case 11: nexus_db::FieldReader::read(v, len, barge_in); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

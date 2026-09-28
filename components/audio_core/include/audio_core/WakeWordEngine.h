@@ -107,6 +107,11 @@ public:
      *  often the AFE's VAD calls the echo-cancelled mic "speech" and how loud
      *  that output is; one log line per reply. Nothing is sent anywhere. */
     void setEchoMeasure(bool on) { m_echo_measure = on; }
+    /** Barge-in: the mic keeps streaming while assistant voice plays, so the
+     *  person can talk over a reply (Gemini's VAD interrupts it). */
+    void setBargeIn(bool on) { m_barge_in = on; }
+    /** Whether mic capture keeps running during assistant voice. */
+    bool keepMicDuringVoice() const { return m_echo_measure || m_barge_in; }
 
 private:
     WakeWordEngine();
@@ -139,6 +144,7 @@ private:
     volatile bool m_manual_wake_requested  = false;
     volatile uint32_t m_manual_silence_ms  = 0;
     volatile bool m_echo_measure           = false;
+    volatile bool m_barge_in               = false;
 
     // Recording tap state — set by AudioRecorder, read by feedTask/detectTask.
     volatile bool          m_recording_stereo_active     = false;

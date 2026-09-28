@@ -454,7 +454,7 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
         // Only block when assistant voice is actively playing out of the speaker.
         bool assistant_talking = m_assistant_active || AudioOrchestrator::getInstance().isVoiceActive();
         size_t buffered_voice_bytes = bm.getUsedBytes(Buffers::VOICE_RX_BUF);
-        bool block_mic_capture = assistant_talking || (buffered_voice_bytes > 0);
+        bool block_mic_capture = !m_barge_in && (assistant_talking || (buffered_voice_bytes > 0));
 
         if (m_streaming_active && !block_mic_capture && res->data && res->data_size > 0) {
             bm.send(Buffers::MIC_TX_BUF, res->data, res->data_size);

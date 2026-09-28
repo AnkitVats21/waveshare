@@ -69,6 +69,10 @@ public:
     // Test hook (POST /api/assistant/handoff): act as if Gemini had sent
     // goAway. False without a live session.
     bool simulateGoAway();
+
+    // Barge-in: mic audio goes up while a reply plays, and an "interrupted"
+    // from Gemini drops the rest of the reply.
+    void setBargeIn(bool on) { m_barge_in = on; }
     static constexpr int64_t REPLY_WAIT_US = 15LL * 1000 * 1000;
 
     // ReactorTask interface
@@ -134,6 +138,13 @@ private:
     // in internal RAM, and the gap between turns is ~1 s.
     std::atomic<bool> m_handoff_pending{false};
     void maybeHandOff(const SystemState& snap);
+
+    std::atomic<bool> m_barge_in{false};
+    // Set by the websocket handler as soon as an "interrupted" frame arrives,
+    // ahead of the reply audio still queued before it: the parser drops that
+    // audio instead of waiting for playback to drain. Cleared when the
+    // parser reaches the interrupted frame.
+    std::atomic<bool> m_interrupt_pending{false};
 
     // Kept open by endSession() with no session using it.
     std::atomic<bool> m_parked{false};

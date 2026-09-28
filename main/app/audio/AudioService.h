@@ -31,6 +31,9 @@ public:
 
     bool begin();
 
+    // Echo measurement and barge-in (system.ndb settings), applied at once.
+    static void setVoiceOptions(bool echo_measure, bool barge_in);
+
     // IWakeWordListener interface
     void onWakeWord(uint8_t channel) override;
     void onVadTimeout() override;

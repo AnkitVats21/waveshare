@@ -29,6 +29,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field resume_min:           u8 = 60        tag=8   // continue the last conversation if it ended < this many minutes ago; 0 = never
         field keepalive_s:          u8 = 60        tag=9   // keep the connection open this long after a session (mic off); 0 = close at once
         field echo_measure:         bool           tag=10  // log the echo-cancelled mic during replies (barge-in study)
+        field barge_in:             bool           tag=11  // stream the mic during replies so speaking interrupts them
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",

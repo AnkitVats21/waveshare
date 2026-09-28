@@ -3,7 +3,7 @@
 #include "services/storage/SystemDatabase.h"
 #include "services/time/TimeSyncHelper.h"
 #include "credentials/Credentials.h"
-#include "audio_core/WakeWordEngine.h"
+#include "app/audio/AudioService.h"
 #include "gemini_live/gemini_skills_generated.h"
 
 namespace {
@@ -60,6 +60,8 @@ void addDefaults(JsonDocument& doc) {
 //   keepalive_s:      the connection stays open this long after a session,
 //                     so a quick follow-up wake skips connecting (0 = close)
 //   echo_measure:     log how much echo the mic picks up during replies
+//   barge_in:         keep the mic streaming during replies, so talking
+//                     over one interrupts it
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     Settings s = Services::loadSettings();
     JsonDocument doc;
@@ -73,6 +75,7 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     doc["resume_min"] = s.resume_min;
     doc["keepalive_s"] = s.keepalive_s;
     doc["echo_measure"] = s.echo_measure;
+    doc["barge_in"] = s.barge_in;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
@@ -137,6 +140,10 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
         s.echo_measure = doc["echo_measure"];
         fields |= Settings::F_ECHO_MEASURE;
     }
+    if (doc["barge_in"].is<bool>()) {
+        s.barge_in = doc["barge_in"];
+        fields |= Settings::F_BARGE_IN;
+    }
     // Stored after validation, so a rejected request changes nothing.
     std::string new_key = doc["api_key"] | "";
     if (!new_key.empty() && !credentials::setGeminiApiKey(new_key)) {
@@ -146,8 +153,9 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     if (fields && !Services::saveSettings(s, fields)) {
         return Http::sendError(req, 500, "Failed to save settings");
     }
-    if (fields & Settings::F_ECHO_MEASURE) {
-        WakeWordEngine::getInstance().setEchoMeasure(s.echo_measure);
+    if (fields & (Settings::F_ECHO_MEASURE | Settings::F_BARGE_IN)) {
+        Settings now = Services::loadSettings();
+        AudioService::setVoiceOptions(now.echo_measure, now.barge_in);
     }
     return Http::sendOk(req, "Gemini config updated; applies to the next session");
 }

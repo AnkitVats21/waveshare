@@ -239,7 +239,15 @@ void AudioService::enterAssistantPlaybackModeNow() {
     auto& ww = WakeWordEngine::getInstance();
     ww.setAssistantActive(true);
     ww.setVadDeferred(true);
-    ww.pauseHardware();
+    // Half-duplex unless barge-in (or its echo measurement) needs the mic
+    // during the reply; the codec runs at one rate, so it can keep recording.
+    if (!ww.keepMicDuringVoice()) ww.pauseHardware();
+}
+
+void AudioService::setVoiceOptions(bool echo_measure, bool barge_in) {
+    WakeWordEngine::getInstance().setEchoMeasure(echo_measure);
+    WakeWordEngine::getInstance().setBargeIn(barge_in);
+    GeminiProtocol::getInstance().setBargeIn(barge_in);
 }
 
 void AudioService::returnToWakeMode() {

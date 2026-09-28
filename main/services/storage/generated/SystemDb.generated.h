@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0xDAC6921Du;
+constexpr uint32_t SCHEMA_HASH = 0xA184E59Eu;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -58,7 +58,8 @@ struct Settings {
         F_RESUME_MIN = 1ull << 7,
         F_KEEPALIVE_S = 1ull << 8,
         F_ECHO_MEASURE = 1ull << 9,
-        F_ALL = 0x3FFull,
+        F_BARGE_IN = 1ull << 10,
+        F_ALL = 0x7FFull,
     };
 
     std::string timezone = "UTC";
@@ -71,6 +72,7 @@ struct Settings {
     uint8_t resume_min = 60;
     uint8_t keepalive_s = 60;
     bool echo_measure = false;
+    bool barge_in = false;
 
     void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
     // Fields missing from `value` keep their current values.
