@@ -103,6 +103,11 @@ public:
     void stopRecordingTap();
     uint32_t recordingDropCount() const { return m_recording_drop_count; }
 
+    /** Echo measurement for barge-in: while assistant voice plays, count how
+     *  often the AFE's VAD calls the echo-cancelled mic "speech" and how loud
+     *  that output is; one log line per reply. Nothing is sent anywhere. */
+    void setEchoMeasure(bool on) { m_echo_measure = on; }
+
 private:
     WakeWordEngine();
     ~WakeWordEngine();
@@ -133,6 +138,7 @@ private:
     volatile bool m_wake_word_suppressed   = false;
     volatile bool m_manual_wake_requested  = false;
     volatile uint32_t m_manual_silence_ms  = 0;
+    volatile bool m_echo_measure           = false;
 
     // Recording tap state — set by AudioRecorder, read by feedTask/detectTask.
     volatile bool          m_recording_stereo_active     = false;

@@ -1,5 +1,6 @@
 #include "audio_core/WakeWordEngine.h"
 
+#include <cmath>
 #include <cstring>
 
 #include "esp_afe_sr_iface.h"
@@ -413,6 +414,15 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
 
     int silence_frames = 0;
 
+    // Echo measurement (setEchoMeasure), per stretch of assistant voice.
+    struct {
+        bool active = false;
+        uint32_t frames = 0, speech = 0, run = 0, longest = 0;
+        uint64_t sum_sq = 0, samples = 0;
+        int32_t peak = 0;
+    } echo;
+    const int frame_ms = fetch_chunksize * 1000 / 16000;
+
     while (m_task_flag) {
         // Timed wait keeps the task watchdog satisfied while processing is paused.
         EventBits_t bits = xEventGroupWaitBits(m_audio_event_group,
@@ -448,6 +458,36 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
 
         if (m_streaming_active && !block_mic_capture && res->data && res->data_size > 0) {
             bm.send(Buffers::MIC_TX_BUF, res->data, res->data_size);
+        }
+
+        if (m_echo_measure && assistant_talking && res->data && res->data_size > 0) {
+            if (!echo.active) echo = {}, echo.active = true;
+            echo.frames++;
+            if (res->vad_state == VAD_SPEECH) {
+                echo.speech++;
+                if (++echo.run > echo.longest) echo.longest = echo.run;
+            } else {
+                echo.run = 0;
+            }
+            const int16_t* pcm = res->data;
+            size_t n = res->data_size / sizeof(int16_t);
+            for (size_t i = 0; i < n; i++) {
+                int32_t v = pcm[i];
+                echo.sum_sq += (uint64_t)(v * v);
+                if (v < 0) v = -v;
+                if (v > echo.peak) echo.peak = v;
+            }
+            echo.samples += n;
+        } else if (echo.active && !assistant_talking) {
+            echo.active = false;
+            double rms = echo.samples ? sqrt((double)echo.sum_sq / echo.samples) : 0;
+            LOGI_AUDIO("Echo: %u ms of voice, VAD speech %u%% (longest %u ms), "
+                       "AEC out rms %.0f dBFS peak %.0f dBFS",
+                       (unsigned)(echo.frames * frame_ms),
+                       echo.frames ? (unsigned)(echo.speech * 100 / echo.frames) : 0,
+                       (unsigned)(echo.longest * frame_ms),
+                       rms > 0 ? 20 * log10(rms / 32768) : -96.0,
+                       echo.peak > 0 ? 20 * log10(echo.peak / 32768.0) : -96.0);
         }
 
         // ── RESAMPLED recording tap ───────────────────────────────────────────

@@ -28,6 +28,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field manual_silence_s:     u8 = 10        tag=7   // silence timeout of a session started from the API
         field resume_min:           u8 = 60        tag=8   // continue the last conversation if it ended < this many minutes ago; 0 = never
         field keepalive_s:          u8 = 60        tag=9   // keep the connection open this long after a session (mic off); 0 = close at once
+        field echo_measure:         bool           tag=10  // log the echo-cancelled mic during replies (barge-in study)
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",

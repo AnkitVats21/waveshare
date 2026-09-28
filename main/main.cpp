@@ -1,3 +1,4 @@
+#include "audio_core/WakeWordEngine.h"
 #include "app/AppController.h"
 #include "app/audio/AudioService.h"
 #include "app/audio/AudioOrchestrator.h"
@@ -127,6 +128,7 @@ extern "C" void app_main(void) {
 
     // Start services
     audio_svc.begin();
+    WakeWordEngine::getInstance().setEchoMeasure(Services::loadSettings().echo_measure);
     AudioOrchestrator::getInstance().begin();
     AlertPlayer::getInstance().begin();
     // Decodes the SD alert files into PSRAM in the background; the built-in
