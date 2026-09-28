@@ -42,21 +42,24 @@ is compiled by `scripts/generate_gemini_skills.py` into
 automatically on build, same pattern as `core_sysdb`'s schema compiler).
 To add/change a tool, edit the JSON schema, not the generated files.
 
-Current tools (25; `schema/gemini_skills_schema.json` is the source):
+Current tools (15; `schema/gemini_skills_schema.json` is the source). Related
+actions share one tool with an `action`/`kind` parameter: every declaration is
+sent with each session, and the model picks less reliably among many tools.
 
 | Function | Purpose |
 |---|---|
-| `play(query)` / `play_next(query)` | Play now (clears the queue) / right after the current track |
-| `pause` / `resume` / `stop` / `next` / `previous` | Playback transport |
-| `volume(level)` / `mute` | Speaker volume (0-100) |
-| `autoplay(enabled)` / `set_caching(enabled)` | Recommendations after the queue; saving streams to the card |
+| `play(query, when)` | Play now (clears the queue) or next |
+| `playback(action)` | pause / resume / stop / next / previous |
+| `volume(level)` | Speaker volume, 0-100 (0 mutes) |
+| `music_settings(autoplay, caching)` | Recommendations after the queue; saving streams to the card |
+| `notes(action, ...)` | list / read / write / append / delete text notes in `/sdcard/notes/` (plain names; a delete needs a confirmed second call after the user agreed) |
 | `set_led_strip(r,g,b)` | Solid LED colour |
-| `read_file(path)` / `write_file(path, content)` | Text notes, confined to `/sdcard/notes/` (plain file names only) |
 | `save_to_memory(text)` | Append to a long-term memory file |
-| `set_alarm` / `list_alarms` / `cancel_alarm` | Alarms (`main/services/alarm`, stored in system.ndb) |
-| `stop_active_alarm` / `snooze_alarm` | The ringing alarm |
-| `set_timer` | Countdown timer |
-| `set_reminder` / `list_reminders` / `cancel_reminder` / `acknowledge_reminders` | Reminders |
+| `set_alarm` / `set_timer` / `set_reminder` | Alarms, timers, reminders (`main/services/alarm`, stored in system.ndb) |
+| `list_schedule` / `cancel_scheduled(kind, id)` | List or delete them |
+| `ringing_alarm(action)` | Stop or snooze the ringing alarm |
+| `acknowledge_reminders` | Mark pending reminders heard |
+| `get_weather(location, days)` | Open-Meteo; only offered when Google Search is off or refused |
 
 The alarm, timer and reminder handlers live in
 `main/services/alarm/AlarmTools.cpp`, reached through
