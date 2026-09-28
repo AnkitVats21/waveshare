@@ -30,7 +30,7 @@ matching HTTP status.
 | Alarms | `GET/POST/DELETE /api/alarms`, `POST /api/alarms/*`, `GET /api/alarms/status`; `GET/POST/DELETE /api/reminders`, `POST /api/reminders/*` |
 | Files | `GET /api/files?path=` (list), `GET /api/files/download?path=` (Range requests: 206 / 416), `POST /api/files/upload?path=` (raw body), `POST /api/files/mkdir`, `POST /api/files/rename`, `DELETE /api/files?path=`. Paths go through `sd_storage::PathPolicy`; the credential files are refused |
 | Databases | `GET /api/db/<name>` (`system`, `recordings`, `music`): the raw `.ndb` file |
-| Config | `GET/POST /api/config/gemini` (model, voice, prompt, transcript options; the key is write-only), `GET/POST /api/config/settings` (timezone, …) |
+| Config | `GET/POST /api/config/gemini` (model, voice, prompt, transcript and session options, web_search; the key is write-only), `GET /api/config/gemini/models` (voice models this key can use, from Google, with whether search works on each), `GET/POST /api/config/settings` (timezone, …) |
 | Time | `GET/POST /api/time`, `POST /api/time/sync` |
 | Wi-Fi | `GET /api/wifi/status`, `GET /api/wifi/scan`, `POST /api/wifi/configure` |
 | System | `GET /api/system/metrics`, `/init`, `/delta` (for the built-in page), `GET /api/system/tasks` (each task's stack: size, least free, internal or PSRAM), `GET /api/system/flash` (partitions: size and what is in use, e.g. firmware length and version), `GET /api/storage/info`, `GET /api/logs?since=<seq>` (~80 lines), `POST /api/led/set`, `POST /api/system/reboot` |

@@ -74,6 +74,11 @@ public:
     // Barge-in: mic audio goes up while a reply plays, and an "interrupted"
     // from Gemini drops the rest of the reply.
     void setBargeIn(bool on) { m_barge_in = on; }
+    // The model that refused Google Search this boot ("models/..."), or "".
+    std::string searchRefusedModel() {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        return m_search_refused_model;
+    }
     // Stops the reply now (the person talked over it). If the reply is
     // still arriving, its remaining audio (and anything Gemini says after
     // it) is queued on the connection, so the session moves to a new

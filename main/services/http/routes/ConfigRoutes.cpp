@@ -5,6 +5,10 @@
 #include "credentials/Credentials.h"
 #include "app/audio/AudioService.h"
 #include "gemini_live/gemini_skills_generated.h"
+#include "gemini_live/GeminiProtocol.h"
+#include "media_player/TlsConfig.h"
+
+#include <esp_http_client.h>
 
 namespace {
 
@@ -81,6 +85,76 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     doc["web_search"] = s.web_search;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
+    return Http::sendJson(req, 200, doc);
+}
+
+esp_err_t appendBody(esp_http_client_event_t* evt) {
+    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
+        static_cast<std::string*>(evt->user_data)->append(static_cast<const char*>(evt->data), evt->data_len);
+    }
+    return ESP_OK;
+}
+
+// The models this key can run a voice session on, asked from Google (the
+// key never leaves the device): those supporting bidiGenerateContent, less
+// the transcribe, translate and robotics ones. "search" says whether Google
+// Search works there: "no" if the model refused it this boot, "yes" for the
+// 2.5 native-audio models (tested; Gemini 3.x on the free tier refuses it),
+// else "unknown". Blocks the server for up to ~8 s; the list is ~30 KB.
+esp_err_t getGeminiModelsHandler(httpd_req_t* req) {
+    std::string key = credentials::geminiApiKey();
+    if (key.empty()) return Http::sendError(req, 409, "No Gemini API key is set");
+
+    std::string body;
+    esp_http_client_config_t config = {};
+    config.url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000";
+    config.event_handler = appendBody;
+    config.user_data = &body;
+    config.timeout_ms = 8000;
+    config.buffer_size = 4096;
+    Tls::secure(config);
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) return Http::sendError(req, 503, "Out of memory for the request");
+    esp_http_client_set_header(client, "x-goog-api-key", key.c_str());
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGW("ConfigRoutes", "Model list failed: %s, HTTP %d", esp_err_to_name(err), status);
+        return Http::sendError(req, 502, "Google did not return the model list");
+    }
+
+    JsonDocument filter;
+    filter["models"][0]["name"] = true;
+    filter["models"][0]["displayName"] = true;
+    filter["models"][0]["supportedGenerationMethods"] = true;
+    JsonDocument google;
+    if (deserializeJson(google, body, DeserializationOption::Filter(filter))) {
+        return Http::sendError(req, 502, "Could not parse the model list");
+    }
+    body.clear();
+    body.shrink_to_fit();
+
+    std::string refused = GeminiProtocol::getInstance().searchRefusedModel();
+    JsonDocument doc;
+    JsonArray out = doc["models"].to<JsonArray>();
+    for (JsonObject m : google["models"].as<JsonArray>()) {
+        bool live = false;
+        for (const char* method : m["supportedGenerationMethods"].as<JsonArray>()) {
+            if (method && strcmp(method, "bidiGenerateContent") == 0) live = true;
+        }
+        std::string name = m["name"] | "";
+        if (!live || name.find("transcribe") != std::string::npos ||
+            name.find("translate") != std::string::npos || name.find("robotics") != std::string::npos) {
+            continue;
+        }
+        JsonObject o = out.add<JsonObject>();
+        o["name"] = name.rfind("models/", 0) == 0 ? name.substr(7) : name;
+        o["display_name"] = m["displayName"] | "";
+        o["search"] = name == refused                                           ? "no"
+                      : name.rfind("models/gemini-2.5-flash-native-audio", 0) == 0 ? "yes"
+                                                                                 : "unknown";
+    }
     return Http::sendJson(req, 200, doc);
 }
 
@@ -174,4 +248,5 @@ void Routes::registerConfig(Http::Server& server) {
     server.on("/api/config/settings", HTTP_POST, setSettingsHandler);
     server.on("/api/config/gemini", HTTP_GET, getGeminiHandler);
     server.on("/api/config/gemini", HTTP_POST, setGeminiHandler);
+    server.on("/api/config/gemini/models", HTTP_GET, getGeminiModelsHandler);
 }
