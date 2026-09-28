@@ -192,17 +192,20 @@
   },
   {
     "name": "delete_note",
-    "description": "Deletes a saved note. Confirm with the user first.",
+    "description": "Deletes one or more saved notes by their exact names (at most 10 per call; no wildcards). Read the names back to the user and delete only after they confirm. The result says, per name, whether it was deleted or not found.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
-        "path": {
-          "type": "STRING",
-          "description": "Note file name, e.g. 'shopping.txt'."
+        "paths": {
+          "type": "ARRAY",
+          "items": {
+            "type": "STRING"
+          },
+          "description": "Note file names, e.g. ['shopping.txt', 'ideas.txt']."
         }
       },
       "required": [
-        "path"
+        "paths"
       ]
     }
   },

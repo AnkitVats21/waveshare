@@ -16,6 +16,7 @@ namespace {
 // can't read secrets (gemini_config.json) or overwrite device config.
 constexpr const char* NOTES_DIR = "/sdcard/notes";
 constexpr size_t NOTE_NAME_MAX = 64;
+constexpr size_t MAX_DELETE_NOTES = 10;
 constexpr size_t NOTE_READ_MAX = 8192;  // keeps the tool response small
 constexpr size_t NOTE_LIST_MAX = 50;
 
@@ -160,20 +161,37 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
         }
 
         case SkillType::DELETE_NOTE: {
+            // Exact names only (resolveNotePath refuses '*' and paths), at
+            // most MAX_DELETE_NOTES, all checked before any is deleted.
             auto args = skill_call.args.delete_note;
-            std::string path;
-            if (args == nullptr || !resolveNotePath(args->path, path)) {
-                rejectPath(response_doc);
-                return true;
-            }
-            if (!sd_storage::Fs::isFile(path.c_str())) {
+            if (args == nullptr || args->paths.empty() || args->paths.size() > MAX_DELETE_NOTES) {
                 response_doc["status"] = "error";
-                response_doc["message"] = "Note not found";
+                response_doc["message"] = "Give 1 to 10 exact note names";
                 return true;
             }
-            bool ok = sd_storage::Fs::remove(path.c_str());
-            response_doc["status"] = ok ? "success" : "error";
-            response_doc["message"] = ok ? "Note deleted" : "Failed to delete the note";
+            std::vector<std::string> paths(args->paths.size());
+            for (size_t i = 0; i < paths.size(); ++i) {
+                if (!resolveNotePath(args->paths[i], paths[i])) {
+                    rejectPath(response_doc);
+                    return true;
+                }
+            }
+            JsonArray results = response_doc["results"].to<JsonArray>();
+            int deleted = 0;
+            for (size_t i = 0; i < paths.size(); ++i) {
+                JsonObject r = results.add<JsonObject>();
+                r["name"] = paths[i].substr(strlen(NOTES_DIR) + 1);
+                if (!sd_storage::Fs::isFile(paths[i].c_str())) {
+                    r["result"] = "not found";
+                } else if (sd_storage::Fs::remove(paths[i].c_str())) {
+                    r["result"] = "deleted";
+                    ++deleted;
+                } else {
+                    r["result"] = "failed";
+                }
+            }
+            response_doc["status"] = deleted > 0 ? "success" : "error";
+            response_doc["message"] = std::to_string(deleted) + " of " + std::to_string(paths.size()) + " deleted";
             return true;
         }
 

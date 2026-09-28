@@ -25,6 +25,7 @@ def generate_gemini_framework(schema_path, output_h, output_cpp):
     # 1. Generate Header Body
     h_content = """#pragma once
 #include <string>
+#include <vector>
 #include <cmath>
 #include <cstring>
 #include <ArduinoJson.h>
@@ -52,6 +53,8 @@ enum class SkillType {
                 ptype = props.get("type", "").upper()
                 if ptype == 'STRING':
                     h_content += f"    std::string {param};\n"
+                elif ptype == 'ARRAY' and props.get("items", {}).get("type", "").upper() == 'STRING':
+                    h_content += f"    std::vector<std::string> {param};\n"
                 elif ptype in ('INTEGER', 'INT'):
                     h_content += f"    int {param} = 0;\n"
                 elif ptype in ('NUMBER', 'FLOAT', 'DOUBLE'):
@@ -164,6 +167,8 @@ bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, 
                 cpp_content += f"        if (!item_{param}.isNull()) {{\n"
                 if ptype == 'STRING':
                     cpp_content += f"            if (item_{param}.is<const char*>()) out_call.args.{skill_name}->{param} = item_{param}.as<const char*>();\n"
+                elif ptype == 'ARRAY' and props.get("items", {}).get("type", "").upper() == 'STRING':
+                    cpp_content += f"            for (JsonVariantConst v : item_{param}.as<JsonArrayConst>()) if (v.is<const char*>()) out_call.args.{skill_name}->{param}.push_back(v.as<const char*>());\n"
                 elif ptype in ('INTEGER', 'INT'):
                     # The model sometimes sends whole numbers as 7.0.
                     cpp_content += f"            if (item_{param}.is<float>()) out_call.args.{skill_name}->{param} = static_cast<int>(lroundf(item_{param}.as<float>()));\n"
