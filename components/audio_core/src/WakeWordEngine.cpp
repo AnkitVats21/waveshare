@@ -517,7 +517,10 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
                 silence_frames = 0;
             } else {
                 silence_frames++;
-                if (silence_frames >= silence_timeout_frames) {
+                if (silence_frames >= silence_timeout_frames &&
+                    !m_listener->mayEndOnSilence()) {
+                    silence_frames = 0;   // count another full timeout
+                } else if (silence_frames >= silence_timeout_frames) {
                     LOGW_AUDIO("VAD: Silence threshold reached (%d ms). Suspending stream.", (int)silence_timeout_ms);
                     m_streaming_active = false; // Suspend immediately to stop pump task
                     silence_frames = 0;

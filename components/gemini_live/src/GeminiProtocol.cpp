@@ -325,7 +325,7 @@ void GeminiProtocol::sendTextDirect(const char* text) {
 void GeminiProtocol::sendTextTurn(const std::string& text) {
     std::lock_guard<std::mutex> lock(m_turn_mutex);
     m_pending_turn = text;
-    m_text_turn_us = esp_timer_get_time();
+    m_reply_wait_us = esp_timer_get_time();
     if (m_setup_complete && isConnected()) flushTextTurn();
 }
 
@@ -340,16 +340,21 @@ void GeminiProtocol::flushTextTurn() {
     m_pending_turn.clear();
 }
 
-bool GeminiProtocol::awaitingTextReply() {
+bool GeminiProtocol::awaitingReply() {
     std::lock_guard<std::mutex> lock(m_turn_mutex);
-    return m_text_turn_us != 0 && esp_timer_get_time() - m_text_turn_us < TEXT_REPLY_WAIT_US;
+    return m_reply_wait_us != 0 && esp_timer_get_time() - m_reply_wait_us < REPLY_WAIT_US;
+}
+
+void GeminiProtocol::expectReply() {
+    std::lock_guard<std::mutex> lock(m_turn_mutex);
+    m_reply_wait_us = esp_timer_get_time();
 }
 
 void GeminiProtocol::resetTextTurn() {
     std::lock_guard<std::mutex> lock(m_turn_mutex);
     m_setup_complete = false;
     m_pending_turn.clear();
-    m_text_turn_us = 0;
+    m_reply_wait_us = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -470,7 +475,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
 
             {
                 std::lock_guard<std::mutex> lock(m_turn_mutex);
-                m_text_turn_us = 0;   // the reply has started
+                m_reply_wait_us = 0;   // the reply has started
             }
             // If transitioning to speaking, flush stale voice data and update sysdb (notifies reactors once)
             if (!m_accept_audio) {
@@ -547,6 +552,10 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             recordTranscription(doc["serverContent"]);
             if (turn_complete) {
                 LOGI_NET("Assistant turn complete");
+                {
+                    std::lock_guard<std::mutex> lock(m_turn_mutex);
+                    m_reply_wait_us = 0;
+                }
                 TranscriptLog::instance().closeTurn();
                 sysdb.mutate([](SystemState& s) {
                     s.audio.turn_complete_pending = true;
@@ -583,7 +592,11 @@ void GeminiProtocol::recordTranscription(JsonObjectConst serverContent) {
     if (serverContent.isNull()) return;
     const char* in = serverContent["inputTranscription"]["text"] | "";
     const char* out = serverContent["outputTranscription"]["text"] | "";
-    if (in[0]) TranscriptLog::instance().append(TranscriptLog::Role::User, in, strlen(in));
+    if (in[0]) {
+        // Gemini heard the person, so a reply follows (possibly seconds later).
+        expectReply();
+        TranscriptLog::instance().append(TranscriptLog::Role::User, in, strlen(in));
+    }
     if (out[0]) TranscriptLog::instance().append(TranscriptLog::Role::Model, out, strlen(out));
 }
 
@@ -620,6 +633,7 @@ void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {
         std::strncpy(slot.call_id, id, sizeof(slot.call_id) - 1);
 
         LOGI_NET("Tool request: %s", name);
+        expectReply();   // the model answers after our toolResponse
         if (m_tool_handler) {
             m_tool_handler(slot, m_tool_ctx);
         } else {

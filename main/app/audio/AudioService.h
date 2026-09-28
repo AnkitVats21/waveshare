@@ -34,6 +34,7 @@ public:
     // IWakeWordListener interface
     void onWakeWord(uint8_t channel) override;
     void onVadTimeout() override;
+    bool mayEndOnSilence() override;
     void onUserSpeechDetected() override;
     void onSpeechDetected() override;
 

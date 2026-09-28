@@ -26,6 +26,14 @@ public:
     virtual void onVadTimeout() = 0;
 
     /**
+     * @brief Asked when the silence timeout expires, before streaming stops.
+     *
+     * False keeps the session streaming and restarts the silence count (a
+     * reply is still owed, or the assistant is about to speak).
+     */
+    virtual bool mayEndOnSilence() { return true; }
+
+    /**
      * @brief Called when user speech is detected while assistant is active
      *        (barge-in / interruption).
      */

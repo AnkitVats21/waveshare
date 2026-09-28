@@ -171,20 +171,23 @@ void AudioService::onWakeWord(uint8_t channel) {
     });
 }
 
-void AudioService::onVadTimeout() {
+bool AudioService::mayEndOnSilence() {
     auto snap = sysdb.snapshot();
     if (snap.assistant.media_pending_idle || snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
-        LOGI_AUDIO("VAD timeout suppressed (media_pending=%d, speaking=%d, turn_pending=%d).",
+        LOGI_AUDIO("VAD timeout held (media_pending=%d, speaking=%d, turn_pending=%d).",
                    (int)snap.assistant.media_pending_idle, (int)snap.audio.assistant_speaking, (int)snap.audio.turn_complete_pending);
-        return;
+        return false;
     }
-
-    // A reminder (text turn) is waiting for Gemini to answer; nobody speaks first.
-    if (GeminiProtocol::getInstance().awaitingTextReply()) {
-        LOGI_AUDIO("VAD timeout suppressed (waiting for the reply to a text turn).");
-        return;
+    // Gemini heard a question (or a reminder's text turn, or a tool result)
+    // and its reply hasn't started; over music it can take several seconds.
+    if (GeminiProtocol::getInstance().awaitingReply()) {
+        LOGI_AUDIO("VAD timeout held (waiting for the reply).");
+        return false;
     }
+    return true;
+}
 
+void AudioService::onVadTimeout() {
     LOGI_AUDIO("VAD timeout — returning to Idle.");
     sysdb.mutate([](SystemState& s) {
         if (s.assistant.session_state == AssistantState::StreamingUserAudio ||

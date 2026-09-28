@@ -48,10 +48,12 @@ public:
     // up: now if it already is, else when setupComplete arrives. Dropped if the
     // connection closes first. Used by reminders to have Gemini speak.
     void sendTextTurn(const std::string& text);
-    // A text turn was sent (or is queued) and no reply audio has come yet;
-    // the VAD silence timeout must not end the session meanwhile.
-    bool awaitingTextReply();
-    static constexpr int64_t TEXT_REPLY_WAIT_US = 15LL * 1000 * 1000;
+    // A reply is owed and hasn't started: a text turn was sent (or queued),
+    // the person's speech was transcribed, or a tool call was answered. The
+    // VAD silence timeout must not end the session meanwhile (the reply can
+    // take several seconds over music). Gives up after REPLY_WAIT_US.
+    bool awaitingReply();
+    static constexpr int64_t REPLY_WAIT_US = 15LL * 1000 * 1000;
 
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
@@ -84,7 +86,9 @@ private:
     // False from closeConnection() until the next CONNECTED: reply audio still
     // queued in m_incoming_psram_rb must not restart "speaking" after a close.
     std::atomic<bool> m_accept_audio{false};
-    int64_t m_text_turn_us = 0;        // when the text turn was queued; 0 = none
+    // Guarded by m_turn_mutex.
+    int64_t m_reply_wait_us = 0;       // when the owed reply was asked for; 0 = none
+    void expectReply();                // start (or restart) the reply wait
     SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
 
