@@ -192,7 +192,7 @@
   },
   {
     "name": "delete_note",
-    "description": "Deletes one or more saved notes by their exact names (at most 10 per call; no wildcards). Read the names back to the user and delete only after they confirm. The result says, per name, whether it was deleted or not found.",
+    "description": "Deletes one or more saved notes by their exact names (at most 10 per call; no wildcards). Two steps: call it first without confirmed; nothing is deleted, and it says which notes exist. Read those names to the user and ask. Only after the user agrees, call it again with the same paths and confirmed=true. The result says, per name, whether it was deleted or not found.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
@@ -202,6 +202,10 @@
             "type": "STRING"
           },
           "description": "Note file names, e.g. ['shopping.txt', 'ideas.txt']."
+        },
+        "confirmed": {
+          "type": "BOOLEAN",
+          "description": "True only on the second call, after the user agreed to delete these notes."
         }
       },
       "required": [

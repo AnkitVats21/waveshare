@@ -80,6 +80,9 @@ public:
     // Barge-in: mic audio goes up while a reply plays, and an "interrupted"
     // from Gemini drops the rest of the reply.
     void setBargeIn(bool on) { m_barge_in = on; }
+    // Model turns finished since boot; a tool can tell whether the model
+    // spoke (and the user could answer) between two of its calls.
+    uint32_t turnsCompleted() const { return m_turns_completed; }
     // The model that refused Google Search this boot ("models/..."), or "".
     std::string searchRefusedModel() {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
@@ -157,6 +160,7 @@ private:
     void maybeHandOff(const SystemState& snap);
 
     std::atomic<bool> m_barge_in{false};
+    std::atomic<uint32_t> m_turns_completed{0};
 
     // Google Search in the setup. A model without search quota (Gemini 3.x on
     // the free tier) closes the setup with 1011 "exceeded your current

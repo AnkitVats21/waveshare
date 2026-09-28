@@ -836,6 +836,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             recordTranscription(doc["serverContent"]);
             if (turn_complete) {
                 LOGI_NET("Assistant turn complete");
+                m_turns_completed++;
                 {
                     std::lock_guard<std::mutex> lock(m_turn_mutex);
                     m_reply_wait_us = 0;

@@ -5,6 +5,8 @@
 #include "freertos/task.h"
 #include "sd_storage/Fs.h"
 #include "sd_storage/File.h"
+#include "gemini_live/GeminiProtocol.h"
+#include <algorithm>
 #include <cstring>
 #include <ctime>
 
@@ -58,6 +60,16 @@ void rejectPath(JsonDocument& response_doc) {
     response_doc["message"] = "Invalid note name. Use a plain file name like 'shopping.txt' "
                               "(letters, digits, '-', '_', '.'; no folders).";
 }
+
+// delete_note's first call: the names the model was told to read back, and
+// the model's turn count then. The confirmed call must name the same notes
+// after at least one finished turn (the question asked, the user answered),
+// so the model can't confirm on its own within one reply.
+struct PendingDelete {
+    std::vector<std::string> paths;
+    uint32_t turn = 0;
+};
+PendingDelete s_pending_delete;
 
 } // namespace
 
@@ -176,6 +188,29 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
                     return true;
                 }
             }
+            // Sorted and unique, so the confirmed call may list them in any order.
+            std::sort(paths.begin(), paths.end());
+            paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+            uint32_t turn = GeminiProtocol::getInstance().turnsCompleted();
+            if (!args->confirmed || paths != s_pending_delete.paths || turn == s_pending_delete.turn) {
+                s_pending_delete = {paths, turn};
+                JsonArray notes = response_doc["notes"].to<JsonArray>();
+                int found = 0;
+                for (const auto& p : paths) {
+                    JsonObject n = notes.add<JsonObject>();
+                    n["name"] = p.substr(strlen(NOTES_DIR) + 1);
+                    bool exists = sd_storage::Fs::isFile(p.c_str());
+                    n["exists"] = exists;
+                    found += exists;
+                }
+                response_doc["status"] = "confirm";
+                response_doc["message"] = found == 0
+                    ? "None of these notes exist; nothing to delete. Use list_notes for the names."
+                    : "Nothing deleted yet. Read the existing names to the user and ask them to confirm. "
+                      "If they agree, call delete_note again with the same paths and confirmed=true.";
+                return true;
+            }
+            s_pending_delete = {};
             JsonArray results = response_doc["results"].to<JsonArray>();
             int deleted = 0;
             for (size_t i = 0; i < paths.size(); ++i) {
