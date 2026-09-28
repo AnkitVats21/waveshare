@@ -532,12 +532,12 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             res->wakeup_state == WAKENET_DETECTED) {
             detected = true;
             channel  = (uint8_t)res->trigger_channel_id;
-            LOGI_SYSTEM("Wake word detected (1-ch) — streaming started");
+            if (!m_streaming_active) LOGI_SYSTEM("Wake word detected (1-ch) — streaming started");
         } else if (res->raw_data_channels > 1 &&
                    res->wakeup_state == WAKENET_CHANNEL_VERIFIED) {
             detected = true;
             channel  = (uint8_t)res->trigger_channel_id;
-            LOGI_SYSTEM("Wake word detected (ch %d) — streaming started", channel);
+            if (!m_streaming_active) LOGI_SYSTEM("Wake word detected (ch %d) — streaming started", channel);
         } else if (m_manual_wake_requested) {
             m_manual_wake_requested = false;
             if (!m_streaming_active) {

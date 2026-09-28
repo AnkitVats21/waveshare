@@ -231,6 +231,16 @@ void GeminiProtocol::restartConnection() {
         std::lock_guard<std::mutex> turn(m_turn_mutex);
         m_setup_complete = false;
     }
+    if (m_interrupt_pending) {
+        // Frames of the interrupted reply still queued for the parser (this
+        // task) belong to the old connection: discard them.
+        size_t size;
+        void* item;
+        while ((item = xRingbufferReceive(m_incoming_psram_rb, &size, 0)) != nullptr) {
+            vRingbufferReturnItem(m_incoming_psram_rb, item);
+        }
+        m_interrupt_pending = false;
+    }
     m_restarting = false;
     LOGI_NET("Reconnecting...");
     if (m_client.start() != ESP_OK) {
@@ -259,14 +269,29 @@ void GeminiProtocol::maybeHandOff(const SystemState& snap) {
 void GeminiProtocol::interruptReply() {
     auto snap = sysdb.snapshot();
     if (!snap.audio.assistant_speaking) return;
-    LOGI_NET("Interrupting the reply; dropping its remaining audio.");
-    // Only while it is still arriving: after its turnComplete nothing would
-    // clear the flag, and the next reply would be dropped.
-    if (!snap.audio.turn_complete_pending) m_interrupt_pending = true;
+    bool arriving = !snap.audio.turn_complete_pending;
     BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
     sysdb.mutate([](SystemState& s) {
         if (s.audio.assistant_speaking) s.audio.turn_complete_pending = true;
     });
+    expectReply();   // to what the person says next; holds the silence timeout
+    if (!arriving) {
+        LOGI_NET("Interrupting the reply (fully received; flushed).");
+        return;
+    }
+    // The rest of the reply is still queued on the connection, and the
+    // connection downloads at about real time (5.7 KB TCP window): whatever
+    // Gemini says next would wait behind it (20 s on the device). Start a
+    // new connection resuming the conversation instead; the mic audio waits
+    // in MIC_TX_BUF until its setup completes.
+    LOGI_NET("Interrupting the reply; reconnecting to drop its queued audio.");
+    m_interrupt_pending = true;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        m_force_resume = true;
+        m_setup_complete = false;   // the pump holds the mic audio from now
+    }
+    requestRestart(false);
 }
 
 bool GeminiProtocol::simulateGoAway() {
