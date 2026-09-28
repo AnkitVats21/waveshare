@@ -4,6 +4,9 @@
 #include "esp_log.h"
 #include "freertos/task.h"
 #include "sd_storage/Fs.h"
+#include "sd_storage/File.h"
+#include <cstring>
+#include <ctime>
 
 static const char* TAG = "DeviceCmd";
 
@@ -14,6 +17,7 @@ namespace {
 constexpr const char* NOTES_DIR = "/sdcard/notes";
 constexpr size_t NOTE_NAME_MAX = 64;
 constexpr size_t NOTE_READ_MAX = 8192;  // keeps the tool response small
+constexpr size_t NOTE_LIST_MAX = 50;
 
 // Maps a model-supplied name ("shopping.txt", or "/sdcard/notes/shopping.txt")
 // to a full path inside NOTES_DIR. False if it would leave the folder.
@@ -29,6 +33,23 @@ bool resolveNotePath(const std::string& in, std::string& out) {
     }
     out = prefix + name;
     return true;
+}
+
+bool listNote(const sd_storage::DirEntry& entry, void* ctx) {
+    auto& notes = *static_cast<JsonArray*>(ctx);
+    if (entry.is_dir || entry.name[0] == '.') return true;
+    size_t len = strlen(entry.name);
+    if (len > 4 && strcmp(entry.name + len - 4, ".tmp") == 0) return true;   // writeAtomic's
+    JsonObject note = notes.add<JsonObject>();
+    note["name"] = entry.name;
+    note["bytes"] = entry.size;
+    struct tm tm_local;
+    char when[20];
+    if (entry.mtime > 0 && localtime_r(&entry.mtime, &tm_local) &&
+        strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &tm_local)) {
+        note["modified"] = when;
+    }
+    return notes.size() < NOTE_LIST_MAX;
 }
 
 void rejectPath(JsonDocument& response_doc) {
@@ -101,6 +122,61 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             return true;
         }
             
+        case SkillType::LIST_NOTES: {
+            JsonArray notes = response_doc["notes"].to<JsonArray>();
+            if (sd_storage::Fs::isDir(NOTES_DIR)) {
+                sd_storage::Fs::list(NOTES_DIR, nullptr, true, listNote, &notes);
+            }
+            response_doc["status"] = "success";
+            if (notes.size() >= NOTE_LIST_MAX) response_doc["truncated"] = true;
+            return true;
+        }
+
+        case SkillType::APPEND_NOTE: {
+            auto args = skill_call.args.append_note;
+            std::string path;
+            if (args == nullptr || !resolveNotePath(args->path, path)) {
+                rejectPath(response_doc);
+                return true;
+            }
+            if (!sd_storage::Fs::mkdirs(NOTES_DIR)) {
+                ESP_LOGW(TAG, "Could not create %s", NOTES_DIR);
+            }
+            // One entry per line: start a new line unless the note ends with one.
+            std::string text = args->content;
+            if (text.empty() || text.back() != '\n') text += '\n';
+            auto file = sd_storage::File::open(path.c_str(), sd_storage::Mode::UpdateOrCreate);
+            bool ok = false;
+            if (file) {
+                char last = '\n';
+                long size = file.size();
+                if (size > 0 && file.seek(size - 1)) file.read(&last, 1);
+                if (last != '\n') text.insert(text.begin(), '\n');
+                ok = file.seek(0, SEEK_END) && file.writeAll(text.data(), text.size());
+            }
+            response_doc["status"] = ok ? "success" : "error";
+            response_doc["message"] = ok ? "Added to the note" : "Failed to update the note";
+            return true;
+        }
+
+        case SkillType::DELETE_NOTE: {
+            auto args = skill_call.args.delete_note;
+            std::string path;
+            if (args == nullptr || !resolveNotePath(args->path, path)) {
+                rejectPath(response_doc);
+                return true;
+            }
+            if (!sd_storage::Fs::isFile(path.c_str())) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "Note not found";
+                return true;
+            }
+            bool ok = sd_storage::Fs::remove(path.c_str());
+            response_doc["status"] = ok ? "success" : "error";
+            response_doc["message"] = ok ? "Note deleted" : "Failed to delete the note";
+            return true;
+        }
+
         case SkillType::SET_LED_STRIP: {
             auto args = skill_call.args.set_led_strip;
             if (args == nullptr) {

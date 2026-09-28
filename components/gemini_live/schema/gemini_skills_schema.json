@@ -162,6 +162,51 @@
     }
   },
   {
+    "name": "list_notes",
+    "description": "Lists the saved notes: file name, size and when each was last changed.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "append_note",
+    "description": "Adds text to the end of a note, on a new line; creates the note if it doesn't exist.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "path": {
+          "type": "STRING",
+          "description": "Note file name, e.g. 'shopping.txt'."
+        },
+        "content": {
+          "type": "STRING",
+          "description": "Text to add."
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "delete_note",
+    "description": "Deletes a saved note. Confirm with the user first.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "path": {
+          "type": "STRING",
+          "description": "Note file name, e.g. 'shopping.txt'."
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
     "name": "set_led_strip",
     "description": "Configures the solid status color of the RGB LED ring (for system idle states).",
     "parameters": {
