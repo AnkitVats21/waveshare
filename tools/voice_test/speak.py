@@ -4,10 +4,12 @@
     speak.py "What time is it?"
     speak.py --voice Kore --espeak "Alexa"
 
-Uses Gemini TTS (natural voice) with the key in ~/.config/nexus/gemini_key,
-and gemini_key2 when the first is out of quota (429); each phrase is cached
-in ~/.cache/nexus_tts so repeats cost nothing. If TTS fails it stops rather
-than fall back: the model mishears espeak-ng, which spoils the test. espeak-ng
+Speech comes from a Gemini Live session reading the text verbatim
+(live_audio.py; checked against its own transcript), falling back to the
+Gemini TTS model (small free quota) with the key in
+~/.config/nexus/gemini_key, then gemini_key2 on a 429. Each phrase is
+cached in ~/.cache/nexus_tts so repeats cost nothing. If both fail it stops
+rather than fall back to espeak-ng, which the model mishears; espeak-ng
 only with --espeak. Keys are never printed.
 """
 import argparse, base64, hashlib, json, pathlib, subprocess, sys, urllib.error, urllib.request, wave
@@ -18,11 +20,28 @@ MODEL = "gemini-2.5-flash-preview-tts"
 RATE = 24000  # Gemini TTS returns 24 kHz mono s16le
 
 
+def _write_wav(path, pcm):
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(pcm)
+
+
 def tts(text, voice):
     CACHE.mkdir(parents=True, exist_ok=True)
-    path = CACHE / (hashlib.sha1(f"{MODEL}|{voice}|{text}".encode()).hexdigest() + ".wav")
-    if path.exists():
+    for model in ("live", MODEL):
+        path = CACHE / (hashlib.sha1(f"{model}|{voice}|{text}".encode()).hexdigest() + ".wav")
+        if path.exists():
+            return path
+    try:
+        from live_audio import speech
+        path = CACHE / (hashlib.sha1(f"live|{voice}|{text}".encode()).hexdigest() + ".wav")
+        _write_wav(path, speech(text, voice))
         return path
+    except Exception as e:
+        print(f"Live TTS failed ({e}); trying the TTS model", file=sys.stderr)
+    path = CACHE / (hashlib.sha1(f"{MODEL}|{voice}|{text}".encode()).hexdigest() + ".wav")
     body = {
         "contents": [{"parts": [{"text": text}]}],
         "generationConfig": {
@@ -50,12 +69,7 @@ def tts(text, voice):
                 break
     if data is None:
         raise RuntimeError(err)
-    pcm = base64.b64decode(data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"])
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(RATE)
-        w.writeframes(pcm)
+    _write_wav(path, base64.b64decode(data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]))
     return path
 
 
