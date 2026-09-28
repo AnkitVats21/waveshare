@@ -431,6 +431,22 @@ void GeminiProtocol::transmitSetupHandshake() {
     }
     setup["contextWindowCompression"]["slidingWindow"].to<JsonObject>();
 
+    // Field names checked against gemini-2.5-flash-native-audio-latest and
+    // gemini-3.8-live (a bad enum value is refused with 1007).
+    JsonObject aad;
+    auto detection = [&]() {
+        if (aad.isNull()) aad = setup["realtimeInputConfig"]["automaticActivityDetection"].to<JsonObject>();
+        return aad;
+    };
+    if (cfg.vad_start == 1 || cfg.vad_start == 2) {
+        detection()["startOfSpeechSensitivity"] = cfg.vad_start == 1 ? "START_SENSITIVITY_LOW" : "START_SENSITIVITY_HIGH";
+    }
+    if (cfg.vad_end == 1 || cfg.vad_end == 2) {
+        detection()["endOfSpeechSensitivity"] = cfg.vad_end == 1 ? "END_SENSITIVITY_LOW" : "END_SENSITIVITY_HIGH";
+    }
+    if (cfg.vad_prefix_ms) detection()["prefixPaddingMs"] = cfg.vad_prefix_ms;
+    if (cfg.vad_silence_ms) detection()["silenceDurationMs"] = cfg.vad_silence_ms;
+
     bool search = false;
     {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
@@ -445,11 +461,12 @@ void GeminiProtocol::transmitSetupHandshake() {
 
     std::string payload;
     serializeJson(doc, payload);
-    LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s search=%s instruction=%zu bytes (payload %zu bytes) resume=%s",
+    LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s search=%s vad=%u/%u/%u/%u instruction=%zu bytes (payload %zu bytes) resume=%s",
              setup["model"] | "?",
              setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] | "?",
              !cfg.transcripts ? "off" : cfg.transcript_log ? "on+log" : "on",
-             search ? "on" : "off", instruction.size(), payload.size(),
+             search ? "on" : "off", cfg.vad_start, cfg.vad_end, cfg.vad_prefix_ms, cfg.vad_silence_ms,
+             instruction.size(), payload.size(),
              resume_age_s < 0 ? "no" : (std::to_string(resume_age_s) + " s old").c_str());
     m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
 }

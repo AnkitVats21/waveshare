@@ -30,6 +30,12 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field keepalive_s:          u8 = 60        tag=9   // keep the connection open this long after a session (mic off); 0 = close at once
         field echo_measure:         bool           tag=10  // log the echo-cancelled mic during replies (barge-in study)
         field barge_in:             bool           tag=11  // stream the mic during replies so speaking interrupts them
+        // Gemini's own voice detection (realtimeInputConfig). Sensitivity:
+        // 0 = Gemini's default, 1 = low, 2 = high; ms: 0 = Gemini's default.
+        field vad_start:            u8 = 1         tag=13  // low: echo and noise start a turn less often
+        field vad_end:              u8             tag=14
+        field vad_prefix_ms:        u16            tag=15  // speech needed before a start counts
+        field vad_silence_ms:       u16            tag=16  // silence that ends the user's turn
         field web_search:           bool = true    tag=12  // give Gemini Google Search (2.5 Live models; 3.x refuses it on the free tier)
     }
 

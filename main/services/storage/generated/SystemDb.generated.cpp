@@ -62,6 +62,10 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_KEEPALIVE_S) w.u8(9, keepalive_s);
     if (fields & F_ECHO_MEASURE) w.boolean(10, echo_measure);
     if (fields & F_BARGE_IN) w.boolean(11, barge_in);
+    if (fields & F_VAD_START) w.u8(13, vad_start);
+    if (fields & F_VAD_END) w.u8(14, vad_end);
+    if (fields & F_VAD_PREFIX_MS) w.u16(15, vad_prefix_ms);
+    if (fields & F_VAD_SILENCE_MS) w.u16(16, vad_silence_ms);
     if (fields & F_WEB_SEARCH) w.boolean(12, web_search);
 }
 
@@ -82,6 +86,10 @@ void Settings::decode(std::string_view value) {
             case 9: nexus_db::FieldReader::read(v, len, keepalive_s); break;
             case 10: nexus_db::FieldReader::read(v, len, echo_measure); break;
             case 11: nexus_db::FieldReader::read(v, len, barge_in); break;
+            case 13: nexus_db::FieldReader::read(v, len, vad_start); break;
+            case 14: nexus_db::FieldReader::read(v, len, vad_end); break;
+            case 15: nexus_db::FieldReader::read(v, len, vad_prefix_ms); break;
+            case 16: nexus_db::FieldReader::read(v, len, vad_silence_ms); break;
             case 12: nexus_db::FieldReader::read(v, len, web_search); break;
             default: break;  // unknown tag: a newer or retired field
         }

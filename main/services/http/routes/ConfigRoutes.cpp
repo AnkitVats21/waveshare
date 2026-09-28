@@ -68,6 +68,10 @@ void addDefaults(JsonDocument& doc) {
 //                     over one interrupts it
 //   web_search:       give Gemini Google Search (works on the 2.5 Live
 //                     models; a model that refuses it runs without it)
+//   vad_start, vad_end: Gemini's start/end-of-speech sensitivity,
+//                     0 = its default, 1 = low, 2 = high
+//   vad_prefix_ms, vad_silence_ms: speech needed before a start counts, and
+//                     silence that ends a turn (0 = Gemini's default)
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     Settings s = Services::loadSettings();
     JsonDocument doc;
@@ -83,6 +87,10 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     doc["echo_measure"] = s.echo_measure;
     doc["barge_in"] = s.barge_in;
     doc["web_search"] = s.web_search;
+    doc["vad_start"] = s.vad_start;
+    doc["vad_end"] = s.vad_end;
+    doc["vad_prefix_ms"] = s.vad_prefix_ms;
+    doc["vad_silence_ms"] = s.vad_silence_ms;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
@@ -220,6 +228,22 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     if (doc["barge_in"].is<bool>()) {
         s.barge_in = doc["barge_in"];
         fields |= Settings::F_BARGE_IN;
+    }
+    auto takeInt = [&](const char* key, int max, uint64_t bit, auto& dst) {
+        if (!doc[key].is<int>()) return true;
+        int v = doc[key];
+        if (v < 0 || v > max) return false;
+        dst = v;
+        fields |= bit;
+        return true;
+    };
+    if (!takeInt("vad_start", 2, Settings::F_VAD_START, s.vad_start) ||
+        !takeInt("vad_end", 2, Settings::F_VAD_END, s.vad_end)) {
+        return Http::sendError(req, 400, "vad_start and vad_end must be 0-2");
+    }
+    if (!takeInt("vad_prefix_ms", 2000, Settings::F_VAD_PREFIX_MS, s.vad_prefix_ms) ||
+        !takeInt("vad_silence_ms", 5000, Settings::F_VAD_SILENCE_MS, s.vad_silence_ms)) {
+        return Http::sendError(req, 400, "vad_prefix_ms must be 0-2000, vad_silence_ms 0-5000");
     }
     if (doc["web_search"].is<bool>()) {
         s.web_search = doc["web_search"];

@@ -35,6 +35,12 @@ public:
         uint8_t resume_min = 60;      // resume the last conversation if younger; 0 = never
         uint8_t keepalive_s = 60;     // keep the connection after a session; 0 = close
         bool web_search = true;       // add Google Search to the tools
+        // Gemini's voice detection: sensitivity 0 = its default, 1 = low,
+        // 2 = high; ms 0 = its default.
+        uint8_t vad_start = 1;
+        uint8_t vad_end = 0;
+        uint16_t vad_prefix_ms = 0;
+        uint16_t vad_silence_ms = 0;
     };
     typedef SessionSettings (*SettingsSourceFn)();
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }

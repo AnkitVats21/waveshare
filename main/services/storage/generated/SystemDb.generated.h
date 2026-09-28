@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0xB436FA3Cu;
+constexpr uint32_t SCHEMA_HASH = 0x5877A3B0u;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -59,8 +59,12 @@ struct Settings {
         F_KEEPALIVE_S = 1ull << 8,
         F_ECHO_MEASURE = 1ull << 9,
         F_BARGE_IN = 1ull << 10,
-        F_WEB_SEARCH = 1ull << 11,
-        F_ALL = 0xFFFull,
+        F_VAD_START = 1ull << 11,
+        F_VAD_END = 1ull << 12,
+        F_VAD_PREFIX_MS = 1ull << 13,
+        F_VAD_SILENCE_MS = 1ull << 14,
+        F_WEB_SEARCH = 1ull << 15,
+        F_ALL = 0xFFFFull,
     };
 
     std::string timezone = "UTC";
@@ -74,6 +78,10 @@ struct Settings {
     uint8_t keepalive_s = 60;
     bool echo_measure = false;
     bool barge_in = false;
+    uint8_t vad_start = 1;
+    uint8_t vad_end = 0;
+    uint16_t vad_prefix_ms = 0;
+    uint16_t vad_silence_ms = 0;
     bool web_search = true;
 
     void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
