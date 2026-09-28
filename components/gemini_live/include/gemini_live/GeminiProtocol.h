@@ -73,6 +73,12 @@ public:
     // Barge-in: mic audio goes up while a reply plays, and an "interrupted"
     // from Gemini drops the rest of the reply.
     void setBargeIn(bool on) { m_barge_in = on; }
+    // Stops the reply now (the wake word was said over it). Gemini generates
+    // faster than real time, and its own "interrupted" waits behind the reply
+    // audio already queued on the connection; dropping that audio instead of
+    // playing it drains the queue at network speed, so the answer to what
+    // the person says next comes quickly.
+    void interruptReply();
     static constexpr int64_t REPLY_WAIT_US = 15LL * 1000 * 1000;
 
     // ReactorTask interface

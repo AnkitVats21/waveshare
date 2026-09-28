@@ -201,7 +201,7 @@ void AudioService::onVadTimeout() {
 }
 
 void AudioService::onUserSpeechDetected() {
-    LOGW_AUDIO("User speech during assistant playback — half-duplex, ignoring.");
+    GeminiProtocol::getInstance().interruptReply();
 }
 
 void AudioService::onSpeechDetected() {

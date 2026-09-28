@@ -256,6 +256,19 @@ void GeminiProtocol::maybeHandOff(const SystemState& snap) {
     requestRestart(true);
 }
 
+void GeminiProtocol::interruptReply() {
+    auto snap = sysdb.snapshot();
+    if (!snap.audio.assistant_speaking) return;
+    LOGI_NET("Interrupting the reply; dropping its remaining audio.");
+    // Only while it is still arriving: after its turnComplete nothing would
+    // clear the flag, and the next reply would be dropped.
+    if (!snap.audio.turn_complete_pending) m_interrupt_pending = true;
+    BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
+    sysdb.mutate([](SystemState& s) {
+        if (s.audio.assistant_speaking) s.audio.turn_complete_pending = true;
+    });
+}
+
 bool GeminiProtocol::simulateGoAway() {
     if (!m_accept_audio || sysdb.snapshot().assistant.ws_state != WsState::CONNECTED) return false;
     LOGW_NET("Simulated goAway; handing off at the next turn boundary.");
@@ -742,6 +755,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                     m_reply_wait_us = 0;
                     m_resume_handle_us = esp_timer_get_time();   // last activity
                 }
+                m_interrupt_pending = false;   // the interrupted reply has ended
                 TranscriptLog::instance().closeTurn();
                 sysdb.mutate([](SystemState& s) {
                     s.audio.turn_complete_pending = true;

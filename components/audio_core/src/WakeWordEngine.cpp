@@ -422,6 +422,7 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
         int32_t peak = 0;
     } echo;
     const int frame_ms = fetch_chunksize * 1000 / 16000;
+    bool wakenet_during_reply = false;   // barge-in: WakeNet re-enabled for a reply
 
     while (m_task_flag) {
         // Timed wait keeps the task watchdog satisfied while processing is paused.
@@ -510,6 +511,18 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             }
         }
 
+        // Barge-in by wake word: WakeNet (off during a session to save CPU)
+        // listens to the echo-cancelled mic while the assistant speaks.
+        bool want_wakenet = m_streaming_active && m_barge_in && assistant_talking;
+        if (want_wakenet != wakenet_during_reply && m_streaming_active) {
+            if (want_wakenet) {
+                m_afe_handle->enable_wakenet(afe_data);
+            } else {
+                m_afe_handle->disable_wakenet(afe_data);
+            }
+            wakenet_during_reply = want_wakenet;
+        }
+
         // ── Wake word detection ───────────────────────────────────────────────
         bool detected = false;
         bool manual = false;
@@ -534,7 +547,17 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             }
         }
 
+        if (detected && m_streaming_active) {
+            // The wake word over a reply: interrupt it, don't start a session.
+            detected = false;
+            if (assistant_talking) {
+                LOGI_SYSTEM("Wake word over the reply — interrupting it");
+                m_listener->onUserSpeechDetected();
+            }
+        }
+
         if (detected) {
+            wakenet_during_reply = false;
             silence_timeout_ms = VAD_SILENCE_TIMEOUT_MS;
             if (manual && m_manual_silence_ms > 0) {
                 silence_timeout_ms = m_manual_silence_ms;

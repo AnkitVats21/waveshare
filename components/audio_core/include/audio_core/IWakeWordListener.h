@@ -34,8 +34,8 @@ public:
     virtual bool mayEndOnSilence() { return true; }
 
     /**
-     * @brief Called when user speech is detected while assistant is active
-     *        (barge-in / interruption).
+     * @brief Called when the wake word is heard over the assistant's reply
+     *        (barge-in on): the reply should stop.
      */
     virtual void onUserSpeechDetected() = 0;
 
