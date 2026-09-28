@@ -1,3 +1,4 @@
+#include "services/weather/Weather.h"
 #include "AppController.h"
 #include "app/audio/AudioService.h"
 #include "gemini_live/GeminiProtocol.h"
@@ -93,8 +94,16 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
     JsonDocument response_doc;
     bool is_media_command = false;
 
-    // Try device/local commands first; if not handled, fall back to media command handler
-    if (!DeviceCommandHandler::handle(skill_call, response_doc)) {
+    // get_weather answers from a worker task once the lookup is done.
+    if (skill_call.type == GeminiSkills::SkillType::GET_WEATHER) {
+        const auto* args = skill_call.args.get_weather;
+        if (Services::Weather::fetchAsync(skill_call.call_id, args ? args->location : "", args ? args->days : 1)) {
+            return;
+        }
+        response_doc["status"] = "error";
+        response_doc["message"] = "Weather lookup unavailable (out of memory)";
+    } else if (!DeviceCommandHandler::handle(skill_call, response_doc)) {
+        // Not a device/local command: try the media commands.
         if (MediaCommandHandler::handle(skill_call, response_doc)) {
             is_media_command = true;
         } else {

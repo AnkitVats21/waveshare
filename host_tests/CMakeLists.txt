@@ -59,6 +59,8 @@ nanobind_add_module(waveshare_host
     ../components/media_player/src/WebmSeek.cpp
     ../components/media_player/src/OggSeek.cpp
     ../main/app/audio/recording/RecordingProbe.cpp
+    bindings/bind_weather.cpp
+    ../main/services/weather/WeatherText.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)

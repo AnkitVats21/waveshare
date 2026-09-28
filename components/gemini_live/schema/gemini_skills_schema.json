@@ -423,5 +423,22 @@
         "text"
       ]
     }
+  },
+  {
+    "name": "get_weather",
+    "description": "Current weather and a daily forecast (up to 7 days) from Open-Meteo. Without a location it uses the device's home location. Temperatures in degrees Celsius.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "location": {
+          "type": "STRING",
+          "description": "City name, e.g. 'Pune' or 'Paris'. Omit for the home location."
+        },
+        "days": {
+          "type": "INTEGER",
+          "description": "Forecast days, 1-7. Default 1 (today); 2 includes tomorrow."
+        }
+      }
+    }
   }
 ]

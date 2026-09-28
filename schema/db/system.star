@@ -36,6 +36,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field vad_end:              u8             tag=14
         field vad_prefix_ms:        u16            tag=15  // speech needed before a start counts
         field vad_silence_ms:       u16            tag=16  // silence that ends the user's turn
+        field weather_location:     string         tag=17  // home city for get_weather, e.g. "Pune"
         field web_search:           bool = true    tag=12  // give Gemini Google Search (2.5 Live models; 3.x refuses it on the free tier)
     }
 

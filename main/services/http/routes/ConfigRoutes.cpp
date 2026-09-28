@@ -68,6 +68,7 @@ void addDefaults(JsonDocument& doc) {
 //                     over one interrupts it
 //   web_search:       give Gemini Google Search (works on the 2.5 Live
 //                     models; a model that refuses it runs without it)
+//   weather_location: home city for the weather tool, e.g. "Pune"
 //   vad_start, vad_end: Gemini's start/end-of-speech sensitivity,
 //                     0 = its default, 1 = low, 2 = high
 //   vad_prefix_ms, vad_silence_ms: speech needed before a start counts, and
@@ -87,6 +88,7 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     doc["echo_measure"] = s.echo_measure;
     doc["barge_in"] = s.barge_in;
     doc["web_search"] = s.web_search;
+    doc["weather_location"] = s.weather_location;
     doc["vad_start"] = s.vad_start;
     doc["vad_end"] = s.vad_end;
     doc["vad_prefix_ms"] = s.vad_prefix_ms;
@@ -189,6 +191,8 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     take("model", s.gemini_model, Settings::F_GEMINI_MODEL);
     take("voice", s.gemini_voice, Settings::F_GEMINI_VOICE);
     take("system_prompt", s.gemini_system_prompt, Settings::F_GEMINI_SYSTEM_PROMPT);
+    take("weather_location", s.weather_location, Settings::F_WEATHER_LOCATION);
+    if (s.weather_location.size() > 64) return Http::sendError(req, 400, "weather_location is too long");
     if (doc["transcripts"].is<bool>()) {
         s.transcripts = doc["transcripts"];
         fields |= Settings::F_TRANSCRIPTS;
