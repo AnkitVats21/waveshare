@@ -61,7 +61,11 @@ def main():
             api("POST", "/api/assistant/wake")
         except urllib.error.HTTPError as e:
             sys.exit(f"wake refused: {e.code} {e.read().decode()}")
+    woke = time.time()
     wait_for(lambda s: s["state"] == "listening" and s["connection"] == "connected", 20, "session to connect")
+    # A kept-alive connection is listening ~20 ms after the wake, while the
+    # ~1.1 s wake chime still plays; speech over it isn't heard.
+    time.sleep(max(0.0, woke + 1.4 - time.time()))
     print("[session listening]")
 
     for prompt in a.prompts:
