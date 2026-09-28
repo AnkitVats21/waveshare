@@ -143,9 +143,9 @@ int McpClient::postJsonRpc(const std::string& payload, std::string& response_bod
         return -1;
     }
 
-    if (status == 200) {
+    if (status >= 200 && status < 300) {
         response_body = extractJsonRpcBody(ctx.raw_body, expected_id);
-        return 200;
+        return status;
     }
 
     if (status == 404) {
@@ -176,7 +176,7 @@ bool McpClient::initialize(std::string* error_out) {
 
     std::string resp;
     int status = postJsonRpc(init_payload, resp, id, error_out);
-    if (status != 200) {
+    if (status < 200 || status >= 300) {
         ESP_LOGW(TAG, "initialize RPC failed: status %d", status);
         return false;
     }
@@ -217,7 +217,7 @@ bool McpClient::listTools(std::string& raw_tools_response, std::string* error_ou
         }
     }
 
-    return (status == 200 && !raw_tools_response.empty());
+    return (status >= 200 && status < 300 && !raw_tools_response.empty());
 }
 
 bool McpClient::callTool(const std::string& name, const std::string& arguments_json,
@@ -259,7 +259,7 @@ bool McpClient::callTool(const std::string& name, const std::string& arguments_j
         }
     }
 
-    return (status == 200 && !raw_call_response.empty());
+    return (status >= 200 && status < 300 && !raw_call_response.empty());
 }
 
 } // namespace Mcp
