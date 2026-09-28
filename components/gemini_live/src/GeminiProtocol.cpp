@@ -687,11 +687,6 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
         if (data_end) {
             *data_end = '\0';
 
-            {
-                std::lock_guard<std::mutex> lock(m_turn_mutex);
-                m_reply_wait_us = 0;   // the reply has started
-            }
-            // If transitioning to speaking, flush stale voice data and update sysdb (notifies reactors once)
             if (!m_accept_audio || m_interrupt_pending) {
                 // The session was closed while this frame sat in the queue,
                 // or the person interrupted the reply it belongs to.
@@ -699,6 +694,11 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 payload[length] = old_char;
                 return;
             }
+            {
+                std::lock_guard<std::mutex> lock(m_turn_mutex);
+                m_reply_wait_us = 0;   // the reply has started
+            }
+            // If transitioning to speaking, flush stale voice data and update sysdb (notifies reactors once)
             if (!sysdb.assistantSpeaking()) {
                 BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
                 sysdb.mutate([](SystemState& s) {
