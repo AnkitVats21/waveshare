@@ -60,6 +60,11 @@ public:
     // VAD silence timeout must not end the session meanwhile (the reply can
     // take several seconds over music). Gives up after REPLY_WAIT_US.
     bool awaitingReply();
+    // The connection is up and Gemini has acknowledged the setup.
+    bool setupComplete() {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        return m_setup_complete && isConnected();
+    }
 
     // Test hook (POST /api/assistant/handoff): act as if Gemini had sent
     // goAway. False without a live session.

@@ -64,6 +64,21 @@ bool GeminiAudioPump::processUplink() {
     auto& bm = BufferManager::getInstance();
     size_t chunk_size = 0;
 
+    if (ulTaskNotifyTake(pdTRUE, 0) != 0) {
+        m_cached_ws_state = sysdb.wsState();
+        m_cached_pipeline_mode = sysdb.pipelineMode();
+    }
+    // While a session's connection is being made (or remade after a goAway),
+    // leave the mic audio in MIC_TX_BUF (~4 s) and send it once setup is
+    // complete: a handoff takes ~3 s and used to lose the start of the next
+    // question. A closed or failed connection drains the buffer as before.
+    if (m_cached_pipeline_mode == PipelineMode::GEMINI_LIVE &&
+        WakeWordEngine::getInstance().isStreamingActive() &&
+        (m_cached_ws_state == WsState::CONNECTING || m_cached_ws_state == WsState::CONNECTED) &&
+        !GeminiProtocol::getInstance().setupComplete()) {
+        return false;
+    }
+
     // Block on receive with a 100ms timeout
     uint8_t* pcm_data = static_cast<uint8_t*>(
         bm.receive(Buffers::MIC_TX_BUF, &chunk_size, pdMS_TO_TICKS(100), 1024));
@@ -71,12 +86,6 @@ bool GeminiAudioPump::processUplink() {
     if (pcm_data != nullptr) {
         static int pump_read_count = 0;
         bool streaming = WakeWordEngine::getInstance().isStreamingActive();
-        
-        // Check for state change notifications from EmbeddedSysDb (zero-lock check)
-        if (ulTaskNotifyTake(pdTRUE, 0) != 0) {
-            m_cached_ws_state = sysdb.wsState();
-            m_cached_pipeline_mode = sysdb.pipelineMode();
-        }
 
         bool ws_connected = (m_cached_ws_state == WsState::CONNECTED);
         bool live_mode    = (m_cached_pipeline_mode == PipelineMode::GEMINI_LIVE);
