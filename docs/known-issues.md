@@ -93,3 +93,8 @@ Recordings page or `/api/recordings/*`.
   chip in a reset loop.
 - **Stop clears the queue.** The stop command (dashboard button, voice)
   also empties the queue; pause keeps it.
+- **MCP HTTP security policy and payload limit.** Plain HTTP connections to
+  an MCP server are restricted to private RFC 1918 LAN addresses (10.x,
+  192.168.x, 172.16-31.x, 127.x, localhost, *.local). Public endpoints must
+  use HTTPS. Total imported tool declarations are capped at 24 KB to protect
+  PSRAM and avoid Gemini handshake rejections.
