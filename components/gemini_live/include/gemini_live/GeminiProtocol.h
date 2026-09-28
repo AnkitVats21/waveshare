@@ -31,6 +31,7 @@ public:
         std::string system_prompt;
         bool transcripts = true;      // ask for input and output transcriptions
         bool transcript_log = true;   // print each finished turn to the log
+        uint8_t resume_min = 60;      // resume the last conversation if younger; 0 = never
     };
     typedef SessionSettings (*SettingsSourceFn)();
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
@@ -89,6 +90,17 @@ private:
     // Guarded by m_turn_mutex.
     int64_t m_reply_wait_us = 0;       // when the owed reply was asked for; 0 = none
     void expectReply();                // start (or restart) the reply wait
+    // Session resumption, RAM only. The latest resumable handle Gemini sent
+    // and when; a new connection resumes with it (same conversation) if it
+    // is younger than resume_min. Guarded by m_turn_mutex.
+    std::string m_resume_handle;
+    int64_t m_resume_handle_us = 0;
+    bool m_resuming = false;           // this connection's setup carries a handle
+    // Gemini closes (1008) a setup whose handle has expired. The event
+    // handler can't restart the client, so it asks the task to, at once
+    // instead of after reconnect_timeout_ms.
+    std::atomic<bool> m_retry_fresh{false};
+    static constexpr uint32_t NOTIFY_RETRY_BIT = (1u << 14);
     SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
 

@@ -11,6 +11,7 @@ using ndb::system::Settings;
 
 constexpr int MIN_SILENCE_S = 3;
 constexpr int MAX_SILENCE_S = 60;
+constexpr int MAX_RESUME_MIN = 120;   // Gemini keeps a resumption handle ~2 h
 
 // {"timezone": "IST-5:30"}: a POSIX TZ string, applied immediately.
 esp_err_t getSettingsHandler(httpd_req_t* req) {
@@ -52,6 +53,8 @@ void addDefaults(JsonDocument& doc) {
 //   transcripts:      ask Gemini for transcriptions (shown on the dashboard)
 //   transcript_log:   also print each turn to the log
 //   manual_silence_s: silence timeout of a session started from the dashboard
+//   resume_min:       a session within this many minutes of the last one
+//                     continues that conversation (0 = always start fresh)
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     Settings s = Services::loadSettings();
     JsonDocument doc;
@@ -62,6 +65,7 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     doc["transcripts"] = s.transcripts;
     doc["transcript_log"] = s.transcript_log;
     doc["manual_silence_s"] = s.manual_silence_s;
+    doc["resume_min"] = s.resume_min;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
@@ -105,6 +109,14 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
         }
         s.manual_silence_s = v;
         fields |= Settings::F_MANUAL_SILENCE_S;
+    }
+    if (doc["resume_min"].is<int>()) {
+        int v = doc["resume_min"];
+        if (v < 0 || v > MAX_RESUME_MIN) {
+            return Http::sendError(req, 400, "resume_min must be 0-120");
+        }
+        s.resume_min = v;
+        fields |= Settings::F_RESUME_MIN;
     }
     // Stored after validation, so a rejected request changes nothing.
     std::string new_key = doc["api_key"] | "";

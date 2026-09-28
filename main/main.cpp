@@ -115,7 +115,7 @@ extern "C" void app_main(void) {
     gemini_proto.setSettingsSource([]() {
         ndb::system::Settings s = Services::loadSettings();
         return GeminiProtocol::SessionSettings{s.gemini_model, s.gemini_voice, s.gemini_system_prompt,
-                                               s.transcripts, s.transcript_log};
+                                               s.transcripts, s.transcript_log, s.resume_min};
     });
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();

@@ -58,6 +58,7 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_TRANSCRIPTS) w.boolean(5, transcripts);
     if (fields & F_TRANSCRIPT_LOG) w.boolean(6, transcript_log);
     if (fields & F_MANUAL_SILENCE_S) w.u8(7, manual_silence_s);
+    if (fields & F_RESUME_MIN) w.u8(8, resume_min);
 }
 
 void Settings::decode(std::string_view value) {
@@ -73,6 +74,7 @@ void Settings::decode(std::string_view value) {
             case 5: nexus_db::FieldReader::read(v, len, transcripts); break;
             case 6: nexus_db::FieldReader::read(v, len, transcript_log); break;
             case 7: nexus_db::FieldReader::read(v, len, manual_silence_s); break;
+            case 8: nexus_db::FieldReader::read(v, len, resume_min); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

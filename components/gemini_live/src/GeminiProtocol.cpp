@@ -18,6 +18,7 @@
 #include "app/audio/AudioOrchestrator.h"
 #include "esp_heap_caps.h"
 #include "esp_crt_bundle.h"
+#include <algorithm>
 #include <string>
 #include <cstring>
 #include <vector>
@@ -196,10 +197,13 @@ void GeminiProtocol::closeConnection() {
     LOGI_NET("Closing WebSocket connection...");
     m_accept_audio = false;
     resetTextTurn();
-    if (m_client) {
-        m_client.close(pdMS_TO_TICKS(1000));
-        m_client.stop();
-        m_client.destroy();
+    {
+        std::lock_guard<std::mutex> lock(m_client_mutex);   // vs a fresh-retry restart
+        if (m_client) {
+            m_client.close(pdMS_TO_TICKS(1000));
+            m_client.stop();
+            m_client.destroy();
+        }
     }
     sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::DISCONNECTED;
@@ -258,13 +262,31 @@ void GeminiProtocol::transmitSetupHandshake() {
         parts.add<JsonObject>()["text"] = instruction;
     }
 
+    // Always ask for resumption handles, and resume the last conversation
+    // if it is recent. Compression lets Gemini drop old turns instead of
+    // ending the session at the context limit (~15 min of audio).
+    int resume_age_s = -1;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        int64_t age_us = esp_timer_get_time() - m_resume_handle_us;
+        m_resuming = !m_resume_handle.empty() && cfg.resume_min > 0 &&
+                     age_us < (int64_t)cfg.resume_min * 60 * 1000000;
+        JsonObject resumption = setup["sessionResumption"].to<JsonObject>();
+        if (m_resuming) {
+            resumption["handle"] = m_resume_handle;
+            resume_age_s = (int)(age_us / 1000000);
+        }
+    }
+    setup["contextWindowCompression"]["slidingWindow"].to<JsonObject>();
+
     std::string payload;
     serializeJson(doc, payload);
-    LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s instruction=%zu bytes (payload %zu bytes)",
+    LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s instruction=%zu bytes (payload %zu bytes) resume=%s",
              setup["model"] | "?",
              setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] | "?",
              !cfg.transcripts ? "off" : cfg.transcript_log ? "on+log" : "on",
-             instruction.size(), payload.size());
+             instruction.size(), payload.size(),
+             resume_age_s < 0 ? "no" : (std::to_string(resume_age_s) + " s old").c_str());
     m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
 }
 
@@ -384,6 +406,16 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             break;
             
         case WEBSOCKET_EVENT_DATA:
+            if (data->op_code == 0x08) {
+                // Close frame: 2-byte code, then the reason (e.g. 1008
+                // "Requested entity was not found." for an expired handle).
+                const auto* p = reinterpret_cast<const uint8_t*>(data->data_ptr);
+                if (data->payload_offset == 0 && data->data_len >= 2) {
+                    LOGW_NET("Gemini closed the connection: %d %.*s", (p[0] << 8) | p[1],
+                             std::min(data->data_len - 2, 120), data->data_ptr + 2);
+                }
+                break;
+            }
             if (data->op_code == 1 || data->data_len > 0) {
                 if (data->payload_offset == 0) {
                     self->m_assembly_idx = 0;
@@ -438,6 +470,27 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                      (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
             // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
             // AssistantService will safely invoke closeConnection() outside this task context.
+            if (self->m_accept_audio) {
+                // Closed before setupComplete while resuming: the handle was
+                // refused (1008 "not found" once it expires). Forget it and
+                // reconnect fresh, keeping the session (and a queued text turn).
+                bool refused;
+                {
+                    std::lock_guard<std::mutex> lock(self->m_turn_mutex);
+                    refused = self->m_resuming && !self->m_setup_complete;
+                    if (refused) {
+                        self->m_resume_handle.clear();
+                        self->m_resuming = false;
+                    }
+                }
+                if (refused) {
+                    LOGW_NET("Resumption refused; reconnecting without the handle.");
+                    self->m_retry_fresh = true;
+                    sysdb.mutate([](SystemState& s) { s.assistant.ws_state = WsState::CONNECTING; });
+                    xTaskNotify(self->getHandle(), NOTIFY_RETRY_BIT, eSetBits);
+                    break;
+                }
+            }
             self->resetTextTurn();
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::DISCONNECTED;
@@ -546,7 +599,15 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             if (!doc["setupComplete"].isNull()) {
                 std::lock_guard<std::mutex> lock(m_turn_mutex);
                 m_setup_complete = true;
+                LOGI_NET("Setup complete%s", m_resuming ? " (conversation resumed)" : "");
                 flushTextTurn();
+            }
+            JsonObjectConst resumption = doc["sessionResumptionUpdate"];
+            const char* handle = resumption["newHandle"] | "";
+            if ((resumption["resumable"] | false) && handle[0]) {
+                std::lock_guard<std::mutex> lock(m_turn_mutex);
+                m_resume_handle = handle;
+                m_resume_handle_us = esp_timer_get_time();
             }
             bool turn_complete = doc["serverContent"]["turnComplete"].as<bool>() || doc["turnComplete"].as<bool>();
             recordTranscription(doc["serverContent"]);
@@ -667,8 +728,16 @@ void GeminiProtocol::run() {
                 }
             }
 
+            if ((changed_bits & NOTIFY_RETRY_BIT) && m_retry_fresh.exchange(false)) {
+                std::lock_guard<std::mutex> lock(m_client_mutex);
+                if (m_client && m_accept_audio) {
+                    m_client.stop();
+                    m_client.start();
+                }
+            }
+
             // 2. Process database state changes
-            uint32_t db_changed = changed_bits & ~NOTIFY_RINGBUF_BIT;
+            uint32_t db_changed = changed_bits & ~(NOTIFY_RINGBUF_BIT | NOTIFY_RETRY_BIT);
             if (db_changed > 0) {
                 m_last_changed = db_changed;
                 SystemState snap = EmbeddedSysDb::getInstance().snapshot();
