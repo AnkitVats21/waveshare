@@ -145,17 +145,6 @@ void setAlarm(const GeminiSkills::set_alarm_args_t& args, JsonDocument& r) {
     addNow(r);
 }
 
-void listAlarms(JsonDocument& r) {
-    const int64_t now = time(nullptr);
-    r["status"] = "success";
-    JsonArray arr = r["alarms"].to<JsonArray>();
-    for (const auto& [id, a] : AlarmService::getInstance().alarms()) alarmToJson(id, a, arr.add<JsonObject>(), now);
-    const AlarmService::Status st = AlarmService::getInstance().status();
-    if (st.state == AlarmRing::State::Ringing) r["ringing"] = st.alarm_id;
-    if (st.state == AlarmRing::State::Snoozed) r["snoozed"] = st.alarm_id;
-    addNow(r);
-}
-
 void setTimer(const GeminiSkills::set_timer_args_t& args, JsonDocument& r) {
     if (args.seconds <= 0 || args.seconds > MAX_TIMER_S) return error(r, "seconds must be 1 to 86400");
     const int64_t now = time(nullptr);
@@ -220,11 +209,17 @@ void setReminder(const GeminiSkills::set_reminder_args_t& args, JsonDocument& r)
     addNow(r);
 }
 
-void listReminders(JsonDocument& r) {
+// Alarms, timers and reminders in one reply (list_schedule).
+void listSchedule(JsonDocument& r) {
     const int64_t now = time(nullptr);
     r["status"] = "success";
-    JsonArray arr = r["reminders"].to<JsonArray>();
-    for (const auto& [id, d] : AlarmService::getInstance().reminders()) reminderToJson(id, d, arr.add<JsonObject>(), now);
+    JsonArray alarms = r["alarms"].to<JsonArray>();
+    for (const auto& [id, a] : AlarmService::getInstance().alarms()) alarmToJson(id, a, alarms.add<JsonObject>(), now);
+    const AlarmService::Status st = AlarmService::getInstance().status();
+    if (st.state == AlarmRing::State::Ringing) r["ringing"] = st.alarm_id;
+    if (st.state == AlarmRing::State::Snoozed) r["snoozed"] = st.alarm_id;
+    JsonArray reminders = r["reminders"].to<JsonArray>();
+    for (const auto& [id, d] : AlarmService::getInstance().reminders()) reminderToJson(id, d, reminders.add<JsonObject>(), now);
     addNow(r);
 }
 
@@ -233,54 +228,47 @@ void listReminders(JsonDocument& r) {
 bool handleAlarmTool(const DecodedSkillCall& call, JsonDocument& r) {
     auto& svc = AlarmService::getInstance();
     switch (call.type) {
-    case SkillType::STOP_ACTIVE_ALARM: {
+    case SkillType::RINGING_ALARM: {
+        const std::string& action = call.args.ringing_alarm->action;
+        if (action == "snooze") {
+            if (svc.status().state != AlarmRing::State::Ringing) {
+                error(r, "No alarm is ringing");
+                return true;
+            }
+            svc.snooze(REQUEST_TIMEOUT_MS);
+            const AlarmService::Status st = svc.status();
+            r["status"] = "success";
+            r["snooze_minutes"] = (st.snooze_left_ms + 59999) / 60000;
+            return true;
+        }
         const bool active = svc.status().state != AlarmRing::State::Idle;
         if (active) svc.stopActiveAlarm(true, REQUEST_TIMEOUT_MS);
         r["status"] = "success";
         r["message"] = active ? "Alarm stopped" : "No alarm was ringing";
         return true;
     }
-    case SkillType::SNOOZE_ALARM: {
-        if (svc.status().state != AlarmRing::State::Ringing) {
-            error(r, "No alarm is ringing");
-            return true;
-        }
-        svc.snooze(REQUEST_TIMEOUT_MS);
-        const AlarmService::Status st = svc.status();
-        r["status"] = "success";
-        r["snooze_minutes"] = (st.snooze_left_ms + 59999) / 60000;
-        return true;
-    }
     case SkillType::SET_ALARM:
         if (call.args.set_alarm) setAlarm(*call.args.set_alarm, r);
         return true;
-    case SkillType::LIST_ALARMS:
-        listAlarms(r);
+    case SkillType::LIST_SCHEDULE:
+        listSchedule(r);
         return true;
-    case SkillType::CANCEL_ALARM:
-        if (call.args.cancel_alarm && svc.deleteAlarm(call.args.cancel_alarm->id)) {
+    case SkillType::CANCEL_SCHEDULED: {
+        const auto* args = call.args.cancel_scheduled;
+        bool reminder = args->kind == "reminder";
+        if (reminder ? svc.deleteReminder(args->id) : svc.deleteAlarm(args->id)) {
             r["status"] = "success";
             r["message"] = "Deleted";
         } else {
-            error(r, "No alarm or timer with that id");
+            error(r, reminder ? "No reminder with that id" : "No alarm or timer with that id");
         }
         return true;
+    }
     case SkillType::SET_TIMER:
         if (call.args.set_timer) setTimer(*call.args.set_timer, r);
         return true;
     case SkillType::SET_REMINDER:
         if (call.args.set_reminder) setReminder(*call.args.set_reminder, r);
-        return true;
-    case SkillType::LIST_REMINDERS:
-        listReminders(r);
-        return true;
-    case SkillType::CANCEL_REMINDER:
-        if (call.args.cancel_reminder && svc.deleteReminder(call.args.cancel_reminder->id)) {
-            r["status"] = "success";
-            r["message"] = "Deleted";
-        } else {
-            error(r, "No reminder with that id");
-        }
         return true;
     case SkillType::ACKNOWLEDGE_REMINDERS: {
         int cleared = 0;

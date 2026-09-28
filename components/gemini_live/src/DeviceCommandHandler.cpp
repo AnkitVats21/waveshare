@@ -14,7 +14,7 @@ static const char* TAG = "DeviceCmd";
 
 namespace {
 
-// write_file/read_file are confined to one flat notes folder so the model
+// Notes are confined to one flat notes folder so the model
 // can't read secrets (gemini_config.json) or overwrite device config.
 constexpr const char* NOTES_DIR = "/sdcard/notes";
 constexpr size_t NOTE_NAME_MAX = 64;
@@ -34,6 +34,7 @@ bool resolveNotePath(const std::string& in, std::string& out) {
                   c == '-' || c == '_' || c == '.';
         if (!ok) return false;
     }
+    if (name.find('.') == std::string::npos) name += ".txt";   // "shopping" -> shopping.txt
     out = prefix + name;
     return true;
 }
@@ -61,7 +62,7 @@ void rejectPath(JsonDocument& response_doc) {
                               "(letters, digits, '-', '_', '.'; no folders).";
 }
 
-// delete_note's first call: the names the model was told to read back, and
+// A delete's first call: the names the model was told to read back, and
 // the model's turn count then. The confirmed call must name the same notes
 // after at least one finished turn (the question asked, the user answered),
 // so the model can't confirm on its own within one reply.
@@ -70,6 +71,120 @@ struct PendingDelete {
     uint32_t turn = 0;
 };
 PendingDelete s_pending_delete;
+
+void ensureNotesDir() {
+    if (!sd_storage::Fs::mkdirs(NOTES_DIR)) {
+        ESP_LOGW(TAG, "Could not create %s", NOTES_DIR);
+    }
+}
+
+void listNotes(JsonDocument& response_doc) {
+    JsonArray notes = response_doc["notes"].to<JsonArray>();
+    if (sd_storage::Fs::isDir(NOTES_DIR)) {
+        sd_storage::Fs::list(NOTES_DIR, nullptr, true, listNote, &notes);
+    }
+    response_doc["status"] = "success";
+    if (notes.size() >= NOTE_LIST_MAX) response_doc["truncated"] = true;
+}
+
+void readNote(const std::string& name, JsonDocument& response_doc) {
+    std::string path;
+    if (!resolveNotePath(name, path)) return rejectPath(response_doc);
+    if (!sd_storage::Fs::isFile(path.c_str())) {
+        response_doc["status"] = "error";
+        response_doc["message"] = "Note not found";
+        return;
+    }
+    std::string content = sd_storage::Fs::readText(path.c_str());
+    if (content.size() > NOTE_READ_MAX) {
+        content.resize(NOTE_READ_MAX);
+        response_doc["truncated"] = true;
+    }
+    response_doc["status"] = "success";
+    response_doc["content"] = content;
+}
+
+void writeNote(const std::string& name, const std::string& content, JsonDocument& response_doc) {
+    std::string path;
+    if (!resolveNotePath(name, path)) return rejectPath(response_doc);
+    ensureNotesDir();
+    bool ok = sd_storage::Fs::writeAtomic(path.c_str(), content.c_str());
+    response_doc["status"] = ok ? "success" : "error";
+    response_doc["message"] = ok ? "Note saved" : "Failed to save note";
+}
+
+void appendNote(const std::string& name, const std::string& content, JsonDocument& response_doc) {
+    std::string path;
+    if (!resolveNotePath(name, path)) return rejectPath(response_doc);
+    ensureNotesDir();
+    // One entry per line: start a new line unless the note ends with one.
+    std::string text = content;
+    if (text.empty() || text.back() != '\n') text += '\n';
+    auto file = sd_storage::File::open(path.c_str(), sd_storage::Mode::UpdateOrCreate);
+    bool ok = false;
+    if (file) {
+        char last = '\n';
+        long size = file.size();
+        if (size > 0 && file.seek(size - 1)) file.read(&last, 1);
+        if (last != '\n') text.insert(text.begin(), '\n');
+        ok = file.seek(0, SEEK_END) && file.writeAll(text.data(), text.size());
+    }
+    response_doc["status"] = ok ? "success" : "error";
+    response_doc["message"] = ok ? "Added to the note" : "Failed to update the note";
+}
+
+// Exact names only (resolveNotePath refuses '*' and paths), at most
+// MAX_DELETE_NOTES, all checked before any is deleted.
+void deleteNotes(const std::vector<std::string>& names, bool confirmed, JsonDocument& response_doc) {
+    if (names.empty() || names.size() > MAX_DELETE_NOTES) {
+        response_doc["status"] = "error";
+        response_doc["message"] = "Give 1 to 10 exact note names (see action list)";
+        return;
+    }
+    std::vector<std::string> paths(names.size());
+    for (size_t i = 0; i < paths.size(); ++i) {
+        if (!resolveNotePath(names[i], paths[i])) return rejectPath(response_doc);
+    }
+    // Sorted and unique, so the confirmed call may list them in any order.
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    uint32_t turn = GeminiProtocol::getInstance().turnsCompleted();
+    if (!confirmed || paths != s_pending_delete.paths || turn == s_pending_delete.turn) {
+        s_pending_delete = {paths, turn};
+        JsonArray notes = response_doc["notes"].to<JsonArray>();
+        int found = 0;
+        for (const auto& p : paths) {
+            JsonObject n = notes.add<JsonObject>();
+            n["name"] = p.substr(strlen(NOTES_DIR) + 1);
+            bool exists = sd_storage::Fs::isFile(p.c_str());
+            n["exists"] = exists;
+            found += exists;
+        }
+        response_doc["status"] = "confirm";
+        response_doc["message"] = found == 0
+            ? "None of these notes exist; nothing to delete. Use action list for the names."
+            : "Nothing deleted yet. Read the existing names to the user and ask them to confirm. "
+              "If they agree, call notes again with action delete, the same names and confirmed=true.";
+        return;
+    }
+    s_pending_delete = {};
+    JsonArray results = response_doc["results"].to<JsonArray>();
+    int deleted = 0;
+    for (const auto& p : paths) {
+        JsonObject r = results.add<JsonObject>();
+        r["name"] = p.substr(strlen(NOTES_DIR) + 1);
+        if (!sd_storage::Fs::isFile(p.c_str())) {
+            r["result"] = "not found";
+        } else if (sd_storage::Fs::remove(p.c_str())) {
+            r["result"] = "deleted";
+            ++deleted;
+        } else {
+            r["result"] = "failed";
+        }
+    }
+    response_doc["status"] = deleted > 0 ? "success" : "error";
+    response_doc["message"] = std::to_string(deleted) + " of " + std::to_string(paths.size()) + " deleted";
+}
 
 } // namespace
 
@@ -87,146 +202,30 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
     using namespace GeminiSkills;
 
     switch (skill_call.type) {
-        case SkillType::WRITE_FILE: {
-            auto args = skill_call.args.write_file;
+        case SkillType::NOTES: {
+            auto args = skill_call.args.notes;
             if (args == nullptr) {
                 response_doc["status"] = "error";
-                response_doc["message"] = "Null write file arguments";
+                response_doc["message"] = "Missing arguments";
                 return true;
             }
-            std::string path;
-            if (!resolveNotePath(args->path, path)) {
-                rejectPath(response_doc);
-                return true;
-            }
-            if (!sd_storage::Fs::mkdirs(NOTES_DIR)) {
-                ESP_LOGW(TAG, "Could not create %s", NOTES_DIR);
-            }
-            bool ok = sd_storage::Fs::writeAtomic(path.c_str(), args->content.c_str());
-            response_doc["status"] = ok ? "success" : "error";
-            response_doc["message"] = ok ? "Note saved" : "Failed to save note";
-            return true;
-        }
-            
-        case SkillType::READ_FILE: {
-            auto args = skill_call.args.read_file;
-            if (args == nullptr) {
+            const std::string& action = args->action;
+            if (action == "list") {
+                listNotes(response_doc);
+            } else if (action == "read") {
+                readNote(args->name, response_doc);
+            } else if (action == "write") {
+                writeNote(args->name, args->content, response_doc);
+            } else if (action == "append") {
+                appendNote(args->name, args->content, response_doc);
+            } else if (action == "delete") {
+                std::vector<std::string> names = args->names;
+                if (names.empty() && !args->name.empty()) names.push_back(args->name);
+                deleteNotes(names, args->confirmed, response_doc);
+            } else {
                 response_doc["status"] = "error";
-                response_doc["message"] = "Null read file arguments";
-                return true;
+                response_doc["message"] = "action must be list, read, write, append or delete";
             }
-            std::string path;
-            if (!resolveNotePath(args->path, path)) {
-                rejectPath(response_doc);
-                return true;
-            }
-            if (!sd_storage::Fs::isFile(path.c_str())) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Note not found";
-                return true;
-            }
-            std::string content = sd_storage::Fs::readText(path.c_str());
-            if (content.size() > NOTE_READ_MAX) {
-                content.resize(NOTE_READ_MAX);
-                response_doc["truncated"] = true;
-            }
-            response_doc["status"] = "success";
-            response_doc["content"] = content;
-            return true;
-        }
-            
-        case SkillType::LIST_NOTES: {
-            JsonArray notes = response_doc["notes"].to<JsonArray>();
-            if (sd_storage::Fs::isDir(NOTES_DIR)) {
-                sd_storage::Fs::list(NOTES_DIR, nullptr, true, listNote, &notes);
-            }
-            response_doc["status"] = "success";
-            if (notes.size() >= NOTE_LIST_MAX) response_doc["truncated"] = true;
-            return true;
-        }
-
-        case SkillType::APPEND_NOTE: {
-            auto args = skill_call.args.append_note;
-            std::string path;
-            if (args == nullptr || !resolveNotePath(args->path, path)) {
-                rejectPath(response_doc);
-                return true;
-            }
-            if (!sd_storage::Fs::mkdirs(NOTES_DIR)) {
-                ESP_LOGW(TAG, "Could not create %s", NOTES_DIR);
-            }
-            // One entry per line: start a new line unless the note ends with one.
-            std::string text = args->content;
-            if (text.empty() || text.back() != '\n') text += '\n';
-            auto file = sd_storage::File::open(path.c_str(), sd_storage::Mode::UpdateOrCreate);
-            bool ok = false;
-            if (file) {
-                char last = '\n';
-                long size = file.size();
-                if (size > 0 && file.seek(size - 1)) file.read(&last, 1);
-                if (last != '\n') text.insert(text.begin(), '\n');
-                ok = file.seek(0, SEEK_END) && file.writeAll(text.data(), text.size());
-            }
-            response_doc["status"] = ok ? "success" : "error";
-            response_doc["message"] = ok ? "Added to the note" : "Failed to update the note";
-            return true;
-        }
-
-        case SkillType::DELETE_NOTE: {
-            // Exact names only (resolveNotePath refuses '*' and paths), at
-            // most MAX_DELETE_NOTES, all checked before any is deleted.
-            auto args = skill_call.args.delete_note;
-            if (args == nullptr || args->paths.empty() || args->paths.size() > MAX_DELETE_NOTES) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Give 1 to 10 exact note names";
-                return true;
-            }
-            std::vector<std::string> paths(args->paths.size());
-            for (size_t i = 0; i < paths.size(); ++i) {
-                if (!resolveNotePath(args->paths[i], paths[i])) {
-                    rejectPath(response_doc);
-                    return true;
-                }
-            }
-            // Sorted and unique, so the confirmed call may list them in any order.
-            std::sort(paths.begin(), paths.end());
-            paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
-            uint32_t turn = GeminiProtocol::getInstance().turnsCompleted();
-            if (!args->confirmed || paths != s_pending_delete.paths || turn == s_pending_delete.turn) {
-                s_pending_delete = {paths, turn};
-                JsonArray notes = response_doc["notes"].to<JsonArray>();
-                int found = 0;
-                for (const auto& p : paths) {
-                    JsonObject n = notes.add<JsonObject>();
-                    n["name"] = p.substr(strlen(NOTES_DIR) + 1);
-                    bool exists = sd_storage::Fs::isFile(p.c_str());
-                    n["exists"] = exists;
-                    found += exists;
-                }
-                response_doc["status"] = "confirm";
-                response_doc["message"] = found == 0
-                    ? "None of these notes exist; nothing to delete. Use list_notes for the names."
-                    : "Nothing deleted yet. Read the existing names to the user and ask them to confirm. "
-                      "If they agree, call delete_note again with the same paths and confirmed=true.";
-                return true;
-            }
-            s_pending_delete = {};
-            JsonArray results = response_doc["results"].to<JsonArray>();
-            int deleted = 0;
-            for (size_t i = 0; i < paths.size(); ++i) {
-                JsonObject r = results.add<JsonObject>();
-                r["name"] = paths[i].substr(strlen(NOTES_DIR) + 1);
-                if (!sd_storage::Fs::isFile(paths[i].c_str())) {
-                    r["result"] = "not found";
-                } else if (sd_storage::Fs::remove(paths[i].c_str())) {
-                    r["result"] = "deleted";
-                    ++deleted;
-                } else {
-                    r["result"] = "failed";
-                }
-            }
-            response_doc["status"] = deleted > 0 ? "success" : "error";
-            response_doc["message"] = std::to_string(deleted) + " of " + std::to_string(paths.size()) + " deleted";
             return true;
         }
 
@@ -274,15 +273,12 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
             return true;
         }
 
-        case SkillType::STOP_ACTIVE_ALARM:
-        case SkillType::SNOOZE_ALARM:
+        case SkillType::RINGING_ALARM:
         case SkillType::SET_ALARM:
-        case SkillType::LIST_ALARMS:
-        case SkillType::CANCEL_ALARM:
+        case SkillType::LIST_SCHEDULE:
+        case SkillType::CANCEL_SCHEDULED:
         case SkillType::SET_TIMER:
         case SkillType::SET_REMINDER:
-        case SkillType::LIST_REMINDERS:
-        case SkillType::CANCEL_REMINDER:
         case SkillType::ACKNOWLEDGE_REMINDERS: {
             if (!s_delegate || !s_delegate->handleAlarmTool(skill_call, response_doc)) {
                 response_doc["status"] = "error";

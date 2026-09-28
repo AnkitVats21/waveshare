@@ -5,9 +5,9 @@
 
 namespace Services {
 
-// Gemini tools for alarms, timers and reminders (set_alarm, list_alarms,
-// cancel_alarm, snooze_alarm, stop_active_alarm, set_timer, set_reminder,
-// list_reminders, cancel_reminder, acknowledge_reminders). Fills `response`;
+// Gemini tools for alarms, timers and reminders (set_alarm, set_timer,
+// set_reminder, list_schedule, cancel_scheduled, ringing_alarm,
+// acknowledge_reminders). Fills `response`;
 // false if the call is not one of them.
 bool handleAlarmTool(const GeminiSkills::DecodedSkillCall& call, JsonDocument& response);
 

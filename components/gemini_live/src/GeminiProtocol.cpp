@@ -470,6 +470,15 @@ void GeminiProtocol::transmitSetupHandshake() {
     if (cfg.vad_silence_ms) detection()["silenceDurationMs"] = cfg.vad_silence_ms;
 
     if (search) {
+        // get_weather is the fallback for models without search; with search
+        // it would be one more tool to choose from for the same answer.
+        JsonArray decls = setup["tools"][0]["functionDeclarations"];
+        for (size_t i = 0; i < decls.size(); ++i) {
+            if (strcmp(decls[i]["name"] | "", "get_weather") == 0) {
+                decls.remove(i);
+                break;
+            }
+        }
         setup["tools"].add<JsonObject>()["googleSearch"].to<JsonObject>();
     }
 

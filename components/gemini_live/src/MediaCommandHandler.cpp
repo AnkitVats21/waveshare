@@ -9,47 +9,30 @@
 bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call, JsonDocument& response_doc) {
     switch (skill_call.type) {
         case GeminiSkills::SkillType::PLAY: {
-            LOGI_SYSTEM("Media PLAY command received: '%s'", skill_call.args.play->query.c_str());
-            MusicPlaybackService::getInstance().postCommand(MediaCmdType::PLAY, skill_call.args.play->query.c_str());
+            const auto* args = skill_call.args.play;
+            bool next = args->when == "next";
+            LOGI_SYSTEM("Media PLAY%s command received: '%s'", next ? " (next)" : "", args->query.c_str());
+            MusicPlaybackService::getInstance().postCommand(next ? MediaCmdType::PLAY_NEXT : MediaCmdType::PLAY,
+                                                            args->query.c_str());
             response_doc["status"] = "success";
             return true;
         }
 
-        case GeminiSkills::SkillType::PLAY_NEXT: {
-            LOGI_SYSTEM("Media PLAY_NEXT command received: '%s'", skill_call.args.play_next->query.c_str());
-            MusicPlaybackService::getInstance().postCommand(MediaCmdType::PLAY_NEXT, skill_call.args.play_next->query.c_str());
-            response_doc["status"] = "success";
-            return true;
-        }
-
-        case GeminiSkills::SkillType::PAUSE:
-            LOGI_SYSTEM("Media PAUSE command received");
-            MusicPlaybackService::getInstance().postCommand(MediaCmdType::PAUSE);
-            response_doc["status"] = "success";
-            return true;
-
-        case GeminiSkills::SkillType::RESUME:
-            LOGI_SYSTEM("Media RESUME command received");
-            MusicPlaybackService::getInstance().postCommand(MediaCmdType::RESUME);
-            response_doc["status"] = "success";
-            return true;
-
-        case GeminiSkills::SkillType::STOP:
-            LOGI_SYSTEM("Media STOP command received");
-            MusicPlaybackService::getInstance().postCommand(MediaCmdType::STOP);
-            response_doc["status"] = "success";
-            return true;
-
-        case GeminiSkills::SkillType::NEXT: {
-            LOGI_SYSTEM("Media NEXT command received");
-            MusicPlaybackService::getInstance().postCommand(MediaCmdType::NEXT);
-            response_doc["status"] = "success";
-            return true;
-        }
-
-        case GeminiSkills::SkillType::PREVIOUS: {
-            LOGI_SYSTEM("Media PREVIOUS command received");
-            MusicPlaybackService::getInstance().postCommand(MediaCmdType::PREVIOUS);
+        case GeminiSkills::SkillType::PLAYBACK: {
+            const std::string& action = skill_call.args.playback->action;
+            MediaCmdType cmd;
+            if (action == "pause") cmd = MediaCmdType::PAUSE;
+            else if (action == "resume") cmd = MediaCmdType::RESUME;
+            else if (action == "stop") cmd = MediaCmdType::STOP;
+            else if (action == "next") cmd = MediaCmdType::NEXT;
+            else if (action == "previous") cmd = MediaCmdType::PREVIOUS;
+            else {
+                response_doc["status"] = "error";
+                response_doc["message"] = "action must be pause, resume, stop, next or previous";
+                return true;
+            }
+            LOGI_SYSTEM("Media playback command received: %s", action.c_str());
+            MusicPlaybackService::getInstance().postCommand(cmd);
             response_doc["status"] = "success";
             return true;
         }
@@ -67,29 +50,21 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
             return true;
         }
 
-        case GeminiSkills::SkillType::MUTE: {
-            LOGI_SYSTEM("Media MUTE command received");
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.audio.speaker_volume = 0;
-            });
+        case GeminiSkills::SkillType::MUSIC_SETTINGS: {
+            const auto* args = skill_call.args.music_settings;
+            if (!args->autoplay.empty()) {
+                bool on = args->autoplay == "on";
+                LOGI_SYSTEM("Media autoplay %s", on ? "on" : "off");
+                MusicPlaybackService::getInstance().setAutoplay(on);
+                response_doc["autoplay"] = on;
+            }
+            if (!args->caching.empty()) {
+                bool on = args->caching == "on";
+                LOGI_SYSTEM("Media caching %s", on ? "on" : "off");
+                MusicPlaybackService::getInstance().setCaching(on);
+                response_doc["caching"] = on;
+            }
             response_doc["status"] = "success";
-            return true;
-        }
-
-        case GeminiSkills::SkillType::AUTOPLAY: {
-            bool enabled = skill_call.args.autoplay->enabled;
-            LOGI_SYSTEM("Media AUTOPLAY command received: %s", enabled ? "enabled" : "disabled");
-            MusicPlaybackService::getInstance().setAutoplay(enabled);
-            response_doc["status"] = "success";
-            return true;
-        }
-
-        case GeminiSkills::SkillType::SET_CACHING: {
-            bool enabled = skill_call.args.set_caching->enabled;
-            LOGI_SYSTEM("Media SET_CACHING command received: %s", enabled ? "enabled" : "disabled");
-            MusicPlaybackService::getInstance().setCaching(enabled);
-            response_doc["status"] = "success";
-            response_doc["caching"] = enabled;
             return true;
         }
 

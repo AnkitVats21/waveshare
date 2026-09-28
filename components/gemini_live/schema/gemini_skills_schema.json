@@ -1,13 +1,21 @@
 [
   {
     "name": "play",
-    "description": "Plays a track immediately (clears the queue). Resolves plain text search queries or plays from local cache. Pass the user's requested song title/artist directly.",
+    "description": "Plays a song: now (clears the queue), or next (right after the current track). Pass what the user asked for as the query.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
         "query": {
           "type": "STRING",
-          "description": "A plain text search query (e.g., 'Rick Astley Never Gonna Give You Up' or 'classical jazz')."
+          "description": "Song title and/or artist, or a genre, e.g. 'Blinding Lights'."
+        },
+        "when": {
+          "type": "STRING",
+          "description": "'now' (default) or 'next'.",
+          "enum": [
+            "now",
+            "next"
+          ]
         }
       },
       "required": [
@@ -16,70 +24,37 @@
     }
   },
   {
-    "name": "play_next",
-    "description": "Queues a track at the very front of the queue to be played immediately after the current song finishes.",
+    "name": "playback",
+    "description": "Controls music playback. 'stop' also clears the queue; 'resume' is for 'play' or 'resume' without a song name.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
-        "query": {
+        "action": {
           "type": "STRING",
-          "description": "A plain text search query (e.g., 'Blinding Lights')."
+          "description": "pause, resume, stop, next or previous.",
+          "enum": [
+            "pause",
+            "resume",
+            "stop",
+            "next",
+            "previous"
+          ]
         }
       },
       "required": [
-        "query"
+        "action"
       ]
-    }
-  },
-  {
-    "name": "pause",
-    "description": "Pauses current media playback.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "resume",
-    "description": "Resumes paused media playback. Use this when the user says just 'play' or 'resume' without naming a song.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "stop",
-    "description": "Stops all playback and fully clears the playback state, queue, and autoplay pool.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "next",
-    "description": "Skips the current track and advances to the next track in the queue or autoplay pool.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "previous",
-    "description": "Returns playback to the previous track from history.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
     }
   },
   {
     "name": "volume",
-    "description": "Sets the speaker volume level (0-100).",
+    "description": "Sets the speaker volume, 0-100 (0 mutes).",
     "parameters": {
       "type": "OBJECT",
       "properties": {
         "level": {
-          "type": "NUMBER",
-          "description": "Target volume level percentage (0-100)."
+          "type": "INTEGER",
+          "description": "Volume 0-100."
         }
       },
       "required": [
@@ -88,128 +63,69 @@
     }
   },
   {
-    "name": "mute",
-    "description": "Mutes the speaker by setting the volume to 0. To unmute, call volume with the level the user wants.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "autoplay",
-    "description": "Enables or disables autoplay recommendations when the manual queue runs dry.",
+    "name": "music_settings",
+    "description": "Turns autoplay (recommendations when the queue runs out) or caching (saving streamed songs to the SD card) on or off.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
-        "enabled": {
-          "type": "BOOLEAN",
-          "description": "Set to true to enable autoplay, or false to disable it."
+        "autoplay": {
+          "type": "STRING",
+          "description": "'on' or 'off'; omit to leave unchanged.",
+          "enum": [
+            "on",
+            "off"
+          ]
+        },
+        "caching": {
+          "type": "STRING",
+          "description": "'on' or 'off'; omit to leave unchanged.",
+          "enum": [
+            "on",
+            "off"
+          ]
         }
       }
     }
   },
   {
-    "name": "set_caching",
-    "description": "Enables or disables downloading and saving live music streams to the SD card cache during playback. When disabled, playback streams directly for fastest response.",
+    "name": "notes",
+    "description": "The user's text notes on the device. list: names, sizes, dates. read/write (replaces)/append (adds a line): one note by name. delete: two steps - call without confirmed (nothing is deleted; it says which exist), read the names to the user, and only after they agree call again with the same names and confirmed=true.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
-        "enabled": {
-          "type": "BOOLEAN",
-          "description": "Set to true to enable caching music to SD card, or false to disable caching (pure live streaming)."
-        }
-      },
-      "required": [
-        "enabled"
-      ]
-    }
-  },
-  {
-    "name": "write_file",
-    "description": "Saves a text note to the device's notes folder on the SD card, replacing the note if it already exists. Use a short file name such as 'shopping.txt'.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {
-        "path": {
+        "action": {
           "type": "STRING",
-          "description": "Note file name, e.g. 'shopping.txt' (letters, digits, '-', '_' and '.' only; no folders)."
+          "description": "list, read, write, append or delete.",
+          "enum": [
+            "list",
+            "read",
+            "write",
+            "append",
+            "delete"
+          ]
         },
-        "content": {
+        "name": {
           "type": "STRING",
-          "description": "Text content to write into the file."
-        }
-      },
-      "required": [
-        "path",
-        "content"
-      ]
-    }
-  },
-  {
-    "name": "read_file",
-    "description": "Reads a text note previously saved in the device's notes folder.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {
-        "path": {
-          "type": "STRING",
-          "description": "Note file name, e.g. 'shopping.txt'."
-        }
-      },
-      "required": [
-        "path"
-      ]
-    }
-  },
-  {
-    "name": "list_notes",
-    "description": "Lists the saved notes: file name, size and when each was last changed.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "append_note",
-    "description": "Adds text to the end of a note, on a new line; creates the note if it doesn't exist.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {
-        "path": {
-          "type": "STRING",
-          "description": "Note file name, e.g. 'shopping.txt'."
+          "description": "Note file name for read/write/append, e.g. 'shopping.txt' (letters, digits, '-', '_', '.')."
         },
-        "content": {
-          "type": "STRING",
-          "description": "Text to add."
-        }
-      },
-      "required": [
-        "path",
-        "content"
-      ]
-    }
-  },
-  {
-    "name": "delete_note",
-    "description": "Deletes one or more saved notes by their exact names (at most 10 per call; no wildcards). Two steps: call it first without confirmed; nothing is deleted, and it says which notes exist. Read those names to the user and ask. Only after the user agrees, call it again with the same paths and confirmed=true. The result says, per name, whether it was deleted or not found.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {
-        "paths": {
+        "names": {
           "type": "ARRAY",
           "items": {
             "type": "STRING"
           },
-          "description": "Note file names, e.g. ['shopping.txt', 'ideas.txt']."
+          "description": "For delete: exact note names, at most 10."
+        },
+        "content": {
+          "type": "STRING",
+          "description": "Text for write or append."
         },
         "confirmed": {
           "type": "BOOLEAN",
-          "description": "True only on the second call, after the user agreed to delete these notes."
+          "description": "Delete only: true on the second call, after the user agreed."
         }
       },
       "required": [
-        "paths"
+        "action"
       ]
     }
   },
@@ -240,19 +156,23 @@
     }
   },
   {
-    "name": "stop_active_alarm",
-    "description": "Stops the alarm or timer that is ringing (or snoozed).",
+    "name": "ringing_alarm",
+    "description": "Stops or snoozes the alarm or timer that is ringing.",
     "parameters": {
       "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "snooze_alarm",
-    "description": "Snoozes the alarm or timer that is ringing; it rings again after its snooze time (9 minutes unless set otherwise).",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
+      "properties": {
+        "action": {
+          "type": "STRING",
+          "description": "'stop' or 'snooze'.",
+          "enum": [
+            "stop",
+            "snooze"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ]
     }
   },
   {
@@ -293,30 +213,6 @@
       "required": [
         "hour",
         "minute"
-      ]
-    }
-  },
-  {
-    "name": "list_alarms",
-    "description": "Lists the alarms and running timers with their ids, times, repeat days and when each rings next.",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {}
-    }
-  },
-  {
-    "name": "cancel_alarm",
-    "description": "Deletes an alarm or timer by id (get ids from list_alarms).",
-    "parameters": {
-      "type": "OBJECT",
-      "properties": {
-        "id": {
-          "type": "INTEGER",
-          "description": "The alarm or timer id."
-        }
-      },
-      "required": [
-        "id"
       ]
     }
   },
@@ -377,25 +273,34 @@
     }
   },
   {
-    "name": "list_reminders",
-    "description": "Lists the reminders with their ids, times, repeat days and whether any are pending (fired but not yet heard by the user).",
+    "name": "list_schedule",
+    "description": "Lists alarms, running timers and reminders with their ids, times, repeat days and when each is next; says which alarm is ringing or snoozed and which reminders are pending.",
     "parameters": {
       "type": "OBJECT",
       "properties": {}
     }
   },
   {
-    "name": "cancel_reminder",
-    "description": "Deletes a reminder by id (get ids from list_reminders).",
+    "name": "cancel_scheduled",
+    "description": "Deletes an alarm, timer or reminder by id (ids from list_schedule).",
     "parameters": {
       "type": "OBJECT",
       "properties": {
+        "kind": {
+          "type": "STRING",
+          "description": "'alarm' (alarms and timers) or 'reminder'.",
+          "enum": [
+            "alarm",
+            "reminder"
+          ]
+        },
         "id": {
           "type": "INTEGER",
-          "description": "The reminder id."
+          "description": "The id."
         }
       },
       "required": [
+        "kind",
         "id"
       ]
     }
