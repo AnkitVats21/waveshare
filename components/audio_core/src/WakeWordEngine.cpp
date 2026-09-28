@@ -432,7 +432,7 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
     // audio queued on the connection.
     struct {
         bool active = false, open = false, talked = false;
-        int frames = 0, talk_frames = 0;
+        int frames = 0, talk_frames = 0, talk_peak = 0;
         uint64_t sum_sq = 0, samples = 0;
         double echo_dbfs = 0;
     } gate;
@@ -496,7 +496,11 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             } else if (gate.open && !gate.talked) {
                 double db = frameDbfs(res->data, res->data_size / sizeof(int16_t));
                 bool talking = res->vad_state == VAD_SPEECH && db >= gate.echo_dbfs + TALK_MARGIN_DB;
-                gate.talk_frames = talking ? gate.talk_frames + 1 : 0;
+                // Leaky count: the VAD flickers while the reply plays over the
+                // person's voice, so a short gap doesn't restart it.
+                gate.talk_frames = talking ? gate.talk_frames + 1
+                                           : (gate.talk_frames > 0 ? gate.talk_frames - 1 : 0);
+                if (gate.talk_frames > gate.talk_peak) gate.talk_peak = gate.talk_frames;
                 if (gate.talk_frames >= talk_min_frames) {
                     gate.talked = true;
                     LOGI_AUDIO("Barge-in: speech over the reply (%.0f dBFS vs echo %.0f)", db, gate.echo_dbfs);
@@ -505,6 +509,10 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             }
             barge_stream = gate.open;
         } else if (!assistant_talking) {
+            if (gate.active && gate.open && !gate.talked) {
+                LOGI_AUDIO("Barge-in: no speech over the reply (peak %d ms of %d)",
+                           gate.talk_peak * frame_ms, talk_min_frames * frame_ms);
+            }
             gate.active = false;
         }
         bool block_mic_capture = !barge_stream && (assistant_talking || (buffered_voice_bytes > 0));
