@@ -170,7 +170,7 @@ bool GeminiProtocol::ensureClientInitialized() {
     ws_cfg.buffer_size = 16384;
     ws_cfg.reconnect_timeout_ms = 10000;
     ws_cfg.network_timeout_ms = 10000;
-    ws_cfg.task_stack = 6144;
+    ws_cfg.task_stack = 10240;
     ws_cfg.task_prio = ThreadConfig::Priority::GEMINI_PROTOCOL;
     ws_cfg.task_core_id = ThreadConfig::CORE_NETWORK;
     ws_cfg.task_core_id_set = true;
