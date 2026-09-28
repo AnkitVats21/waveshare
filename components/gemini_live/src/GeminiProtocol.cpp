@@ -393,8 +393,13 @@ void GeminiProtocol::transmitSetupHandshake() {
     if (!cfg.voice.empty()) {
         setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] = cfg.voice;
     }
+    // Input transcription stays on even with transcripts off: it is how the
+    // device knows Gemini heard the person and a reply is owed (the silence
+    // timeout waits for it). Off, the session ended 3 s after speech while
+    // gemini-2.5 was still working (replies ~12 s later with tool calls).
+    // The text is then neither shown nor logged.
+    m_record_transcripts = cfg.transcripts;
     if (!cfg.transcripts) {
-        setup.remove("inputAudioTranscription");
         setup.remove("outputAudioTranscription");
     }
     TranscriptLog::instance().setLogging(cfg.transcripts && cfg.transcript_log);
@@ -892,9 +897,9 @@ void GeminiProtocol::recordTranscription(JsonObjectConst serverContent) {
     if (in[0]) {
         // Gemini heard the person, so a reply follows (possibly seconds later).
         expectReply();
-        TranscriptLog::instance().append(TranscriptLog::Role::User, in, strlen(in));
+        if (m_record_transcripts) TranscriptLog::instance().append(TranscriptLog::Role::User, in, strlen(in));
     }
-    if (out[0]) TranscriptLog::instance().append(TranscriptLog::Role::Model, out, strlen(out));
+    if (out[0] && m_record_transcripts) TranscriptLog::instance().append(TranscriptLog::Role::Model, out, strlen(out));
 }
 
 void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {

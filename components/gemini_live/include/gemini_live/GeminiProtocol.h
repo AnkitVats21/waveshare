@@ -161,6 +161,7 @@ private:
 
     std::atomic<bool> m_barge_in{false};
     std::atomic<uint32_t> m_turns_completed{0};
+    std::atomic<bool> m_record_transcripts{true};   // the transcripts setting
 
     // Google Search in the setup. A model without search quota (Gemini 3.x on
     // the free tier) closes the setup with 1011 "exceeded your current
