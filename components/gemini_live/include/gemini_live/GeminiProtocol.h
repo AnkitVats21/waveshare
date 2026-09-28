@@ -54,6 +54,10 @@ public:
     // VAD silence timeout must not end the session meanwhile (the reply can
     // take several seconds over music). Gives up after REPLY_WAIT_US.
     bool awaitingReply();
+
+    // Test hook (POST /api/assistant/handoff): act as if Gemini had sent
+    // goAway. False without a live session.
+    bool simulateGoAway();
     static constexpr int64_t REPLY_WAIT_US = 15LL * 1000 * 1000;
 
     // ReactorTask interface
@@ -96,11 +100,27 @@ private:
     std::string m_resume_handle;
     int64_t m_resume_handle_us = 0;
     bool m_resuming = false;           // this connection's setup carries a handle
-    // Gemini closes (1008) a setup whose handle has expired. The event
-    // handler can't restart the client, so it asks the task to, at once
-    // instead of after reconnect_timeout_ms.
-    std::atomic<bool> m_retry_fresh{false};
-    static constexpr uint32_t NOTIFY_RETRY_BIT = (1u << 14);
+    bool m_force_resume = false;       // a handoff resumes whatever resume_min says
+
+    // Restarting the connection inside a session, which the event handler
+    // can't do itself: after Gemini refuses an expired handle (close 1008;
+    // reconnect fresh at once, not after reconnect_timeout_ms), and for a
+    // goAway handoff. ws_state reads CONNECTING meanwhile, so the session
+    // carries on.
+    std::atomic<bool> m_restart_requested{false};
+    std::atomic<bool> m_restart_graceful{false};   // send a close frame first
+    std::atomic<bool> m_restarting{false};         // old connection's events are ignored
+    static constexpr uint32_t NOTIFY_RESTART_BIT = (1u << 14);
+    void requestRestart(bool graceful);
+    void restartConnection();
+
+    // goAway: Gemini ends every connection after ~10 min. The session moves
+    // to a new connection resuming the same conversation, at the next turn
+    // boundary (no reply owed or playing), or at once if the server closes
+    // first. One connection at a time: two TLS clients over music don't fit
+    // in internal RAM, and the gap between turns is ~1 s.
+    std::atomic<bool> m_handoff_pending{false};
+    void maybeHandOff(const SystemState& snap);
     SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
 

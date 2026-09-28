@@ -1,6 +1,7 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "audio_core/WakeWordEngine.h"
+#include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/TranscriptLog.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "services/http/StateNames.h"
@@ -54,6 +55,15 @@ esp_err_t stopHandler(httpd_req_t* req) {
     return Http::sendOk(req, "Session ended");
 }
 
+// Test hook: moves a live session to a new connection as a goAway would
+// (Gemini sends one after ~10 min), at the next turn boundary.
+esp_err_t handoffHandler(httpd_req_t* req) {
+    if (!GeminiProtocol::getInstance().simulateGoAway()) {
+        return Http::sendError(req, 409, "No connected session");
+    }
+    return Http::sendOk(req, "Handoff requested");
+}
+
 esp_err_t statusHandler(httpd_req_t* req) {
     auto snap = EmbeddedSysDb::getInstance().snapshot();
     JsonDocument doc;
@@ -79,6 +89,7 @@ void Routes::registerAssistant(Http::Server& server) {
     server.on("/api/assistant/wake", HTTP_POST, wakeHandler);
     server.on("/api/assistant/start", HTTP_POST, startHandler);
     server.on("/api/assistant/stop", HTTP_POST, stopHandler);
+    server.on("/api/assistant/handoff", HTTP_POST, handoffHandler);
     server.on("/api/assistant/status", HTTP_GET, statusHandler);
     server.on("/api/assistant/transcript", HTTP_GET, transcriptHandler);
 }

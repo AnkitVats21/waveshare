@@ -24,7 +24,7 @@ matching HTTP status.
 |---|---|
 | Music | `POST /api/music/play` (`stream_url`, `id`, `title`, `artist`, `duration`), `POST /api/music/play_local` (`id`), `POST /api/music/control` (`action`: pause, resume, toggle, stop, next, prev, seek, repeat, autoplay, caching, shuffle, clear_queue; `value`), `GET /api/music/status`, `POST /api/music/library/scan` (checks the library against the card), `DELETE /api/music/library?id=` (deletes the saved file; the entry stays); the library is `GET /api/db/music` |
 | Recordings | `POST /api/recordings/play` (`id`), `POST /api/recordings/rename` (`id`, `name`), `DELETE /api/recordings?id=`; the list is `GET /api/db/recordings`; recording itself: `POST /api/audio/record/start?mode=stereo\|processed`, `POST /api/audio/record/stop` |
-| Assistant | `POST /api/assistant/wake`, `/start`, `/stop`, `GET /api/assistant/status`, `GET /api/assistant/transcript` |
+| Assistant | `POST /api/assistant/wake`, `/start`, `/stop`, `/handoff` (test: move the session to a new connection, as after a goAway), `GET /api/assistant/status`, `GET /api/assistant/transcript` |
 | Audio | `POST /api/audio/volume`, `/mic_gain`, `/mic_mute`, `/alert` |
 | Alerts (chimes) | `GET /api/alerts`; `POST /api/alerts/<name>` (enabled, gain, source), `/<name>/upload`, `/<name>/play`, `/<name>/reset` |
 | Alarms | `GET/POST/DELETE /api/alarms`, `POST /api/alarms/*`, `GET /api/alarms/status`; `GET/POST/DELETE /api/reminders`, `POST /api/reminders/*` |

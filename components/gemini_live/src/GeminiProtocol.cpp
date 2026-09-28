@@ -86,6 +86,7 @@ GeminiProtocol& GeminiProtocol::getInstance() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& snap) {
+    maybeHandOff(snap);
     bool requested = snap.assistant.connect_requested;
     bool wifi_ok = snap.system.wifi_connected;
     auto ws = snap.assistant.ws_state;
@@ -187,6 +188,57 @@ bool GeminiProtocol::startClientConnection() {
     return true;
 }
 
+void GeminiProtocol::requestRestart(bool graceful) {
+    m_restart_graceful = graceful;
+    m_restart_requested = true;
+    sysdb.mutate([](SystemState& s) { s.assistant.ws_state = WsState::CONNECTING; });
+    xTaskNotify(getHandle(), NOTIFY_RESTART_BIT, eSetBits);
+}
+
+// Protocol task only (stop() may not run on the websocket task).
+void GeminiProtocol::restartConnection() {
+    std::lock_guard<std::mutex> lock(m_client_mutex);
+    if (!m_client || !m_accept_audio) return;   // the session ended meanwhile
+    m_restarting = true;
+    if (m_restart_graceful) m_client.close(pdMS_TO_TICKS(500));
+    m_client.stop();
+    {
+        std::lock_guard<std::mutex> turn(m_turn_mutex);
+        m_setup_complete = false;
+    }
+    m_restarting = false;
+    LOGI_NET("Reconnecting...");
+    if (m_client.start() != ESP_OK) {
+        LOGE_NET("Reconnect failed to start.");
+        sysdb.mutate([](SystemState& s) { s.assistant.ws_state = WsState::ERROR_STATE; });
+    }
+}
+
+void GeminiProtocol::maybeHandOff(const SystemState& snap) {
+    if (!m_handoff_pending || !m_accept_audio) return;
+    auto state = snap.assistant.session_state;
+    bool between_turns = (state == AssistantState::StreamingUserAudio ||
+                          state == AssistantState::WaitingForFollowup) &&
+                         !snap.audio.assistant_speaking && !snap.audio.turn_complete_pending &&
+                         !awaitingReply();
+    if (!between_turns || snap.assistant.ws_state != WsState::CONNECTED) return;
+    m_handoff_pending = false;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        m_force_resume = true;
+    }
+    LOGI_NET("Handing the session to a new connection.");
+    requestRestart(true);
+}
+
+bool GeminiProtocol::simulateGoAway() {
+    if (!m_accept_audio || sysdb.snapshot().assistant.ws_state != WsState::CONNECTED) return false;
+    LOGW_NET("Simulated goAway; handing off at the next turn boundary.");
+    m_handoff_pending = true;
+    xTaskNotify(getHandle(), NOTIFY_RESTART_BIT, eSetBits);
+    return true;
+}
+
 void GeminiProtocol::closeConnection() {
     // Check the client, not ws_state: a failed connect reports DISCONNECTED
     // while the client lives on and reconnects every reconnect_timeout_ms,
@@ -196,6 +248,8 @@ void GeminiProtocol::closeConnection() {
     }
     LOGI_NET("Closing WebSocket connection...");
     m_accept_audio = false;
+    m_handoff_pending = false;
+    m_restart_requested = false;
     resetTextTurn();
     {
         std::lock_guard<std::mutex> lock(m_client_mutex);   // vs a fresh-retry restart
@@ -269,8 +323,10 @@ void GeminiProtocol::transmitSetupHandshake() {
     {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         int64_t age_us = esp_timer_get_time() - m_resume_handle_us;
-        m_resuming = !m_resume_handle.empty() && cfg.resume_min > 0 &&
-                     age_us < (int64_t)cfg.resume_min * 60 * 1000000;
+        m_resuming = !m_resume_handle.empty() &&
+                     (m_force_resume || (cfg.resume_min > 0 &&
+                                         age_us < (int64_t)cfg.resume_min * 60 * 1000000));
+        m_force_resume = false;
         JsonObject resumption = setup["sessionResumption"].to<JsonObject>();
         if (m_resuming) {
             resumption["handle"] = m_resume_handle;
@@ -470,6 +526,9 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                      (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
             // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
             // AssistantService will safely invoke closeConnection() outside this task context.
+            if (self->m_restarting) {
+                break;   // the old connection of a restart
+            }
             if (self->m_accept_audio) {
                 // Closed before setupComplete while resuming: the handle was
                 // refused (1008 "not found" once it expires). Forget it and
@@ -485,9 +544,12 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                 }
                 if (refused) {
                     LOGW_NET("Resumption refused; reconnecting without the handle.");
-                    self->m_retry_fresh = true;
-                    sysdb.mutate([](SystemState& s) { s.assistant.ws_state = WsState::CONNECTING; });
-                    xTaskNotify(self->getHandle(), NOTIFY_RETRY_BIT, eSetBits);
+                    self->requestRestart(false);
+                    break;
+                }
+                if (self->m_handoff_pending) {
+                    LOGW_NET("Closed after goAway; resuming on a new connection.");
+                    self->requestRestart(false);
                     break;
                 }
             }
@@ -631,12 +693,10 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             }
 
             if (!doc["goAway"].isNull()) {
-                LOGW_NET("Gemini Live Engine: Received 'goAway' signal.");
-                sysdb.mutate([](SystemState& s) {
-                    s.assistant.ws_state = WsState::GOING_AWAY;
-                    s.audio.assistant_speaking = false;
-                });
-                if (m_client) m_client.close(pdMS_TO_TICKS(1500));
+                LOGW_NET("goAway (time left %s); handing off at the next turn boundary.",
+                         doc["goAway"]["timeLeft"] | "?");
+                m_handoff_pending = true;
+                maybeHandOff(sysdb.snapshot());
             }
 
             JsonObjectConst toolCall = doc["toolCall"];
@@ -728,16 +788,16 @@ void GeminiProtocol::run() {
                 }
             }
 
-            if ((changed_bits & NOTIFY_RETRY_BIT) && m_retry_fresh.exchange(false)) {
-                std::lock_guard<std::mutex> lock(m_client_mutex);
-                if (m_client && m_accept_audio) {
-                    m_client.stop();
-                    m_client.start();
+            if (changed_bits & NOTIFY_RESTART_BIT) {
+                if (m_restart_requested.exchange(false)) {
+                    restartConnection();
+                } else {
+                    maybeHandOff(sysdb.snapshot());
                 }
             }
 
             // 2. Process database state changes
-            uint32_t db_changed = changed_bits & ~(NOTIFY_RINGBUF_BIT | NOTIFY_RETRY_BIT);
+            uint32_t db_changed = changed_bits & ~(NOTIFY_RINGBUF_BIT | NOTIFY_RESTART_BIT);
             if (db_changed > 0) {
                 m_last_changed = db_changed;
                 SystemState snap = EmbeddedSysDb::getInstance().snapshot();
