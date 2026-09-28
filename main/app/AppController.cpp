@@ -10,6 +10,7 @@
 #include "services/time/TimeSyncHelper.h"
 #include "services/alarm/AlarmService.h"
 #include "services/alarm/AlarmTools.h"
+#include "services/mcp/McpService.h"
 
 #include "common/AppLogger.h"
 #include "common/AsyncNetLogger.h"
@@ -65,6 +66,7 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
         if (wifi_ok) {
             // Syncs now if the clock is not set; retries with backoff on failure.
             Services::TimeSyncHelper::instance().onWifiConnected();
+            Mcp::McpService::instance().onWifiConnected();
         }
 
         // if (wifi_ok && !m_wifi_connected) {

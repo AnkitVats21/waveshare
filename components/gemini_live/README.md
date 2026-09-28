@@ -65,6 +65,16 @@ The alarm, timer and reminder handlers live in
 `main/services/alarm/AlarmTools.cpp`, reached through
 `IDeviceCommandDelegate` (`AppController::handleAlarmTool`).
 
+### Remote MCP Tools
+
+In addition to the 15 built-in tools, `GeminiProtocol` supports dynamically
+registering remote tools discovered from an external Model Context Protocol
+(MCP) server (e.g. `nexus-mcp`). Discovered tools are converted to Gemini
+function declarations (`parametersJsonSchema`) and appended to the setup
+handshake using `PsramAllocator` to avoid internal RAM consumption. When
+Gemini invokes a remote tool, the call is asynchronously dispatched to a
+worker task that calls the remote MCP server via HTTP and returns the response.
+
 ## Known limits
 
 - Gemini 3.x Live models reject the `googleSearch` tool with our key and

@@ -8,6 +8,7 @@
 #include "credentials/Credentials.h"
 #include "gemini_live/TranscriptLog.h"
 #include <ArduinoJson.h>
+#include "gemini_live/PsramAllocator.h"
 #include "sdkconfig.h"
 #include "esp_timer.h"
 
@@ -376,7 +377,8 @@ void GeminiProtocol::transmitSetupHandshake() {
 
     // Start from the compiled-in setup (model, voice, tool declarations), then
     // apply the saved settings and the long-term memory.
-    JsonDocument doc;
+    PsramAllocator psramAlloc;
+    JsonDocument doc(&psramAlloc);
     DeserializationError err = deserializeJson(doc, GeminiSkills::SETUP_HANDSHAKE_JSON);
     if (err) {
         LOGE_NET("Failed to parse SETUP_HANDSHAKE_JSON (%s); sending it unmodified", err.c_str());
@@ -480,6 +482,11 @@ void GeminiProtocol::transmitSetupHandshake() {
             }
         }
         setup["tools"].add<JsonObject>()["googleSearch"].to<JsonObject>();
+    }
+
+    if (m_remote_decls_source) {
+        JsonArray decls = setup["tools"][0]["functionDeclarations"];
+        m_remote_decls_source(decls, m_remote_decls_ctx);
     }
 
     std::string payload;
@@ -940,6 +947,12 @@ void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {
         auto& slot = m_static_skill_event_slot;
         slot.reset();
         if (!GeminiSkills::decode_incoming_arguments(name, argsObj, slot)) {
+            if (m_remote_tool_handler && m_remote_tool_handler(id, name, argsObj, m_remote_tool_ctx)) {
+                LOGI_NET("Remote MCP tool dispatched: %s", name);
+                expectReply();
+                slot.reset();
+                continue;
+            }
             LOGW_NET("Rejected tool call '%s': %s", name, slot.error);
             JsonDocument err;
             err["status"] = "error";

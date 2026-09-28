@@ -26,6 +26,7 @@
 #include "services/network/WifiService.h"
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
+#include "services/mcp/McpService.h"
 #include "services/BufferManager.h"
 #if CONFIG_DISPLAY_ENABLE
 #include "hal/display/LcdManager.h"
@@ -120,6 +121,18 @@ extern "C" void app_main(void) {
                                                s.keepalive_s, s.web_search, s.vad_start,
                                                s.vad_end, s.vad_prefix_ms, s.vad_silence_ms};
     });
+    gemini_proto.setRemoteToolCallHandler([](const char* call_id, const char* name, JsonObjectConst args, void* ctx) -> bool {
+        std::string args_json;
+        if (!args.isNull() && args.size() > 0) {
+            serializeJson(args, args_json);
+        } else {
+            args_json = "{}";
+        }
+        return Mcp::McpService::instance().executeToolAsync(call_id, name, args_json);
+    }, nullptr);
+    gemini_proto.setRemoteToolsDeclarationsSource([](JsonArray& functionDeclarations, void* ctx) {
+        Mcp::McpService::instance().populateGeminiDeclarations(functionDeclarations);
+    }, nullptr);
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
@@ -138,6 +151,7 @@ extern "C" void app_main(void) {
     // Decodes the SD alert files into PSRAM in the background; the built-in
     // tones play until each one is ready.
     Services::AlertLibrary::getInstance().start();
+    Mcp::McpService::instance().start();
     assistant_svc.begin();
     NexusPlayer::getInstance().begin();
     MusicPlaybackService::getInstance().begin();

@@ -23,6 +23,20 @@ public:
         m_tool_ctx = ctx;
     }
 
+    // Remote tool call handler (e.g. MCP tools). Returns true if the call was accepted/dispatched.
+    typedef bool (*RemoteToolCallHandlerFn)(const char* call_id, const char* name, JsonObjectConst args, void* ctx);
+    void setRemoteToolCallHandler(RemoteToolCallHandlerFn handler, void* ctx) {
+        m_remote_tool_handler = handler;
+        m_remote_tool_ctx = ctx;
+    }
+
+    // Remote function declarations hook (e.g. MCP tools to add to Gemini setup handshake).
+    typedef void (*RemoteToolsDeclarationsFn)(JsonArray& functionDeclarations, void* ctx);
+    void setRemoteToolsDeclarationsSource(RemoteToolsDeclarationsFn source, void* ctx) {
+        m_remote_decls_source = source;
+        m_remote_decls_ctx = ctx;
+    }
+
     // Model, voice, system prompt and transcripts for the next session. Empty
     // strings mean the firmware defaults. The source is set by the app
     // (system.ndb).
@@ -186,6 +200,10 @@ private:
 
     ToolCallHandlerFn m_tool_handler = nullptr;
     void* m_tool_ctx = nullptr;
+    RemoteToolCallHandlerFn m_remote_tool_handler = nullptr;
+    void* m_remote_tool_ctx = nullptr;
+    RemoteToolsDeclarationsFn m_remote_decls_source = nullptr;
+    void* m_remote_decls_ctx = nullptr;
 
     // Persistent Zero-Allocation Arenas for Audio & Skill Tool execution
     uint8_t* m_static_pcm_scratch_arena = nullptr;
