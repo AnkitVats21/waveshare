@@ -30,6 +30,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field keepalive_s:          u8 = 60        tag=9   // keep the connection open this long after a session (mic off); 0 = close at once
         field echo_measure:         bool           tag=10  // log the echo-cancelled mic during replies (barge-in study)
         field barge_in:             bool           tag=11  // stream the mic during replies so speaking interrupts them
+        field web_search:           bool = true    tag=12  // give Gemini Google Search (2.5 Live models; 3.x refuses it on the free tier)
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",

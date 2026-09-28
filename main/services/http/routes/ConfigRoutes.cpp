@@ -62,6 +62,8 @@ void addDefaults(JsonDocument& doc) {
 //   echo_measure:     log how much echo the mic picks up during replies
 //   barge_in:         keep the mic streaming during replies, so talking
 //                     over one interrupts it
+//   web_search:       give Gemini Google Search (works on the 2.5 Live
+//                     models; a model that refuses it runs without it)
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     Settings s = Services::loadSettings();
     JsonDocument doc;
@@ -76,6 +78,7 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     doc["keepalive_s"] = s.keepalive_s;
     doc["echo_measure"] = s.echo_measure;
     doc["barge_in"] = s.barge_in;
+    doc["web_search"] = s.web_search;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
@@ -143,6 +146,10 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
     if (doc["barge_in"].is<bool>()) {
         s.barge_in = doc["barge_in"];
         fields |= Settings::F_BARGE_IN;
+    }
+    if (doc["web_search"].is<bool>()) {
+        s.web_search = doc["web_search"];
+        fields |= Settings::F_WEB_SEARCH;
     }
     // Stored after validation, so a rejected request changes nothing.
     std::string new_key = doc["api_key"] | "";

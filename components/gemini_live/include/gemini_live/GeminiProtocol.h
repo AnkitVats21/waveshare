@@ -34,6 +34,7 @@ public:
         bool transcript_log = true;   // print each finished turn to the log
         uint8_t resume_min = 60;      // resume the last conversation if younger; 0 = never
         uint8_t keepalive_s = 60;     // keep the connection after a session; 0 = close
+        bool web_search = true;       // add Google Search to the tools
     };
     typedef SessionSettings (*SettingsSourceFn)();
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
@@ -145,6 +146,15 @@ private:
     void maybeHandOff(const SystemState& snap);
 
     std::atomic<bool> m_barge_in{false};
+
+    // Google Search in the setup. A model without search quota (Gemini 3.x on
+    // the free tier) closes the setup with 1011 "exceeded your current
+    // quota"; the connection then restarts without search, and that model
+    // gets none until the next boot. Guarded by m_turn_mutex.
+    bool m_search_in_setup = false;
+    bool m_search_quota_closed = false;   // the close frame said "quota" before setupComplete
+    std::string m_search_refused_model;
+    std::string m_last_setup_model;       // the model the last setup named
     // Set by the websocket handler as soon as an "interrupted" frame arrives,
     // ahead of the reply audio still queued before it: the parser drops that
     // audio instead of waiting for playback to drain. Cleared when the

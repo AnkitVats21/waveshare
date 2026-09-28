@@ -431,13 +431,25 @@ void GeminiProtocol::transmitSetupHandshake() {
     }
     setup["contextWindowCompression"]["slidingWindow"].to<JsonObject>();
 
+    bool search = false;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        m_last_setup_model = setup["model"] | "";
+        search = cfg.web_search && m_search_refused_model != m_last_setup_model;
+        m_search_in_setup = search;
+        m_search_quota_closed = false;
+    }
+    if (search) {
+        setup["tools"].add<JsonObject>()["googleSearch"].to<JsonObject>();
+    }
+
     std::string payload;
     serializeJson(doc, payload);
-    LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s instruction=%zu bytes (payload %zu bytes) resume=%s",
+    LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s search=%s instruction=%zu bytes (payload %zu bytes) resume=%s",
              setup["model"] | "?",
              setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] | "?",
              !cfg.transcripts ? "off" : cfg.transcript_log ? "on+log" : "on",
-             instruction.size(), payload.size(),
+             search ? "on" : "off", instruction.size(), payload.size(),
              resume_age_s < 0 ? "no" : (std::to_string(resume_age_s) + " s old").c_str());
     m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
 }
@@ -563,8 +575,15 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                 // "Requested entity was not found." for an expired handle).
                 const auto* p = reinterpret_cast<const uint8_t*>(data->data_ptr);
                 if (data->payload_offset == 0 && data->data_len >= 2) {
+                    int reason_len = std::min(data->data_len - 2, 120);
                     LOGW_NET("Gemini closed the connection: %d %.*s", (p[0] << 8) | p[1],
-                             std::min(data->data_len - 2, 120), data->data_ptr + 2);
+                             reason_len, data->data_ptr + 2);
+                    std::string reason(data->data_ptr + 2, reason_len);
+                    std::lock_guard<std::mutex> lock(self->m_turn_mutex);
+                    if (self->m_search_in_setup && !self->m_setup_complete &&
+                        reason.find("quota") != std::string::npos) {
+                        self->m_search_quota_closed = true;
+                    }
                 }
                 break;
             }
@@ -646,13 +665,25 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                 // refused (1008 "not found" once it expires). Forget it and
                 // reconnect fresh, keeping the session (and a queued text turn).
                 bool refused;
+                bool search_refused = false;
                 {
                     std::lock_guard<std::mutex> lock(self->m_turn_mutex);
+                    if (self->m_search_quota_closed) {
+                        search_refused = true;
+                        self->m_search_quota_closed = false;
+                        self->m_search_refused_model = self->m_last_setup_model;
+                    }
                     refused = self->m_resuming && !self->m_setup_complete;
                     if (refused) {
                         self->m_resume_handle.clear();
                         self->m_resuming = false;
                     }
+                }
+                if (search_refused) {
+                    LOGW_NET("Google Search refused (no quota on %s); reconnecting without it.",
+                             self->m_search_refused_model.c_str());
+                    self->requestRestart(false);
+                    break;
                 }
                 if (refused) {
                     LOGW_NET("Resumption refused; reconnecting without the handle.");
