@@ -422,7 +422,30 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
         int32_t peak = 0;
     } echo;
     const int frame_ms = fetch_chunksize * 1000 / 16000;
-    bool wakenet_during_reply = false;   // barge-in: WakeNet re-enabled for a reply
+    // Barge-in echo gate: the mic is streamed during a reply only if the
+    // echo-cancelled level over its first second is low. Right after boot
+    // the AEC hasn't adapted yet (-32 dBFS, and Gemini heard its own voice
+    // and interrupted itself); adapted, replies measure about -53 dBFS.
+    // With the gate open, speech over the reply is detected locally too
+    // (VAD speech at least TALK_MARGIN_DB above the reply's echo for
+    // TALK_MIN_MS): Gemini's own "interrupted" can wait behind the reply
+    // audio queued on the connection.
+    struct {
+        bool active = false, open = false, talked = false;
+        int frames = 0, talk_frames = 0;
+        uint64_t sum_sq = 0, samples = 0;
+        double echo_dbfs = 0;
+    } gate;
+    const int gate_frames = 1000 / frame_ms;
+    constexpr double GATE_MAX_DBFS = -45.0;
+    constexpr double TALK_MARGIN_DB = 12.0;
+    const int talk_min_frames = 400 / frame_ms;
+    auto frameDbfs = [](const int16_t* pcm, size_t n) {
+        uint64_t sum_sq = 0;
+        for (size_t i = 0; i < n; i++) sum_sq += (uint64_t)((int32_t)pcm[i] * pcm[i]);
+        double rms = n ? sqrt((double)sum_sq / n) : 0;
+        return rms > 0 ? 20 * log10(rms / 32768) : -96.0;
+    };
 
     while (m_task_flag) {
         // Timed wait keeps the task watchdog satisfied while processing is paused.
@@ -455,7 +478,36 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
         // Only block when assistant voice is actively playing out of the speaker.
         bool assistant_talking = m_assistant_active || AudioOrchestrator::getInstance().isVoiceActive();
         size_t buffered_voice_bytes = bm.getUsedBytes(Buffers::VOICE_RX_BUF);
-        bool block_mic_capture = !m_barge_in && (assistant_talking || (buffered_voice_bytes > 0));
+        bool barge_stream = false;
+        if (m_barge_in && assistant_talking && res->data && res->data_size > 0) {
+            if (!gate.active) gate = {}, gate.active = true;
+            if (gate.frames < gate_frames) {
+                const int16_t* pcm = res->data;
+                size_t n = res->data_size / sizeof(int16_t);
+                for (size_t i = 0; i < n; i++) gate.sum_sq += (uint64_t)((int32_t)pcm[i] * pcm[i]);
+                gate.samples += n;
+                if (++gate.frames == gate_frames) {
+                    double rms = sqrt((double)gate.sum_sq / gate.samples);
+                    gate.echo_dbfs = rms > 0 ? 20 * log10(rms / 32768) : -96.0;
+                    gate.open = gate.echo_dbfs < GATE_MAX_DBFS;
+                    LOGI_AUDIO("Barge-in: reply echo %.0f dBFS, mic %s for this reply",
+                               gate.echo_dbfs, gate.open ? "streams" : "stays off");
+                }
+            } else if (gate.open && !gate.talked) {
+                double db = frameDbfs(res->data, res->data_size / sizeof(int16_t));
+                bool talking = res->vad_state == VAD_SPEECH && db >= gate.echo_dbfs + TALK_MARGIN_DB;
+                gate.talk_frames = talking ? gate.talk_frames + 1 : 0;
+                if (gate.talk_frames >= talk_min_frames) {
+                    gate.talked = true;
+                    LOGI_AUDIO("Barge-in: speech over the reply (%.0f dBFS vs echo %.0f)", db, gate.echo_dbfs);
+                    m_listener->onUserSpeechDetected();
+                }
+            }
+            barge_stream = gate.open;
+        } else if (!assistant_talking) {
+            gate.active = false;
+        }
+        bool block_mic_capture = !barge_stream && (assistant_talking || (buffered_voice_bytes > 0));
 
         if (m_streaming_active && !block_mic_capture && res->data && res->data_size > 0) {
             bm.send(Buffers::MIC_TX_BUF, res->data, res->data_size);
@@ -511,18 +563,6 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
             }
         }
 
-        // Barge-in by wake word: WakeNet (off during a session to save CPU)
-        // listens to the echo-cancelled mic while the assistant speaks.
-        bool want_wakenet = m_streaming_active && m_barge_in && assistant_talking;
-        if (want_wakenet != wakenet_during_reply && m_streaming_active) {
-            if (want_wakenet) {
-                m_afe_handle->enable_wakenet(afe_data);
-            } else {
-                m_afe_handle->disable_wakenet(afe_data);
-            }
-            wakenet_during_reply = want_wakenet;
-        }
-
         // ── Wake word detection ───────────────────────────────────────────────
         bool detected = false;
         bool manual = false;
@@ -548,16 +588,10 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
         }
 
         if (detected && m_streaming_active) {
-            // The wake word over a reply: interrupt it, don't start a session.
-            detected = false;
-            if (assistant_talking) {
-                LOGI_SYSTEM("Wake word over the reply — interrupting it");
-                m_listener->onUserSpeechDetected();
-            }
+            detected = false;   // WakeNet is off in a session; never start a second one
         }
 
         if (detected) {
-            wakenet_during_reply = false;
             silence_timeout_ms = VAD_SILENCE_TIMEOUT_MS;
             if (manual && m_manual_silence_ms > 0) {
                 silence_timeout_ms = m_manual_silence_ms;

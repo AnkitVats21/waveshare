@@ -73,7 +73,7 @@ public:
     // Barge-in: mic audio goes up while a reply plays, and an "interrupted"
     // from Gemini drops the rest of the reply.
     void setBargeIn(bool on) { m_barge_in = on; }
-    // Stops the reply now (the wake word was said over it). If the reply is
+    // Stops the reply now (the person talked over it). If the reply is
     // still arriving, its remaining audio (and anything Gemini says after
     // it) is queued on the connection, so the session moves to a new
     // connection that resumes the conversation.
