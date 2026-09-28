@@ -5,12 +5,14 @@
     speak.py --voice Kore --espeak "Alexa"
 
 Uses Gemini TTS (natural voice) with the key in ~/.config/nexus/gemini_key,
-caching each phrase in ~/.cache/nexus_tts so repeats cost nothing. Falls back
-to espeak-ng if TTS fails. The key is never printed.
+and gemini_key2 when the first is out of quota (429); each phrase is cached
+in ~/.cache/nexus_tts so repeats cost nothing. If TTS fails it stops rather
+than fall back: the model mishears espeak-ng, which spoils the test. espeak-ng
+only with --espeak. Keys are never printed.
 """
 import argparse, base64, hashlib, json, pathlib, subprocess, sys, urllib.error, urllib.request, wave
 
-KEY_FILE = pathlib.Path.home() / ".config/nexus/gemini_key"
+KEY_FILES = [pathlib.Path.home() / ".config/nexus" / n for n in ("gemini_key", "gemini_key2")]
 CACHE = pathlib.Path.home() / ".cache/nexus_tts"
 MODEL = "gemini-2.5-flash-preview-tts"
 RATE = 24000  # Gemini TTS returns 24 kHz mono s16le
@@ -21,7 +23,6 @@ def tts(text, voice):
     path = CACHE / (hashlib.sha1(f"{MODEL}|{voice}|{text}".encode()).hexdigest() + ".wav")
     if path.exists():
         return path
-    key = KEY_FILE.read_text().strip()
     body = {
         "contents": [{"parts": [{"text": text}]}],
         "generationConfig": {
@@ -29,16 +30,26 @@ def tts(text, voice):
             "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
         },
     }
-    req = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "x-goog-api-key": key},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            data = json.load(r)
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"TTS HTTP {e.code}: {e.read()[:300].decode(errors='replace').replace(key, '<key>')}")
+    data, err = None, "no key file"
+    for key_file in KEY_FILES:
+        if not key_file.exists():
+            continue
+        key = key_file.read_text().strip()
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "x-goog-api-key": key},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = json.load(r)
+            break
+        except urllib.error.HTTPError as e:
+            err = f"TTS HTTP {e.code} ({key_file.name}): {e.read()[:200].decode(errors='replace').replace(key, '<key>')}"
+            if e.code != 429:
+                break
+    if data is None:
+        raise RuntimeError(err)
     pcm = base64.b64decode(data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"])
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
@@ -49,13 +60,10 @@ def tts(text, voice):
 
 
 def say(text, voice="Kore", espeak=False):
-    if not espeak:
-        try:
-            subprocess.run(["pw-play", str(tts(text, voice))], check=True)
-            return
-        except Exception as e:
-            print(f"speak: Gemini TTS failed ({e}); using espeak-ng", file=sys.stderr)
-    subprocess.run(["espeak-ng", "-s", "150", text], check=True)
+    if espeak:
+        subprocess.run(["espeak-ng", "-s", "150", text], check=True)
+    else:
+        subprocess.run(["pw-play", str(tts(text, voice))], check=True)
 
 
 if __name__ == "__main__":

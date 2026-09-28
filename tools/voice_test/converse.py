@@ -51,7 +51,7 @@ def main():
         try:
             tts(text, a.voice)
         except Exception as e:
-            print(f"TTS for {text!r} failed ({e}); espeak-ng will be used", file=sys.stderr)
+            sys.exit(f"TTS for {text!r} failed: {e}")
 
     seq = api("GET", "/api/assistant/transcript")["seq"]
     if a.wake_word:
