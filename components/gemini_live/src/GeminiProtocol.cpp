@@ -291,7 +291,9 @@ void GeminiProtocol::interruptReply() {
         m_force_resume = true;
         m_setup_complete = false;   // the pump holds the mic audio from now
     }
-    requestRestart(false);
+    // With a close frame: dropped abruptly, the old connection still held
+    // the session and resuming it failed (close 1011 "Internal error").
+    requestRestart(true);
 }
 
 bool GeminiProtocol::simulateGoAway() {
@@ -620,6 +622,10 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             }
             break;
             
+        // A close by the server ends in CLOSED, not DISCONNECTED (the client
+        // task stops instead of reconnecting): the same handling, or the
+        // session would think it is still connected.
+        case WEBSOCKET_EVENT_CLOSED:
         case WEBSOCKET_EVENT_DISCONNECTED:
             LOGW_NET("WebSocket disconnected. Stats: rx_frames=%u, rx_dropped=%u, rx_audio_bytes=%u",
                      (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
