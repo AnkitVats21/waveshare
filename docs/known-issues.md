@@ -73,9 +73,16 @@ Recordings page or `/api/recordings/*`.
   can be pinned.
 - **Library `.ogg` files are WebM.** Files named `.ogg` in the music folder
   are WebM inside; the player sniffs the format, so they play normally.
-- **Gemini 3.x Live and Google Search.** Gemini 3.x Live models reject the
-  `googleSearch` tool with the current key and end the session (Live 2.5
-  native-audio accepts it), so search isn't offered to the assistant.
+- **Google Search needs a 2.5 Live model.** Search (`web_search`, on by
+  default) works on the 2.5 native-audio models. Gemini 3.x Live models on a
+  free-tier key close the setup with a quota error; the device then
+  reconnects without search, so on those models the assistant has none.
+- **Barge-in (talking over a reply, `barge_in` setting) is experimental.**
+  The first reply after boot keeps the mic gated, because echo cancellation
+  hasn't adapted yet (echo around -30 dBFS against -50 later). An interrupt
+  reconnects and resumes the conversation, which takes about 4 s, because
+  Gemini sends a reply faster than real time and the reply still queued
+  in the TCP window would otherwise play out first (8-20 s).
 - **TLS certificate dates aren't checked.** Chains and hostnames are
   verified against the CA bundle, but `CONFIG_MBEDTLS_HAVE_TIME_DATE` is off:
   turning it on makes every connection fail until the clock syncs after
