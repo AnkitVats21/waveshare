@@ -595,12 +595,19 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                             self->m_interrupt_pending = true;
                         }
                         // Long wait on purpose: while blocked, the WS task stops reading the
-                        // socket, so the TCP window closes and Gemini pauses sending.
-                        BaseType_t ok = xRingbufferSend(self->m_incoming_psram_rb,
-                                                        self->m_assembly_scratch,
-                                                        self->m_assembly_idx + 1,
-                                                        pdMS_TO_TICKS(INCOMING_RB_MAX_BLOCK_MS));
-                        if (ok == pdTRUE) {
+                        // socket, so the TCP window closes and Gemini pauses sending. Not
+                        // while a restart is pending (barge-in): its close frame needs the
+                        // client lock this task holds, and the old frames are unwanted.
+                        BaseType_t ok = pdFALSE;
+                        for (uint32_t waited = 0; !self->m_restart_requested && !self->m_restarting;
+                             waited += 100) {
+                            ok = xRingbufferSend(self->m_incoming_psram_rb, self->m_assembly_scratch,
+                                                 self->m_assembly_idx + 1, pdMS_TO_TICKS(100));
+                            if (ok == pdTRUE || waited + 100 >= INCOMING_RB_MAX_BLOCK_MS) break;
+                        }
+                        if (ok != pdTRUE && (self->m_restart_requested || self->m_restarting)) {
+                            // Discarded: a frame of the connection being replaced.
+                        } else if (ok == pdTRUE) {
                             self->m_rx_frames++;
                             if (self->getHandle() != nullptr) {
                                 xTaskNotify(self->getHandle(), (1u << 15), eSetBits);
