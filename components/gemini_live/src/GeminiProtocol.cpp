@@ -299,6 +299,12 @@ void GeminiProtocol::closeConnection() {
     m_parked = false;
     esp_timer_stop(m_park_timer);
     m_restart_requested = false;
+    {
+        // The handle stays current for the whole connection (one is sent
+        // after setup), so resume_min counts from when the conversation ended.
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        if (!m_resume_handle.empty()) m_resume_handle_us = esp_timer_get_time();
+    }
     resetTextTurn();
     {
         std::lock_guard<std::mutex> lock(m_client_mutex);   // vs a fresh-retry restart
@@ -727,6 +733,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 {
                     std::lock_guard<std::mutex> lock(m_turn_mutex);
                     m_reply_wait_us = 0;
+                    m_resume_handle_us = esp_timer_get_time();   // last activity
                 }
                 TranscriptLog::instance().closeTurn();
                 sysdb.mutate([](SystemState& s) {

@@ -101,8 +101,10 @@ private:
     int64_t m_reply_wait_us = 0;       // when the owed reply was asked for; 0 = none
     void expectReply();                // start (or restart) the reply wait
     // Session resumption, RAM only. The latest resumable handle Gemini sent
-    // and when; a new connection resumes with it (same conversation) if it
-    // is younger than resume_min. Guarded by m_turn_mutex.
+    // and the conversation's last activity (handle, turn end, close); a new
+    // connection resumes with it if that is within resume_min. gemini-3.8-live
+    // sends one handle per connection, just after setup, and it restores the
+    // latest state. Guarded by m_turn_mutex.
     std::string m_resume_handle;
     int64_t m_resume_handle_us = 0;
     bool m_resuming = false;           // this connection's setup carries a handle
