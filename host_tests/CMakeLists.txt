@@ -20,6 +20,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/audio_core/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/nexus_db/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/media_player/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/bblanchon__arduinojson/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
@@ -61,6 +62,8 @@ nanobind_add_module(waveshare_host
     ../main/app/audio/recording/RecordingProbe.cpp
     bindings/bind_weather.cpp
     ../main/services/weather/WeatherText.cpp
+    bindings/bind_mcp.cpp
+    ../main/services/mcp/McpUtil.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)
