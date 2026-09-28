@@ -51,6 +51,7 @@ set(srcs
             "services/http/routes/AssistantRoutes.cpp"
             "services/http/routes/DbRoutes.cpp"
             "services/http/routes/RecordingRoutes.cpp"
+            "services/http/routes/McpRoutes.cpp"
             "services/storage/SysDbSyncReactor.cpp"
             "services/storage/SystemDatabase.cpp"
             "services/storage/generated/SystemDb.generated.cpp"
@@ -64,6 +65,9 @@ set(srcs
             "services/weather/WeatherText.cpp"
             "services/alarm/AlarmTools.cpp"
             "services/alerts/AlertLibrary.cpp"
+            "services/mcp/McpUtil.cpp"
+            "services/mcp/McpClient.cpp"
+            "services/mcp/McpService.cpp"
 )
 
 if(CONFIG_DISPLAY_ENABLE)
@@ -113,6 +117,7 @@ idf_component_register(
             esp_wifi
             esp_netif
             esp_http_server
+            esp_http_client
             http_server
             mdns
             fatfs

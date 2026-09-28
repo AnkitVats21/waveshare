@@ -300,7 +300,7 @@ ConvertToolsResult convertToolsListToDeclarations(
         decl["name"] = name;
         decl["description"] = desc;
 
-        if (tool.containsKey("inputSchema") && !tool["inputSchema"].isNull()) {
+        if (!tool["inputSchema"].isNull()) {
             decl["parametersJsonSchema"] = tool["inputSchema"];
         } else {
             decl["parametersJsonSchema"].to<JsonObject>()["type"] = "object";
@@ -335,7 +335,7 @@ std::string formatToolResponseForGemini(std::string_view json_rpc_result) {
 
     JsonObjectConst root = doc.is<JsonObjectConst>() ? doc.as<JsonObjectConst>() : JsonObjectConst();
     JsonObjectConst resObj = root;
-    if (root.containsKey("result") && root["result"].is<JsonObjectConst>()) {
+    if (root["result"].is<JsonObjectConst>()) {
         resObj = root["result"].as<JsonObjectConst>();
     }
 
@@ -343,7 +343,7 @@ std::string formatToolResponseForGemini(std::string_view json_rpc_result) {
     bool is_error = resObj["isError"] | false;
     if (is_error) {
         std::string err_msg;
-        if (resObj.containsKey("content") && resObj["content"].is<JsonArrayConst>()) {
+        if (resObj["content"].is<JsonArrayConst>()) {
             for (JsonObjectConst item : resObj["content"].as<JsonArrayConst>()) {
                 const char* text = item["text"] | "";
                 if (text[0] != '\0') {
@@ -366,7 +366,7 @@ std::string formatToolResponseForGemini(std::string_view json_rpc_result) {
 
     // Join text contents
     std::string joined_text;
-    if (resObj.containsKey("content") && resObj["content"].is<JsonArrayConst>()) {
+    if (resObj["content"].is<JsonArrayConst>()) {
         for (JsonObjectConst item : resObj["content"].as<JsonArrayConst>()) {
             const char* text = item["text"] | "";
             if (text[0] != '\0') {
@@ -379,7 +379,7 @@ std::string formatToolResponseForGemini(std::string_view json_rpc_result) {
     JsonDocument outDoc;
     outDoc["result"] = joined_text;
 
-    if (resObj.containsKey("structuredContent") && !resObj["structuredContent"].isNull()) {
+    if (!resObj["structuredContent"].isNull()) {
         outDoc["structuredContent"] = resObj["structuredContent"];
     }
 
