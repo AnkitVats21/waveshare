@@ -38,6 +38,8 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field vad_silence_ms:       u16            tag=16  // silence that ends the user's turn
         field weather_location:     string         tag=17  // home city for get_weather, e.g. "Pune"
         field web_search:           bool = true    tag=12  // give Gemini Google Search (2.5 Live models; 3.x refuses it on the free tier)
+        field mcp_url:              string         tag=18  // MCP server endpoint (e.g. "http://192.168.1.10:8788/mcp")
+        field mcp_max_tools:        u8 = 32        tag=19  // maximum tools to import from MCP server
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",

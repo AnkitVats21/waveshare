@@ -68,6 +68,8 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_VAD_SILENCE_MS) w.u16(16, vad_silence_ms);
     if (fields & F_WEATHER_LOCATION) w.str(17, weather_location);
     if (fields & F_WEB_SEARCH) w.boolean(12, web_search);
+    if (fields & F_MCP_URL) w.str(18, mcp_url);
+    if (fields & F_MCP_MAX_TOOLS) w.u8(19, mcp_max_tools);
 }
 
 void Settings::decode(std::string_view value) {
@@ -93,6 +95,8 @@ void Settings::decode(std::string_view value) {
             case 16: nexus_db::FieldReader::read(v, len, vad_silence_ms); break;
             case 17: nexus_db::FieldReader::read(v, len, weather_location); break;
             case 12: nexus_db::FieldReader::read(v, len, web_search); break;
+            case 18: nexus_db::FieldReader::read(v, len, mcp_url); break;
+            case 19: nexus_db::FieldReader::read(v, len, mcp_max_tools); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

@@ -12,6 +12,10 @@ std::string geminiApiKey();  // empty if none is stored
 bool hasGeminiApiKey();
 bool setGeminiApiKey(const std::string& key);
 
+std::string mcpToken();  // empty if none is stored
+bool hasMcpToken();
+bool setMcpToken(const std::string& token);
+
 struct Wifi {
     std::string ssid;
     std::string password;

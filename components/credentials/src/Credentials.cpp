@@ -14,6 +14,7 @@ const char* const TAG = "Credentials";
 
 constexpr const char* CREDS_NS = "creds";
 constexpr const char* GEMINI_KEY = "gemini_api_key";
+constexpr const char* MCP_TOKEN_KEY = "mcp_token";
 constexpr const char* WIFI_NS = "wifi_store";
 
 constexpr const char* WIFI_FILE = "/sdcard/wifi_config.json";
@@ -144,6 +145,26 @@ bool hasGeminiApiKey() {
 
 bool setGeminiApiKey(const std::string& key) {
     return !key.empty() && writeStrings(CREDS_NS, {{GEMINI_KEY, &key}});
+}
+
+std::string mcpToken() {
+    return readString(CREDS_NS, MCP_TOKEN_KEY);
+}
+
+bool hasMcpToken() {
+    return !mcpToken().empty();
+}
+
+bool setMcpToken(const std::string& token) {
+    if (token.empty()) {
+        nvs_handle_t h;
+        if (nvs_open(CREDS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+        nvs_erase_key(h, MCP_TOKEN_KEY);
+        nvs_commit(h);
+        nvs_close(h);
+        return true;
+    }
+    return writeStrings(CREDS_NS, {{MCP_TOKEN_KEY, &token}});
 }
 
 bool loadWifi(Wifi& out) {
