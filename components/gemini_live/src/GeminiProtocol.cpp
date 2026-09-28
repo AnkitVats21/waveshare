@@ -404,6 +404,14 @@ void GeminiProtocol::transmitSetupHandshake() {
     }
     TranscriptLog::instance().setLogging(cfg.transcripts && cfg.transcript_log);
 
+    bool search = false;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        m_last_setup_model = setup["model"] | "";
+        search = cfg.web_search && m_search_refused_model != m_last_setup_model;
+        m_search_in_setup = search;
+        m_search_quota_closed = false;
+    }
     std::string instruction = cfg.system_prompt;
     std::string memory = sd_storage::Fs::readText("/sdcard/gemini_memory.txt");
     if (!memory.empty()) {
@@ -411,6 +419,15 @@ void GeminiProtocol::transmitSetupHandshake() {
         instruction += "You have access to the following long-term memory context containing facts, notes, "
                        "or preferences about the user from previous conversations. Use it to inform your responses:\n";
         instruction += memory;
+    }
+    if (search) {
+        // With ~30 function declarations and a long prompt, gemini-2.5 on the
+        // device answered "I don't have real-time data" without searching;
+        // this line made it search.
+        if (!instruction.empty()) instruction += "\n\n";
+        instruction += "You have Google Search. Use it for anything current or that you are unsure of: news, "
+                       "prices, markets, sports, weather, events, recent facts. Never say you lack real-time "
+                       "data without searching first.";
     }
     if (!instruction.empty()) {
         JsonArray parts = setup["systemInstruction"]["parts"].to<JsonArray>();
@@ -452,14 +469,6 @@ void GeminiProtocol::transmitSetupHandshake() {
     if (cfg.vad_prefix_ms) detection()["prefixPaddingMs"] = cfg.vad_prefix_ms;
     if (cfg.vad_silence_ms) detection()["silenceDurationMs"] = cfg.vad_silence_ms;
 
-    bool search = false;
-    {
-        std::lock_guard<std::mutex> lock(m_turn_mutex);
-        m_last_setup_model = setup["model"] | "";
-        search = cfg.web_search && m_search_refused_model != m_last_setup_model;
-        m_search_in_setup = search;
-        m_search_quota_closed = false;
-    }
     if (search) {
         setup["tools"].add<JsonObject>()["googleSearch"].to<JsonObject>();
     }
