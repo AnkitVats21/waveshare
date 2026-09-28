@@ -12,6 +12,7 @@ using ndb::system::Settings;
 constexpr int MIN_SILENCE_S = 3;
 constexpr int MAX_SILENCE_S = 60;
 constexpr int MAX_RESUME_MIN = 120;   // Gemini keeps a resumption handle ~2 h
+constexpr int MAX_KEEPALIVE_S = 180;
 
 // {"timezone": "IST-5:30"}: a POSIX TZ string, applied immediately.
 esp_err_t getSettingsHandler(httpd_req_t* req) {
@@ -55,6 +56,8 @@ void addDefaults(JsonDocument& doc) {
 //   manual_silence_s: silence timeout of a session started from the dashboard
 //   resume_min:       a session within this many minutes of the last one
 //                     continues that conversation (0 = always start fresh)
+//   keepalive_s:      the connection stays open this long after a session,
+//                     so a quick follow-up wake skips connecting (0 = close)
 esp_err_t getGeminiHandler(httpd_req_t* req) {
     Settings s = Services::loadSettings();
     JsonDocument doc;
@@ -66,6 +69,7 @@ esp_err_t getGeminiHandler(httpd_req_t* req) {
     doc["transcript_log"] = s.transcript_log;
     doc["manual_silence_s"] = s.manual_silence_s;
     doc["resume_min"] = s.resume_min;
+    doc["keepalive_s"] = s.keepalive_s;
     doc["api_key_set"] = credentials::hasGeminiApiKey();
     addDefaults(doc);
     return Http::sendJson(req, 200, doc);
@@ -117,6 +121,14 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
         }
         s.resume_min = v;
         fields |= Settings::F_RESUME_MIN;
+    }
+    if (doc["keepalive_s"].is<int>()) {
+        int v = doc["keepalive_s"];
+        if (v < 0 || v > MAX_KEEPALIVE_S) {
+            return Http::sendError(req, 400, "keepalive_s must be 0-180");
+        }
+        s.keepalive_s = v;
+        fields |= Settings::F_KEEPALIVE_S;
     }
     // Stored after validation, so a rejected request changes nothing.
     std::string new_key = doc["api_key"] | "";

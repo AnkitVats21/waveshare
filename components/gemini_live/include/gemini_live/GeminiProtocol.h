@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
 #include <atomic>
+#include "esp_timer.h"
 #include <new>
 #include <mutex>
 #include <string>
@@ -32,6 +33,7 @@ public:
         bool transcripts = true;      // ask for input and output transcriptions
         bool transcript_log = true;   // print each finished turn to the log
         uint8_t resume_min = 60;      // resume the last conversation if younger; 0 = never
+        uint8_t keepalive_s = 60;     // keep the connection after a session; 0 = close
     };
     typedef SessionSettings (*SettingsSourceFn)();
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
@@ -42,6 +44,10 @@ public:
     bool isConnected() { return m_client.isConnected(); }
     void connect();
     void closeConnection();
+    // The session is over. Keeps a healthy, quiet connection open for
+    // keepalive_s (mic off, reply audio dropped) so a wake inside that window
+    // skips the connect and setup; otherwise closes it.
+    void endSession();
     void forceReconnect() { connect(); }
     void sendTextDirect(const char* text);
 
@@ -121,6 +127,11 @@ private:
     // in internal RAM, and the gap between turns is ~1 s.
     std::atomic<bool> m_handoff_pending{false};
     void maybeHandOff(const SystemState& snap);
+
+    // Kept open by endSession() with no session using it.
+    std::atomic<bool> m_parked{false};
+    esp_timer_handle_t m_park_timer = nullptr;
+    static constexpr uint32_t NOTIFY_PARK_EXPIRED_BIT = (1u << 13);
     SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
 

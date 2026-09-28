@@ -313,7 +313,7 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             sessionActive = false;
             micEnabled = false;
             connectRequested = false;
-            GeminiProtocol::getInstance().closeConnection();
+            GeminiProtocol::getInstance().endSession();
             // Voice that started without a turnComplete to end it (reply audio
             // racing the close) would leave the orchestrator "speaking": the mic
             // stays muted in every later session and paused music stays paused.
@@ -417,10 +417,15 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
     // 4. Play audio alerts asynchronously
     switch (newState) {
         case AssistantState::StartingSession:
+            m_wake_us = esp_timer_get_time();
             AudioOrchestrator::getInstance().notifyWakeWordDetected();
             playAlertAsync(ALERT_WAKE_CONFIRM);
             break;
         case AssistantState::StreamingUserAudio:
+            if (oldState == AssistantState::Connecting && m_wake_us) {
+                LOGI_SYSTEM("Listening %d ms after the wake.",
+                            (int)((esp_timer_get_time() - m_wake_us) / 1000));
+            }
             playAlertAsync(ALERT_READY_TO_SPEAK);
             break;
         case AssistantState::Closing:

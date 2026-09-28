@@ -37,6 +37,7 @@ private:
     esp_timer_handle_t m_idle_timer = nullptr;
     esp_timer_handle_t m_connect_timer = nullptr;
     esp_timer_handle_t m_cooldown_timer = nullptr;
+    int64_t m_wake_us = 0;   // when the current session was woken
 
     volatile bool m_connect_timeout_pending   = false;
     volatile bool m_idle_timeout_pending      = false;

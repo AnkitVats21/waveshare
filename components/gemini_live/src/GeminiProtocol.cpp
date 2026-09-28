@@ -59,6 +59,16 @@ GeminiProtocol::GeminiProtocol()
 
     m_incoming_psram_rb = xRingbufferCreateWithCaps(PSRAM_RB_SIZE, RINGBUF_TYPE_NOSPLIT, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     assert(m_incoming_psram_rb != nullptr);
+
+    esp_timer_create_args_t park_args = {};
+    park_args.callback = [](void* arg) {
+        auto* self = static_cast<GeminiProtocol*>(arg);
+        if (self->getHandle()) xTaskNotify(self->getHandle(), NOTIFY_PARK_EXPIRED_BIT, eSetBits);
+    };
+    park_args.arg = this;
+    park_args.dispatch_method = ESP_TIMER_TASK;
+    park_args.name = "gemini_keepalive";
+    ESP_ERROR_CHECK(esp_timer_create(&park_args, &m_park_timer));
 }
 
 GeminiProtocol::~GeminiProtocol() {
@@ -90,6 +100,21 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
     bool requested = snap.assistant.connect_requested;
     bool wifi_ok = snap.system.wifi_connected;
     auto ws = snap.assistant.ws_state;
+
+    // A kept connection: reuse it for the new session, or drop it once it
+    // has died (else the client would keep reconnecting while idle).
+    if (m_parked) {
+        if (ws != WsState::CONNECTED) {
+            LOGI_NET("The kept connection closed.");
+            closeConnection();
+            ws = WsState::DISCONNECTED;
+        } else if (requested) {
+            esp_timer_stop(m_park_timer);
+            m_parked = false;
+            m_accept_audio = true;
+            LOGI_NET("Reusing the open connection.");
+        }
+    }
 
     if (requested && wifi_ok && (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE)) {
         if (ensureClientInitialized()) {
@@ -239,6 +264,28 @@ bool GeminiProtocol::simulateGoAway() {
     return true;
 }
 
+void GeminiProtocol::endSession() {
+    SessionSettings cfg = m_settings_source ? m_settings_source() : SessionSettings{};
+    auto snap = sysdb.snapshot();
+    bool quiet;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        quiet = m_setup_complete && m_pending_turn.empty() && m_reply_wait_us == 0;
+    }
+    // Closed if a reply is owed or playing: its audio would reach the next
+    // session. And after a goAway the connection is about to end anyway.
+    if (cfg.keepalive_s == 0 || !quiet || !m_client || m_handoff_pending || m_parked ||
+        snap.assistant.ws_state != WsState::CONNECTED || snap.audio.assistant_speaking) {
+        closeConnection();
+        return;
+    }
+    m_accept_audio = false;
+    m_parked = true;
+    esp_timer_stop(m_park_timer);
+    esp_timer_start_once(m_park_timer, (uint64_t)cfg.keepalive_s * 1000000);
+    LOGI_NET("Keeping the connection open for %d s.", (int)cfg.keepalive_s);
+}
+
 void GeminiProtocol::closeConnection() {
     // Check the client, not ws_state: a failed connect reports DISCONNECTED
     // while the client lives on and reconnects every reconnect_timeout_ms,
@@ -249,6 +296,8 @@ void GeminiProtocol::closeConnection() {
     LOGI_NET("Closing WebSocket connection...");
     m_accept_audio = false;
     m_handoff_pending = false;
+    m_parked = false;
+    esp_timer_stop(m_park_timer);
     m_restart_requested = false;
     resetTextTurn();
     {
@@ -788,6 +837,10 @@ void GeminiProtocol::run() {
                 }
             }
 
+            if ((changed_bits & NOTIFY_PARK_EXPIRED_BIT) && m_parked) {
+                LOGI_NET("Keep-alive window over.");
+                closeConnection();
+            }
             if (changed_bits & NOTIFY_RESTART_BIT) {
                 if (m_restart_requested.exchange(false)) {
                     restartConnection();
@@ -797,7 +850,7 @@ void GeminiProtocol::run() {
             }
 
             // 2. Process database state changes
-            uint32_t db_changed = changed_bits & ~(NOTIFY_RINGBUF_BIT | NOTIFY_RESTART_BIT);
+            uint32_t db_changed = changed_bits & ~(NOTIFY_RINGBUF_BIT | NOTIFY_RESTART_BIT | NOTIFY_PARK_EXPIRED_BIT);
             if (db_changed > 0) {
                 m_last_changed = db_changed;
                 SystemState snap = EmbeddedSysDb::getInstance().snapshot();
