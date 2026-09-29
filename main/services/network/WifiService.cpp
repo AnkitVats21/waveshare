@@ -4,6 +4,7 @@
 #include "common/thread_config.h"
 #include "credentials/Credentials.h"
 #include "services/network/CaptiveDnsServer.h"
+#include "services/network/NetStats.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -164,6 +165,7 @@ bool WifiService::begin() {
 
     // 2. Network interfaces: Create default STA and AP netifs
     m_sta_netif = esp_netif_create_default_wifi_sta();
+    NetStats::install(m_sta_netif);
     m_ap_netif  = esp_netif_create_default_wifi_ap();
 
     // 3. Configure and init WiFi driver

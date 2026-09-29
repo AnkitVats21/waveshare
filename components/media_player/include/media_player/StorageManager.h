@@ -17,6 +17,24 @@ public:
         return _isWritingMode && !_committed && songId && strcmp(_currentSongId, songId) == 0;
     }
     
+    // What the card holds of the current song, for the dashboard.
+    //   None:   streaming only (caching off, too long, or started mid-track)
+    //   Saving: downloading to the card; done/total bytes (total 0: unknown)
+    //   Saved:  the whole file is on the card (playing from it, or just committed)
+    enum class CacheState { None, Saving, Saved };
+    struct CacheStatus {
+        CacheState state;
+        uint32_t done;
+        uint32_t total;
+    };
+    CacheStatus cacheStatus() const {
+        if (_isWritingMode && !_committed) {
+            return {CacheState::Saving, static_cast<uint32_t>(_bytesWritten), static_cast<uint32_t>(_expectedBytes)};
+        }
+        if (_isWritingMode || _currentSongId[0] != '\0') return {CacheState::Saved, 0, 0};
+        return {CacheState::None, 0, 0};
+    }
+
     // Cache Miss Path (concurrent download, write and progressive read).
     // expectedBytes (0 = unknown) guards the commit against truncated downloads.
     bool openFileForCaching(const char* songId, size_t expectedBytes = 0);

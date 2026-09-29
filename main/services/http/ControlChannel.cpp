@@ -1,8 +1,10 @@
 #include "services/http/ControlChannel.h"
+#include "services/network/NetStats.h"
 #include "services/http/SystemInfo.h"
 #include "services/http/StateNames.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "media_player/MusicPlaybackService.h"
+#include "media_player/NexusPlayer.h"
 #include "gemini_live/TranscriptLog.h"
 #include "common/thread_config.h"
 #include "core_sysdb/led_types.h"
@@ -302,6 +304,8 @@ void ControlChannel::pushState() {
     doc["psram"] = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     wifi_ap_record_t ap = {};
     doc["rssi"] = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) ? ap.rssi : 0;
+    doc["rx"] = NetStats::rxBytes();  // Wi-Fi bytes since boot (wraps at 4 GB)
+    doc["tx"] = NetStats::txBytes();
 
     JsonObject st = doc["state"].to<JsonObject>();
     st["speaker_volume"] = snap.audio.speaker_volume;
@@ -336,6 +340,17 @@ void ControlChannel::pushState() {
     music["repeat_mode"] = snap.media.repeat_mode;
     music["autoplay"] = snap.media.autoplay_enabled;
     music["caching"] = snap.media.cache_downloads;
+    if (snap.media.active_song_id[0] != '\0') {
+        // What the card holds of the current song: none, saving (bytes so far) or saved.
+        const auto cs = NexusPlayer::getInstance().getStorageManager().cacheStatus();
+        JsonObject cache = music["cache"].to<JsonObject>();
+        cache["state"] = cs.state == StorageManager::CacheState::Saving ? "saving"
+                       : cs.state == StorageManager::CacheState::Saved ? "saved" : "none";
+        if (cs.state == StorageManager::CacheState::Saving) {
+            cache["done"] = cs.done;
+            cache["total"] = cs.total;
+        }
+    }
 
     JsonArray queue = music["queue"].to<JsonArray>();
     const auto upcoming = MusicPlaybackService::getInstance().getQueue();
