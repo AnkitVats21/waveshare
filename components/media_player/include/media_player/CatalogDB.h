@@ -15,8 +15,8 @@ struct LibraryTrack {
 };
 
 // The music library: /sdcard/db/music.ndb (schema/db/music.star), one entry
-// per song played or found on the card. An entry whose file is gone stays
-// with file_size 0 ("not saved"), keeping its play history.
+// per song played or found on the card. Streamed-only songs have file_size 0
+// ("not saved"). Deleting a song from the library removes its entry too.
 //
 // Thread safe. Writes are batched; flushIfDue() is called from media_aux.
 class CatalogDB {

@@ -201,7 +201,7 @@ esp_err_t libraryDeleteHandler(httpd_req_t* req) {
     if (!CatalogDB::getInstance().exists(id.c_str())) {
         return Http::sendError(req, 404, "Track not found in library");
     }
-    // The entry stays (not saved), keeping its play history.
+    // Removes the file, thumbnail and library entry (with its play history).
     bool ok = MusicPlaybackService::getInstance().deleteSaved(id);
     JsonDocument doc;
     doc["status"] = ok ? "ok" : "error";

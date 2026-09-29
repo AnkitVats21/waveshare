@@ -311,10 +311,14 @@ bool CatalogDB::removeFiles(const char* videoId) {
     snprintf(path, sizeof(path), "%s/%s.jpg", THUMBS_DIR, videoId);
     if (Fs::isFile(path)) Fs::remove(path);
 
-    if (ok) doc.file_size = 0;
+    if (ok) {
+        // Delete means delete: the entry and its play history go too.
+        _db.tracks().remove(videoId);
+        return true;
+    }
     doc.thumbnail = thumbnailExists(videoId);
-    _db.tracks().merge(videoId, doc, TrackDoc::F_FILE_SIZE | TrackDoc::F_THUMBNAIL);
-    return ok;
+    _db.tracks().merge(videoId, doc, TrackDoc::F_THUMBNAIL);
+    return false;
 }
 
 size_t CatalogDB::scanAndSync() {

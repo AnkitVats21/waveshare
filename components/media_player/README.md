@@ -74,9 +74,11 @@ MEDIA_RX_BUF → speaker mixer (audio_core)
 - **`CatalogDB`** — the library, `/sdcard/db/music.ndb` (schema
   `schema/db/music.star`, code generated into `generated/`): one entry per
   song played or found on the card, keyed by video id (title, artist,
-  length, saved-file size, plays, thumbnail flag). An entry whose file is
-  gone stays with size 0 ("not saved") and keeps its history; deleting from
-  the library removes the file and thumbnail only. `scanAndSync()` checks
+  length, saved-file size, plays, thumbnail flag). A song that was only
+  streamed has size 0 ("not saved"); deleting from the library removes the
+  file, thumbnail and the entry with its history. A file that vanishes
+  from the card by other means is marked not saved by the rescan, not
+  dropped (an unmounted card must not empty the library). `scanAndSync()` checks
   the library against `/sdcard/music` at boot (on media_aux) and on a
   rescan, and deletes leftover download `.tmp` files. The dashboard reads
   the file through `GET /api/db/music`. The old `catalog.db` was imported

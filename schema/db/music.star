@@ -8,8 +8,8 @@ database music path="/sdcard/db/music.ndb" flush=batched {
     // One document per song ever played or found on the card, keyed by its
     // YouTube video id (e.g. "ApCL2GomTD4"). The saved file is
     // /sdcard/music/<key>.webm (older ones .ogg or .opus, WebM inside); the
-    // thumbnail /sdcard/music/thumbs/<key>.jpg. An entry whose file is gone
-    // stays, with file_size 0, so its play history is kept.
+    // thumbnail /sdcard/music/thumbs/<key>.jpg. A song only streamed has
+    // file_size 0. Deleting a song from the library removes its entry.
     collection tracks id=1 key=string cache doc=TrackDoc {
         field title:          string tag=1
         field artist:         string tag=2
