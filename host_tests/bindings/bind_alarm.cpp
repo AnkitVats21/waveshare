@@ -1,6 +1,7 @@
 #include "bindings.h"
 #include "services/alarm/AlarmRing.h"
 #include "services/alarm/AlarmSchedule.h"
+#include "services/alarm/AudioSniff.h"
 #include <cstdlib>
 #include <ctime>
 #include <nanobind/stl/pair.h>
@@ -45,6 +46,12 @@ void init_alarm(nb::module_& m) {
         return std::make_pair(std::string(kind), t.value);
     });
     m.def("is_valid_tone_file_name", &Services::isValidToneFileName);
+    // (playable, format) from a file's first bytes.
+    m.def("sniff_audio", [](nb::bytes data) {
+        const Services::AudioSniff r =
+            Services::sniffAudio(reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
+        return std::make_pair(r.playable, std::string(r.format));
+    });
     // None if not understood.
     m.def("parse_days", [](const std::string& text) -> nb::object {
         uint8_t days = 0;

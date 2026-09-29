@@ -4,6 +4,9 @@
 #include "sd_storage/Fs.h"
 #include "sd_storage/PathPolicy.h"
 #include "sd_storage/SdCard.h"
+#include "services/alarm/AlarmSchedule.h"
+#include "services/alarm/AudioSniff.h"
+#include "services/alarm/ToneDownload.h"
 #include "esp_heap_caps.h"
 
 #include <algorithm>
@@ -232,12 +235,50 @@ esp_err_t uploadHandler(httpd_req_t* req) {
         Fs::mkdirs(path.substr(0, last_slash).c_str());
     }
 
+    // The alarm folder (tones, briefing music) takes only what the player
+    // decodes: its first bytes are checked before anything is written.
+    const std::string alarm_dir = std::string(Services::ALARM_TONE_DIR) + "/";
+    const bool alarm_file = path.compare(0, alarm_dir.size(), alarm_dir) == 0;
+    if (alarm_file) {
+        if (!Services::isValidToneFileName(path.substr(alarm_dir.size()))) {
+            return Http::sendError(req, 400, "Alarm files need a plain name ending in .ogg, .opus or .webm "
+                                             "(letters, digits, space, '-', '_', '.'; at most 48 characters)");
+        }
+        if (req->content_len > Services::ToneDownload::MAX_BYTES) {
+            return Http::sendError(req, 413, "Alarm files are limited to 10 MB");
+        }
+    }
+
     auto chunk = chunkBuffer();
     if (!chunk) return Http::sendError(req, 500, "Out of memory");
+
+    int head = 0;   // bytes already received into chunk (alarm files)
+    if (alarm_file) {
+        const int want = std::min<int>(req->content_len, CHUNK_SIZE);
+        while (head < want) {
+            int received = httpd_req_recv(req, chunk.get() + head, want - head);
+            if (received == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            if (received <= 0) return Http::sendError(req, 500, "Upload socket transfer failed");
+            head += received;
+        }
+        const Services::AudioSniff sniff = Services::sniffAudio(reinterpret_cast<const uint8_t*>(chunk.get()), head);
+        if (!sniff.playable) {
+            std::string msg = std::string("This file is ") + sniff.format +
+                              "; the device plays only Opus (.ogg, .opus or .webm). "
+                              "Convert it: ffmpeg -i input.mp3 -ac 1 -c:a libopus -b:a 64k output.ogg";
+            return Http::sendError(req, 415, msg.c_str());
+        }
+    }
+
     File f = File::open(path.c_str(), Mode::Write);
     if (!f) return Http::sendError(req, 500, "Cannot open target file for writing (missing folder or file busy)");
+    if (head > 0 && !f.writeAll(chunk.get(), head)) {
+        f.close();
+        Fs::remove(path.c_str());
+        return Http::sendError(req, 507, "Disk full or write failed");
+    }
 
-    int remaining = req->content_len;
+    int remaining = req->content_len - head;
     while (remaining > 0) {
         int to_read = (remaining < static_cast<int>(CHUNK_SIZE)) ? remaining : static_cast<int>(CHUNK_SIZE);
         int received = httpd_req_recv(req, chunk.get(), to_read);
@@ -286,6 +327,25 @@ esp_err_t mkdirHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+// A file moved into the alarm folder must meet the upload's rules. Null if
+// it does (or `to` is elsewhere, or `from` is a folder).
+const char* alarmFileError(const std::string& to, const std::string& from) {
+    const std::string alarm_dir = std::string(Services::ALARM_TONE_DIR) + "/";
+    if (to.compare(0, alarm_dir.size(), alarm_dir) != 0 || !Fs::isFile(from.c_str())) return nullptr;
+    if (!Services::isValidToneFileName(to.substr(alarm_dir.size()))) {
+        return "Alarm files need a plain name ending in .ogg, .opus or .webm";
+    }
+    File f = File::open(from.c_str(), Mode::Read);
+    auto chunk = chunkBuffer();
+    if (!f || !chunk) return "Could not read the file to check its format";
+    if (f.size() > long(Services::ToneDownload::MAX_BYTES)) return "Alarm files are limited to 10 MB";
+    const size_t n = f.read(chunk.get(), CHUNK_SIZE);
+    if (!Services::sniffAudio(reinterpret_cast<const uint8_t*>(chunk.get()), n).playable) {
+        return "The device plays only Opus (.ogg, .opus or .webm) from the alarm folder";
+    }
+    return nullptr;
+}
+
 esp_err_t renameHandler(httpd_req_t* req) {
     if (!mounted()) return Http::sendError(req, 500, "SD Card not mounted");
 
@@ -306,6 +366,7 @@ esp_err_t renameHandler(httpd_req_t* req) {
     }
     if (isProtected(sanitized_old) || isProtected(sanitized_new)) return sendProtected(req);
     if (isDbPath(sanitized_old) || isDbPath(sanitized_new)) return sendDbReadOnly(req);
+    if (const char* err = alarmFileError(sanitized_new, sanitized_old)) return Http::sendError(req, 415, err);
     if (!Fs::rename(sanitized_old.c_str(), sanitized_new.c_str())) {
         return Http::sendError(req, 500, "Failed to rename path");
     }

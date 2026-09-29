@@ -52,6 +52,7 @@ nanobind_add_module(waveshare_host
     bindings/bind_alarm.cpp
     ../main/services/alarm/AlarmRing.cpp
     ../main/services/alarm/AlarmSchedule.cpp
+    ../main/services/alarm/AudioSniff.cpp
     bindings/bind_nexus_db.cpp
     ../components/nexus_db/src/Database.cpp
     ../components/nexus_db/src/Crc32.cpp
