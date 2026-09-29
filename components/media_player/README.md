@@ -51,7 +51,8 @@ MEDIA_RX_BUF → speaker mixer (audio_core)
     time.
 - **`StorageManager`** — the card side: cached songs in
   `/sdcard/music/<videoId>.webm` (also `.opus`/`.ogg`), written as `.tmp`
-  and renamed when complete; a reader task feeding the decoder; files
+  and renamed as soon as the download completes (while the track may
+  still be playing); a reader task feeding the decoder; files
   opened by full path for `playFile`.
 - **`StreamManager` / `HttpClientStream`** — HTTPS download of a stream,
   with a `Range` header on every request (YouTube's CDN throttles requests
