@@ -88,6 +88,7 @@ bool StorageManager::openFileForCaching(const char* songId, size_t expectedBytes
     strncpy(_currentSongId, songId, sizeof(_currentSongId) - 1);
     _currentSongId[sizeof(_currentSongId) - 1] = '\0';
     _downloadComplete = false;
+    _committed = false;
     _bytesWritten = 0;
     _expectedBytes = expectedBytes;
     _isWritingMode = true;
@@ -197,29 +198,19 @@ void StorageManager::closeActiveFile() {
 
     // If caching, finalize or clean up
     if (_isWritingMode && _currentSongId[0] != '\0') {
-        char tempPath[128];
-        char targetPath[128];
-        snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", _currentSongId);
-        snprintf(targetPath, sizeof(targetPath), "/sdcard/music/%s.webm", _currentSongId);
-
         // EOF also arrives when the server closes early; trust it only if the
         // byte count matches the length the stream URL advertised.
         const bool truncated = _expectedBytes > 0 && _bytesWritten != _expectedBytes;
-        if (_downloadComplete && truncated) {
+        char tempPath[128];
+        snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", _currentSongId);
+        if (_committed) {
+            // Already renamed when the download ended.
+        } else if (_downloadComplete && truncated) {
             ESP_LOGW(TAG, "Download ended at %u of %u bytes; discarding %s",
                      (unsigned)_bytesWritten, (unsigned)_expectedBytes, tempPath);
             sd_storage::Fs::remove(tempPath);
         } else if (_downloadComplete) {
-            ESP_LOGI(TAG, "Download complete. Committing cache to target: %s", targetPath);
-            if (sd_storage::Fs::isFile(targetPath)) {
-                sd_storage::Fs::remove(targetPath);
-            }
-            if (!sd_storage::Fs::rename(tempPath, targetPath)) {
-                ESP_LOGE(TAG, "Failed to commit cached file %s", targetPath);
-            } else {
-                ESP_LOGI(TAG, "Successfully committed cache file: %s", targetPath);
-                CatalogDB::getInstance().setSaved(_currentSongId, static_cast<uint32_t>(_bytesWritten));
-            }
+            commitCache();
         } else {
             ESP_LOGI(TAG, "Download incomplete or aborted. Cleaning up temp cache: %s", tempPath);
             if (sd_storage::Fs::isFile(tempPath)) {
@@ -229,11 +220,31 @@ void StorageManager::closeActiveFile() {
     }
 
     _isWritingMode = false;
+    _committed = false;
     _readerAtEof = false;
     _downloadComplete = false;
     _bytesWritten = 0;
     _expectedBytes = 0;
     _currentSongId[0] = '\0';
+}
+
+bool StorageManager::commitCache() {
+    char tempPath[128];
+    char targetPath[128];
+    snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", _currentSongId);
+    snprintf(targetPath, sizeof(targetPath), "/sdcard/music/%s.webm", _currentSongId);
+    ESP_LOGI(TAG, "Download complete. Committing cache to target: %s", targetPath);
+    if (sd_storage::Fs::isFile(targetPath)) {
+        sd_storage::Fs::remove(targetPath);
+    }
+    if (!sd_storage::Fs::rename(tempPath, targetPath)) {
+        ESP_LOGE(TAG, "Failed to commit cached file %s", targetPath);
+        return false;
+    }
+    ESP_LOGI(TAG, "Successfully committed cache file: %s", targetPath);
+    CatalogDB::getInstance().setSaved(_currentSongId, static_cast<uint32_t>(_bytesWritten));
+    _committed = true;
+    return true;
 }
 
 bool StorageManager::seekTo(uint32_t byteOffset) {
@@ -322,6 +333,7 @@ void StorageManager::runWriterTaskLoop() {
         AudioChunkHeader* chunk = reinterpret_cast<AudioChunkHeader*>(rx_ptr);
         if (chunk->type == ChunkType::EOF_STREAM) {
             ESP_LOGI(TAG, "Writer Task: Received EOF signal");
+            _writeFile.close();  // the reader commits (renames) once it sees the flag
             _downloadComplete = true;
             _bm.returnItem(_storageId, rx_ptr);
             break;
@@ -377,8 +389,21 @@ void StorageManager::runReaderTaskLoop() {
         snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm.tmp", _currentSongId);
     }
 
+    bool commitTried = false;
     while (_readerTaskRunning) {
         if (_isWritingMode) {
+            // The download is over: rename the file now, not when playback
+            // ends, so the song is saved even if power is lost mid-track.
+            // The reader closes its own handle first (rename fails on an
+            // open file) and carries on from the same position.
+            if (_downloadComplete && !_committed && !commitTried &&
+                !(_expectedBytes > 0 && _bytesWritten != _expectedBytes)) {
+                commitTried = true;
+                tempFile.close();
+                if (commitCache()) {
+                    snprintf(tempPath, sizeof(tempPath), "/sdcard/music/%s.webm", _currentSongId);
+                }
+            }
             // Progressive Cache Reading
             if (read_pos >= _bytesWritten) {
                 if (_downloadComplete) {
@@ -399,7 +424,8 @@ void StorageManager::runReaderTaskLoop() {
 
             // Open/reopen the temp file if not currently open
             if (!tempFile) {
-                tempFile = sd_storage::File::open(tempPath, sd_storage::Mode::Read, sd_storage::Share::FollowWriter);
+                tempFile = sd_storage::File::open(tempPath, sd_storage::Mode::Read,
+                                                  _committed ? sd_storage::Share::Exclusive : sd_storage::Share::FollowWriter);
                 if (!tempFile) {
                     vTaskDelay(pdMS_TO_TICKS(50));
                     continue;

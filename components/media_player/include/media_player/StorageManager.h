@@ -11,9 +11,10 @@ public:
     bool fileExists(const char* songId);
     bool deleteFile(const char* songId);
     // True while songId is being downloaded (its .tmp is in use), until the
-    // file is committed.
+    // file is committed. The commit happens as soon as the download ends,
+    // while the track may still be playing from the file.
     bool isCaching(const char* songId) const {
-        return _isWritingMode && songId && strcmp(_currentSongId, songId) == 0;
+        return _isWritingMode && !_committed && songId && strcmp(_currentSongId, songId) == 0;
     }
     
     // Cache Miss Path (concurrent download, write and progressive read).
@@ -43,6 +44,9 @@ private:
     SemaphoreHandle_t _streamMutex = nullptr;
     bool getValidCachedPath(const char* songId, char* outPath, size_t maxLen);
     bool spawnReader();
+    // Renames the finished .tmp to its final name and records it in the
+    // library. Needs both the writer's and the reader's handles closed.
+    bool commitCache();
     // Local reader: sends a chunk unless a seek moved the file since it was read.
     enum class Send { Sent, Moved, Stopped };
     Send sendUnlessMoved(const uint8_t* buf, size_t len, uint32_t gen);
@@ -67,6 +71,8 @@ private:
     TaskHandle_t _readerTaskHandle = nullptr;
     
     bool _isWritingMode = false;
+    // The .tmp was renamed to its final name (the reader then follows the final file).
+    volatile bool _committed = false;
 
     // Bumped by seekTo (under _streamMutex); the local reader drops chunks
     // read under an older value.
