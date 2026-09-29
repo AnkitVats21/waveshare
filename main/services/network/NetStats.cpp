@@ -53,7 +53,7 @@ void install(esp_netif_t* sta) {
         args.callback = publish;
         args.dispatch_method = ESP_TIMER_TASK;
         args.name = "net_stats";
-        if (esp_timer_create(&args, &s_timer) == ESP_OK) esp_timer_start_periodic(s_timer, 2000000);
+        if (esp_timer_create(&args, &s_timer) == ESP_OK) esp_timer_start_periodic(s_timer, 1000000);
     }
     auto* n = static_cast<struct netif*>(esp_netif_get_netif_impl(sta));
     // lwIP fills these in when Wi-Fi starts (netif_add), not when the netif

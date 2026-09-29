@@ -61,7 +61,7 @@ private:
     uint32_t                    m_transcript_sent_seq = 0;    // run() task only
 
     static constexpr uint32_t MIN_PUSH_INTERVAL_MS = 200;
-    static constexpr uint32_t TELEMETRY_PERIOD_MS  = 2000;
+    static constexpr uint32_t TELEMETRY_PERIOD_MS  = 1000;
     static constexpr size_t   MAX_COMMAND_LEN      = 2048;
 
     static constexpr const char* MDNS_HOSTNAME = "nexus";
