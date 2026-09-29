@@ -527,7 +527,17 @@ void GeminiProtocol::transmitToolResponse(const char* call_id, const char* json_
     
     std::string payload;
     serializeJson(doc, payload);
-    m_client.sendText(payload.c_str(), payload.length(), pdMS_TO_TICKS(1000));
+    // A lost response leaves the model waiting for it: the reply never comes.
+    // Under load another send can hold the client's lock for over a second
+    // (a weather answer was dropped while the news answer went out).
+    for (int attempt = 1; attempt <= TOOL_SEND_ATTEMPTS; ++attempt) {
+        if (m_client.sendText(payload.c_str(), payload.length(), pdMS_TO_TICKS(TOOL_SEND_TIMEOUT_MS)) >= 0) {
+            if (attempt > 1) LOGW_NET("Tool response %s sent on attempt %d", call_id, attempt);
+            return;
+        }
+        if (!m_client.isConnected()) break;
+    }
+    LOGE_NET("Tool response %s could not be sent; the reply will not come", call_id);
 }
 
 void GeminiProtocol::transmitAudioUplink(const char* base64_pcm) {

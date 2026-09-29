@@ -108,6 +108,10 @@ public:
     // connection that resumes the conversation.
     void interruptReply();
     static constexpr int64_t REPLY_WAIT_US = 15LL * 1000 * 1000;
+    // A tool response is retried this many times, waiting this long for the
+    // client each time.
+    static constexpr int TOOL_SEND_ATTEMPTS = 3;
+    static constexpr uint32_t TOOL_SEND_TIMEOUT_MS = 3000;
 
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
