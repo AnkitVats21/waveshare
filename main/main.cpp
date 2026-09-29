@@ -130,8 +130,11 @@ extern "C" void app_main(void) {
         }
         return Mcp::McpService::instance().executeToolAsync(call_id, name, args_json);
     }, nullptr);
-    gemini_proto.setRemoteToolsDeclarationsSource([](JsonArray& functionDeclarations, void* ctx) {
-        Mcp::McpService::instance().populateGeminiDeclarations(functionDeclarations);
+    gemini_proto.setRemoteToolsDeclarationsSource([](JsonArray& functionDeclarations, bool builtin_search, void* ctx) {
+        // With Google Search in the setup, the MCP search would be a second
+        // tool for the same thing.
+        Mcp::McpService::instance().populateGeminiDeclarations(functionDeclarations,
+                                                              builtin_search ? "web_search" : nullptr);
     }, nullptr);
     static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();

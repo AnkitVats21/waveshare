@@ -29,6 +29,13 @@ static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 65536; // 64KB ceiling
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
+// Google Search in a Live session: the 2.5 Live models have it; the 3.x Live
+// models refuse it (the connection closes with "quota" before
+// setupComplete). Models without it use the MCP web_search tool.
+static bool modelHasGoogleSearch(const std::string& model) {
+    return model.find("2.5") != std::string::npos;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction & Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
@@ -410,7 +417,8 @@ void GeminiProtocol::transmitSetupHandshake() {
     {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         m_last_setup_model = setup["model"] | "";
-        search = cfg.web_search && m_search_refused_model != m_last_setup_model;
+        search = cfg.web_search && modelHasGoogleSearch(m_last_setup_model) &&
+                 m_search_refused_model != m_last_setup_model;
         m_search_in_setup = search;
         m_search_quota_closed = false;
     }
@@ -486,7 +494,7 @@ void GeminiProtocol::transmitSetupHandshake() {
 
     if (m_remote_decls_source) {
         JsonArray decls = setup["tools"][0]["functionDeclarations"];
-        m_remote_decls_source(decls, m_remote_decls_ctx);
+        m_remote_decls_source(decls, search, m_remote_decls_ctx);
     }
 
     std::string payload;

@@ -66,8 +66,8 @@ void addDefaults(JsonDocument& doc) {
 //   echo_measure:     log how much echo the mic picks up during replies
 //   barge_in:         keep the mic streaming during replies, so talking
 //                     over one interrupts it
-//   web_search:       give Gemini Google Search (works on the 2.5 Live
-//                     models; a model that refuses it runs without it)
+//   web_search:       give Gemini Google Search on the models that have it
+//                     (2.5 Live; not 3.x); the others use the MCP search
 //   weather_location: home city for the weather tool, e.g. "Pune"
 //   vad_start, vad_end: Gemini's start/end-of-speech sensitivity,
 //                     0 = its default, 1 = low, 2 = high

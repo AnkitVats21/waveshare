@@ -233,13 +233,14 @@ bool McpService::executeToolAsync(const char* call_id, const std::string& name, 
     return true;
 }
 
-void McpService::populateGeminiDeclarations(JsonArray& functionDeclarations) {
+void McpService::populateGeminiDeclarations(JsonArray& functionDeclarations, const char* skip) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_tools.empty()) return;
 
     // Inserted as raw JSON (validated when cached): no parsing or deep copy
     // on the websocket task that sends the setup.
     for (const auto& t : m_tools) {
+        if (skip && t.name == skip) continue;
         // A std::string is always copied into the document, so a refresh
         // meanwhile can't leave it pointing at freed text.
         functionDeclarations.add(serialized(std::string(t.declaration_json.c_str(), t.declaration_json.size())));

@@ -37,7 +37,8 @@ public:
     bool hasTool(const std::string& name) const;
 
     bool executeToolAsync(const char* call_id, const std::string& name, const std::string& args_json);
-    void populateGeminiDeclarations(JsonArray& functionDeclarations);
+    // skip: a tool name to leave out, or nullptr.
+    void populateGeminiDeclarations(JsonArray& functionDeclarations, const char* skip = nullptr);
 
     void updateConfig(const std::string& url, uint8_t max_tools, const std::string& token);
 
