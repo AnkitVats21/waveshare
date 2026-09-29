@@ -9,6 +9,10 @@
 //                                tone: "" or "builtin[:<name>]", "file:<name>" (in /sdcard/media/alarm),
 //                                or a library song id (docs/alarm-design.md, "Tones")
 //   GET    /api/alarms/tones     {"builtin": [names], "dir", "files": [{"name", "bytes"}]}
+//   POST   /api/alarms/tones/youtube   {"id", "title"?, "artist"?}: download a YouTube
+//                                video's audio into the library (then tone = the id)
+//   GET    /api/alarms/tones/youtube   {"state": idle|resolving|downloading|done|failed,
+//                                "id", "title", "bytes", "total", "error"?}
 //   GET    /api/alarms/status    ringing state
 //   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?}
 //   POST   /api/alarms/snooze
@@ -25,6 +29,7 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "services/alarm/AlarmService.h"
+#include "services/alarm/ToneDownload.h"
 #include "audio_core/AlertPlayer.h"
 #include "sd_storage/Fs.h"
 
@@ -324,6 +329,35 @@ esp_err_t tonesHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+esp_err_t youtubeStatusHandler(httpd_req_t* req) {
+    const Services::ToneDownload::Status st = Services::ToneDownload::status();
+    JsonDocument doc;
+    doc["state"] = Services::ToneDownload::stateName(st.state);
+    doc["id"] = st.id;
+    doc["title"] = st.title;
+    doc["bytes"] = st.bytes;
+    doc["total"] = st.total;
+    if (!st.error.empty()) doc["error"] = st.error;
+    return Http::sendJson(req, 200, doc);
+}
+
+esp_err_t youtubeStartHandler(httpd_req_t* req) {
+    std::string body;
+    JsonDocument in;
+    if (!Http::readBody(req, body, 512) || deserializeJson(in, body) || !in["id"].is<const char*>()) {
+        return Http::sendError(req, 400, "Body must be {\"id\", \"title\"?, \"artist\"?}");
+    }
+    std::string title = in["title"] | "";
+    std::string artist = in["artist"] | "";
+    if (title.size() > 120) title.resize(120);
+    if (artist.size() > 80) artist.resize(80);
+    std::string err;
+    if (!Services::ToneDownload::start(in["id"].as<const char*>(), title, artist, &err)) {
+        return Http::sendError(req, 409, err.c_str());
+    }
+    return youtubeStatusHandler(req);
+}
+
 } // namespace
 
 void Routes::registerAlarms(Http::Server& server) {
@@ -332,6 +366,8 @@ void Routes::registerAlarms(Http::Server& server) {
     server.on("/api/alarms", HTTP_DELETE, deleteHandler);
     server.on("/api/alarms/status", HTTP_GET, statusHandler);
     server.on("/api/alarms/tones", HTTP_GET, tonesHandler);
+    server.on("/api/alarms/tones/youtube", HTTP_GET, youtubeStatusHandler);
+    server.on("/api/alarms/tones/youtube", HTTP_POST, youtubeStartHandler);   // before /api/alarms/*
     server.on("/api/alarms/*", HTTP_POST, actionHandler);
     server.on("/api/reminders", HTTP_GET, reminderListHandler);
     server.on("/api/reminders", HTTP_POST, reminderSaveHandler);

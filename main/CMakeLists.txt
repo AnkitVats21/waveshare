@@ -64,6 +64,7 @@ set(srcs
             "services/weather/Weather.cpp"
             "services/weather/WeatherText.cpp"
             "services/alarm/AlarmTools.cpp"
+            "services/alarm/ToneDownload.cpp"
             "services/alerts/AlertLibrary.cpp"
             "services/mcp/McpUtil.cpp"
             "services/mcp/McpClient.cpp"
