@@ -79,7 +79,7 @@ const std::unordered_set<std::string>& builtInToolNames() {
         "ringing_alarm",
         "set_alarm",
         "set_timer",
-        "set_reminder",
+        "schedule",
         "list_schedule",
         "cancel_scheduled",
         "acknowledge_reminders",

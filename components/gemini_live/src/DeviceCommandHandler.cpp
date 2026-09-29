@@ -278,7 +278,7 @@ bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_ca
         case SkillType::LIST_SCHEDULE:
         case SkillType::CANCEL_SCHEDULED:
         case SkillType::SET_TIMER:
-        case SkillType::SET_REMINDER:
+        case SkillType::SCHEDULE:
         case SkillType::ACKNOWLEDGE_REMINDERS: {
             if (!s_delegate || !s_delegate->handleAlarmTool(skill_call, response_doc)) {
                 response_doc["status"] = "error";

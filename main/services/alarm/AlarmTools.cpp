@@ -165,6 +165,7 @@ void setTimer(const GeminiSkills::set_timer_args_t& args, JsonDocument& r) {
 void reminderToJson(int id, const ReminderDoc& d, JsonObject o, int64_t now) {
     o["id"] = id;
     o["text"] = d.text;
+    o["kind"] = d.action ? "action" : "reminder";
     if (d.at) {
         o["time"] = localText(d.at);
     } else {
@@ -177,13 +178,14 @@ void reminderToJson(int id, const ReminderDoc& d, JsonObject o, int64_t now) {
     if (next) o["next"] = localText(next);
 }
 
-void setReminder(const GeminiSkills::set_reminder_args_t& args, JsonDocument& r) {
+void schedule(const GeminiSkills::schedule_args_t& args, JsonDocument& r) {
     if (args.text.empty()) return error(r, "text is required");
     if (args.text.size() > AlarmService::MAX_REMINDER_TEXT) return error(r, "text is too long");
     if (!TimeSyncHelper::clockValid()) return error(r, "The device clock is not set yet");
     const int64_t now = time(nullptr);
     ReminderDoc d;
     d.text = args.text;
+    d.action = args.kind == "action";
     if (args.in_minutes > 0) {
         if (args.in_minutes > MAX_REMINDER_MINUTES) return error(r, "in_minutes must be at most a week");
         d.at = (uint32_t)(now + (int64_t)args.in_minutes * 60);
@@ -192,20 +194,20 @@ void setReminder(const GeminiSkills::set_reminder_args_t& args, JsonDocument& r)
     }
     // The model sometimes repeats a call; the same reminder is not added twice.
     for (const auto& [eid, e] : AlarmService::getInstance().reminders()) {
-        if (e.enabled && e.text == d.text && e.hour == d.hour && e.minute == d.minute && e.days == d.days &&
+        if (e.enabled && e.text == d.text && e.action == d.action && e.hour == d.hour && e.minute == d.minute && e.days == d.days &&
             (e.at == d.at || (d.at && e.at && (e.at > d.at ? e.at - d.at : d.at - e.at) < 120))) {
             r["status"] = "success";
-            r["message"] = "This reminder already exists";
-            reminderToJson(eid, e, r["reminder"].to<JsonObject>(), now);
+            r["message"] = "This item already exists";
+            reminderToJson(eid, e, r["scheduled"].to<JsonObject>(), now);
             addNow(r);
             return;
         }
     }
     const int id = AlarmService::getInstance().saveReminder(0, d);
-    if (!id) return error(r, "Could not save the reminder");
-    ESP_LOGI(TAG, "set_reminder -> reminder %d", id);
+    if (!id) return error(r, "Could not save the item");
+    ESP_LOGI(TAG, "schedule -> %s %d", d.action ? "action" : "reminder", id);
     r["status"] = "success";
-    reminderToJson(id, d, r["reminder"].to<JsonObject>(), now);
+    reminderToJson(id, d, r["scheduled"].to<JsonObject>(), now);
     addNow(r);
 }
 
@@ -218,9 +220,15 @@ void listSchedule(JsonDocument& r) {
     const AlarmService::Status st = AlarmService::getInstance().status();
     if (st.state == AlarmRing::State::Ringing) r["ringing"] = st.alarm_id;
     if (st.state == AlarmRing::State::Snoozed) r["snoozed"] = st.alarm_id;
-    JsonArray reminders = r["reminders"].to<JsonArray>();
+    JsonArray reminders = r["scheduled"].to<JsonArray>();
     for (const auto& [id, d] : AlarmService::getInstance().reminders()) reminderToJson(id, d, reminders.add<JsonObject>(), now);
     addNow(r);
+}
+
+// A due item's own turn runs unattended; it may not change the schedule.
+bool scheduledTurnRefusal(JsonDocument& r) {
+    error(r, "The schedule can't be changed while carrying out a scheduled item; the user can ask afterwards");
+    return true;
 }
 
 } // namespace
@@ -254,6 +262,7 @@ bool handleAlarmTool(const DecodedSkillCall& call, JsonDocument& r) {
         listSchedule(r);
         return true;
     case SkillType::CANCEL_SCHEDULED: {
+        if (svc.inScheduledTurn()) return scheduledTurnRefusal(r);
         const auto* args = call.args.cancel_scheduled;
         bool reminder = args->kind == "reminder";
         if (reminder ? svc.deleteReminder(args->id) : svc.deleteAlarm(args->id)) {
@@ -267,8 +276,9 @@ bool handleAlarmTool(const DecodedSkillCall& call, JsonDocument& r) {
     case SkillType::SET_TIMER:
         if (call.args.set_timer) setTimer(*call.args.set_timer, r);
         return true;
-    case SkillType::SET_REMINDER:
-        if (call.args.set_reminder) setReminder(*call.args.set_reminder, r);
+    case SkillType::SCHEDULE:
+        if (svc.inScheduledTurn()) return scheduledTurnRefusal(r);
+        if (call.args.schedule) schedule(*call.args.schedule, r);
         return true;
     case SkillType::ACKNOWLEDGE_REMINDERS: {
         int cleared = 0;

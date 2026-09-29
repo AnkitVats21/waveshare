@@ -7,6 +7,7 @@
 #include "media_player/CatalogDB.h"
 #include "app/wake_word/WakeWordEngine.h"
 #include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/AssistantService.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
 #include "services/storage/SystemDatabase.h"
@@ -568,7 +569,7 @@ int64_t AlarmService::checkReminders(int64_t now) {
         }
         ReminderDoc upd;
         upd.last_fired = (uint32_t)now;
-        upd.pending = true;
+        upd.pending = !r.action;   // a missed action is skipped, not kept for later
         uint64_t fields = ReminderDoc::F_LAST_FIRED | ReminderDoc::F_PENDING;
         if (whenFields(r).oneShot()) {
             upd.enabled = false;
@@ -578,7 +579,7 @@ int64_t AlarmService::checkReminders(int64_t now) {
             if (n && (next == 0 || n < next)) next = n;
         }
         mergeReminder(id, upd, fields);
-        ESP_LOGI(TAG, "Reminder %d due: \"%s\"", id, r.text.c_str());
+        ESP_LOGI(TAG, "%s %d due: \"%s\"", r.action ? "Action" : "Reminder", id, r.text.c_str());
         m_reminders_due.push_back(id);
     }
     return next;
@@ -586,15 +587,23 @@ int64_t AlarmService::checkReminders(int64_t now) {
 
 namespace {
 
-// The first turn of the reminder session; Gemini says it to the user.
-std::string reminderPrompt(const std::vector<std::string>& texts) {
+struct DueItem {
+    std::string text;
+    bool action;
+};
+
+// The first turn of the delivery session. Reminders are told to the user;
+// actions are carried out and confirmed in a few words, which also marks
+// the delivery done (tickDelivery waits for speech).
+std::string schedulePrompt(const std::vector<DueItem>& items) {
     std::string p = "[Automatic message from the device, not spoken by the user] ";
-    if (texts.size() == 1) {
-        p += "A reminder the user set is due now. Tell the user, briefly and naturally: " + texts[0];
-    } else {
-        p += "Reminders the user set are due now. Tell the user all of them, briefly and naturally:";
-        for (size_t i = 0; i < texts.size(); ++i) p += "\n" + std::to_string(i + 1) + ". " + texts[i];
+    p += items.size() == 1 ? "An item the user scheduled is due now:" : "Items the user scheduled are due now:";
+    for (size_t i = 0; i < items.size(); ++i) {
+        p += "\n" + std::to_string(i + 1) + (items[i].action ? ". [action] " : ". [reminder] ") + items[i].text;
     }
+    p += "\nTell the user each reminder briefly and naturally. Carry out each action with your tools, then "
+         "confirm it in a few words; don't call it a reminder. If an action names a routine, read the note "
+         "'routines' and follow its steps.";
     return p;
 }
 
@@ -610,25 +619,43 @@ void AlarmService::deliverReminders() {
     }
     m_delivering.clear();
     m_delivering.swap(m_reminders_due);
-    std::vector<std::string> texts;
+    std::vector<DueItem> items;
+    m_delivering_reminder = false;
     for (int id : m_delivering) {
         ReminderDoc r;
-        if (loadReminder(id, r) && !r.text.empty()) texts.push_back(r.text);
+        if (loadReminder(id, r) && !r.text.empty()) {
+            items.push_back({r.text, r.action});
+            m_delivering_reminder |= !r.action;
+        }
     }
-    if (texts.empty()) {
+    if (items.empty()) {
         m_delivering.clear();
         return;
     }
-    m_delivery_prompt = reminderPrompt(texts);
-    // One chime for all the reminders due together; the session opens after it.
-    ESP_LOGI(TAG, "Delivering %u reminder(s)", (unsigned)texts.size());
-    AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
+    m_delivery_prompt = schedulePrompt(items);
+    // One chime for all the reminders due together; the session opens after
+    // it. Actions alone open it without a chime.
+    ESP_LOGI(TAG, "Delivering %u scheduled item(s)", (unsigned)items.size());
     m_delivery = Delivery::Chime;
     m_delivery_start_ms = nowMs();
-    m_delivery_next_ms = m_delivery_start_ms + CHIME_MS;
+    m_delivery_next_ms = m_delivery_start_ms;
+    if (m_delivering_reminder) {
+        AlertPlayer::getInstance().playAlert(ALERT_REMINDER);
+        m_delivery_next_ms += CHIME_MS;
+    }
+}
+
+bool AlarmService::inScheduledTurn() const {
+    return nowMs() < m_sched_until_ms && GeminiProtocol::getInstance().turnsCompleted() == m_sched_turn;
 }
 
 void AlarmService::startOfflineChimes() {
+    if (!m_delivering_reminder) {
+        ESP_LOGW(TAG, "Scheduled action not carried out; skipped");
+        m_delivery = Delivery::None;
+        m_delivering.clear();
+        return;
+    }
     ESP_LOGW(TAG, "Reminder not spoken; chiming and leaving it pending");
     m_delivery = Delivery::Offline;
     m_chimes_left = OFFLINE_CHIMES - 1;
@@ -652,10 +679,15 @@ uint32_t AlarmService::tickDelivery() {
         if (now < m_delivery_next_ms) break;
         const AssistantState st = snap.assistant.session_state;
         const bool open = st == AssistantState::StreamingUserAudio || st == AssistantState::WaitingForFollowup;
+        // Actions alone open the session without the wake chimes.
+        if (!open && !m_delivering_reminder) AssistantService::requestQuietWake();
         if (!snap.system.wifi_connected || !(open || WakeWordEngine::getInstance().requestManualWake())) {
+            AssistantService::cancelQuietWake();
             startOfflineChimes();
             break;
         }
+        m_sched_turn = GeminiProtocol::getInstance().turnsCompleted();
+        m_sched_until_ms = now + SPEAK_TIMEOUT_MS + SCHEDULED_TURN_MS;
         GeminiProtocol::getInstance().sendTextTurn(m_delivery_prompt);
         m_delivery = Delivery::Speaking;
         m_delivery_next_ms = now + SPEAK_TIMEOUT_MS;
@@ -663,7 +695,7 @@ uint32_t AlarmService::tickDelivery() {
     }
     case Delivery::Speaking:
         if (snap.assistant.session_state == AssistantState::AssistantSpeaking) {
-            ESP_LOGI(TAG, "Reminder spoken %llu ms after it was due", (unsigned long long)(now - m_delivery_start_ms));
+            ESP_LOGI(TAG, "Scheduled item spoken %llu ms after it was due", (unsigned long long)(now - m_delivery_start_ms));
             for (int id : m_delivering) acknowledgeReminder(id);
             m_delivering.clear();
             m_delivery = Delivery::None;

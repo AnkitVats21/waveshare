@@ -221,6 +221,16 @@ A fired reminder is marked done (one-shot) or scheduled for its next day
 acknowledged on the dashboard, by voice, or by a key press, so a reminder is never
 silently lost.
 
+**Scheduled actions.** The same store holds actions (`action = true`, the
+`schedule` tool with `kind: action`): "play lofi at 7", "at 10 pm set the volume
+to 20", "run the routine good night" (steps in the note `routines`). When one is
+due, the session opens without a chime and Gemini carries it out with its tools,
+then confirms in a few words. An action is never pending: offline, it is skipped
+and logged, since playing music an hour late is wrong. While Gemini answers a
+due item (until that turn completes, at most 85 s), `schedule` and
+`cancel_scheduled` refuse, so a recurring routine can't add or remove items
+unattended.
+
 ### Conflicts
 
 | Going on | Reminder does |

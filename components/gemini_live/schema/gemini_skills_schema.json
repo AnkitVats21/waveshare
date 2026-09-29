@@ -237,14 +237,14 @@
     }
   },
   {
-    "name": "set_reminder",
-    "description": "Sets a reminder: at the time, the device chimes and you will be asked to tell the user the text. Give either in_minutes, or hour and minute (with optional day or repeat days).",
+    "name": "schedule",
+    "description": "Schedules something for later: a reminder to tell the user, or an action for you to carry out (play music, set the volume, read the news, run a routine from the note 'routines'). At the time you get the instruction back and do it. Give either in_minutes, or hour and minute (with optional day or repeat days). Alarms and timers have their own tools.",
     "parameters": {
       "type": "OBJECT",
       "properties": {
         "text": {
           "type": "STRING",
-          "description": "What to remind the user of, e.g. 'call the bank'."
+          "description": "The instruction, written for yourself: 'Remind the user to call the bank', 'Play lofi music at volume 30', 'Run the routine good night'."
         },
         "hour": {
           "type": "INTEGER",
@@ -264,7 +264,15 @@
         },
         "in_minutes": {
           "type": "INTEGER",
-          "description": "Instead of hour and minute: remind this many minutes from now."
+          "description": "Instead of hour and minute: this many minutes from now."
+        },
+        "kind": {
+          "type": "STRING",
+          "description": "'reminder' (default): the device chimes and you tell the user. 'action': no chime; you carry it out.",
+          "enum": [
+            "reminder",
+            "action"
+          ]
         }
       },
       "required": [
@@ -274,7 +282,7 @@
   },
   {
     "name": "list_schedule",
-    "description": "Lists alarms, running timers and reminders with their ids, times, repeat days and when each is next; says which alarm is ringing or snoozed and which reminders are pending.",
+    "description": "Lists alarms, running timers and scheduled items (reminders and actions) with their ids, times, repeat days and when each is next; says which alarm is ringing or snoozed and which reminders are pending.",
     "parameters": {
       "type": "OBJECT",
       "properties": {}
@@ -282,13 +290,13 @@
   },
   {
     "name": "cancel_scheduled",
-    "description": "Deletes an alarm, timer or reminder by id (ids from list_schedule).",
+    "description": "Deletes an alarm, timer, reminder or scheduled action by id (ids from list_schedule).",
     "parameters": {
       "type": "OBJECT",
       "properties": {
         "kind": {
           "type": "STRING",
-          "description": "'alarm' (alarms and timers) or 'reminder'.",
+          "description": "'alarm' (alarms and timers) or 'reminder' (reminders and scheduled actions).",
           "enum": [
             "alarm",
             "reminder"

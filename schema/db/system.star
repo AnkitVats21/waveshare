@@ -72,7 +72,8 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field created:      u32         tag=13   // epoch s
     }
 
-    // One document per reminder, keyed like alarms. Same "when" fields.
+    // One document per scheduled item (a reminder to say, or an action to
+    // carry out), keyed like alarms. Same "when" fields.
     collection reminders id=5 key=string cache doc=ReminderDoc {
         field hour:       u8          tag=1
         field minute:     u8          tag=2
@@ -83,5 +84,6 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field last_fired: u32         tag=7
         field pending:    bool        tag=8    // fired but not spoken; waits for acknowledgement
         field created:    u32         tag=9
+        field action:     bool        tag=10   // text is an instruction to carry out; no chime, never pending
     }
 }

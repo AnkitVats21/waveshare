@@ -11,7 +11,8 @@
 //   POST   /api/alarms/snooze
 //   POST   /api/alarms/stop
 //
-// /api/reminders: the reminders in system.ndb.
+// /api/reminders: the scheduled items in system.ndb ("action": true for an
+// instruction Gemini carries out, false for a reminder it tells the user).
 //
 //   GET    /api/reminders        list
 //   POST   /api/reminders        create, or update the one with "id"
@@ -137,6 +138,7 @@ void reminderToJson(int id, const ReminderDoc& r, JsonObject out) {
     out["days"] = r.days;
     if (r.at) out["at"] = r.at;
     out["text"] = r.text;
+    out["action"] = r.action;
     out["enabled"] = r.enabled;
     out["pending"] = r.pending;
     if (r.last_fired) out["last_fired"] = r.last_fired;
@@ -172,6 +174,7 @@ esp_err_t reminderSaveHandler(httpd_req_t* req) {
     if (!takeInt(in, "at", 0, 0xFFFFFFFFLL, r.at)) return Http::sendError(req, 400, "at must be epoch seconds");
     if (!exists && in["hour"].isNull() && !r.at) return Http::sendError(req, 400, "hour and minute, or at, are required");
     if (!in["enabled"].isNull()) r.enabled = in["enabled"].as<bool>();
+    if (!in["action"].isNull()) r.action = in["action"].as<bool>();
     if (!in["text"].isNull()) {
         if (!in["text"].is<const char*>()) return Http::sendError(req, 400, "text must be a string");
         r.text = in["text"].as<const char*>();

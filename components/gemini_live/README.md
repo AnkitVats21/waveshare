@@ -55,7 +55,7 @@ sent with each session, and the model picks less reliably among many tools.
 | `notes(action, ...)` | list / read / write / append / delete text notes in `/sdcard/notes/` (plain names; a delete needs a confirmed second call after the user agreed) |
 | `set_led_strip(r,g,b)` | Solid LED colour |
 | `save_to_memory(text)` | Append to a long-term memory file |
-| `set_alarm` / `set_timer` / `set_reminder` | Alarms, timers, reminders (`main/services/alarm`, stored in system.ndb) |
+| `set_alarm` / `set_timer` / `schedule` | Alarms, timers, scheduled reminders and actions (`main/services/alarm`, stored in system.ndb) |
 | `list_schedule` / `cancel_scheduled(kind, id)` | List or delete them |
 | `ringing_alarm(action)` | Stop or snooze the ringing alarm |
 | `acknowledge_reminders` | Mark pending reminders heard |

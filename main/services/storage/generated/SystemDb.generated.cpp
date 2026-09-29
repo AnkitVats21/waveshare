@@ -172,6 +172,7 @@ void ReminderDoc::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_LAST_FIRED) w.u32(7, last_fired);
     if (fields & F_PENDING) w.boolean(8, pending);
     if (fields & F_CREATED) w.u32(9, created);
+    if (fields & F_ACTION) w.boolean(10, action);
 }
 
 void ReminderDoc::decode(std::string_view value) {
@@ -189,6 +190,7 @@ void ReminderDoc::decode(std::string_view value) {
             case 7: nexus_db::FieldReader::read(v, len, last_fired); break;
             case 8: nexus_db::FieldReader::read(v, len, pending); break;
             case 9: nexus_db::FieldReader::read(v, len, created); break;
+            case 10: nexus_db::FieldReader::read(v, len, action); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

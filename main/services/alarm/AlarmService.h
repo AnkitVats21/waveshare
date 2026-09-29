@@ -8,6 +8,7 @@
 #include "services/storage/SystemDatabase.h"
 #include "freertos/semphr.h"
 #include <deque>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -58,9 +59,11 @@ public:
     static int64_t nextFireOf(const AlarmDoc& doc, int64_t now);
     static AlarmWhen whenOf(const AlarmDoc& doc);
 
-    // ── Reminders (system.ndb "reminders") ───────────────────────────────
+    // ── Scheduled items (system.ndb "reminders") ─────────────────────────
     // A due reminder chimes and is marked pending until it is spoken or
-    // acknowledged (docs/alarm-design.md, "Delivery").
+    // acknowledged (docs/alarm-design.md, "Delivery"). A due action (action
+    // = true) opens the session without a chime and is never pending: when
+    // it can't be carried out (offline), it is skipped.
     static constexpr size_t MAX_REMINDER_TEXT = 200;
     // Offline: the reminder chime this many times, this far apart.
     static constexpr int OFFLINE_CHIMES = 3;
@@ -69,6 +72,8 @@ public:
     // this long after, the reminder is delivered as offline.
     static constexpr uint32_t CHIME_MS = 1000;
     static constexpr uint32_t SPEAK_TIMEOUT_MS = 25000;
+    // After speech starts, the delivery turn may run this long (tool calls).
+    static constexpr uint32_t SCHEDULED_TURN_MS = 60000;
 
     std::vector<std::pair<int, ReminderDoc>> reminders();
     // Like saveAlarm; a changed reminder is no longer pending.
@@ -77,6 +82,10 @@ public:
     // Clears pending. False if there is no such reminder.
     bool acknowledgeReminder(int id);
     static int64_t nextFireOf(const ReminderDoc& doc, int64_t now);
+    // True while Gemini answers a due item: nobody asked for that turn, so
+    // the schedule tools refuse to change the schedule (a recurring routine
+    // can't add or remove items unattended). Any task.
+    bool inScheduledTurn() const;
 
     // ── Ringing ──────────────────────────────────────────────────────────
     struct RingOptions {
@@ -183,6 +192,11 @@ private:
     enum class Delivery : uint8_t { None, Chime, Speaking, Offline };
     Delivery m_delivery = Delivery::None;
     std::vector<int> m_delivering;     // ids being delivered
+    bool m_delivering_reminder = false; // at least one of them is a reminder (not an action)
+    // The model turn answering a delivery: turnsCompleted() when it was
+    // sent, until the deadline (inScheduledTurn).
+    std::atomic<uint32_t> m_sched_turn{0};
+    std::atomic<uint64_t> m_sched_until_ms{0};
     std::string m_delivery_prompt;
     uint64_t m_delivery_start_ms = 0;
     uint64_t m_delivery_next_ms = 0;   // next step (Chime, Offline) or deadline (Speaking)

@@ -3,6 +3,7 @@
 #include "common/ReactorTask.h"
 #include "common/app_types.h"
 #include "esp_timer.h"
+#include <atomic>
 
 class AssistantService : public ReactorTask {
 public:
@@ -13,6 +14,11 @@ public:
 
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
+
+    // The next session started within QUIET_WAKE_US plays no wake or ready
+    // chime (a scheduled action opening the session). Any task.
+    static void requestQuietWake() { s_quiet_wake_us = esp_timer_get_time(); }
+    static void cancelQuietWake() { s_quiet_wake_us = 0; }
 
 protected:
 
@@ -38,6 +44,9 @@ private:
     esp_timer_handle_t m_connect_timer = nullptr;
     esp_timer_handle_t m_cooldown_timer = nullptr;
     int64_t m_wake_us = 0;   // when the current session was woken
+    bool m_quiet_session = false;   // this session started quiet (requestQuietWake)
+    static constexpr int64_t QUIET_WAKE_US = 3 * 1000 * 1000;
+    static inline std::atomic<int64_t> s_quiet_wake_us{0};
 
     volatile bool m_connect_timeout_pending   = false;
     volatile bool m_idle_timeout_pending      = false;
