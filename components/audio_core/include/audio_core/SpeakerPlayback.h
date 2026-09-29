@@ -4,6 +4,7 @@
 #include "common/AudioRates.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -84,6 +85,10 @@ public:
 
   float getMediaGain() const { return m_media_gain; }
 
+  // The reply's voice waits this long before it starts (it buffers
+  // meanwhile), so music ducked at the same moment is down first.
+  void holdVoice(uint32_t ms) { m_voice_hold_until_us = esp_timer_get_time() + (int64_t)ms * 1000; }
+
 protected:
   /**
    * @brief Internal worker thread — multi-track audio mixer & drain loop.
@@ -94,7 +99,9 @@ private:
   // ── Playback timing ──────────────────────────────────────────────────────
   static constexpr uint32_t TARGET_FRAME_MS           = 20;
   static constexpr uint32_t EMPTY_FILL_MS             = 10;
-  static constexpr uint32_t TURN_COMPLETE_DRAIN_TICKS = 15;
+  // A reply ends (turn_complete finalised) once the voice track has been
+  // empty this long, whatever the music and chimes are doing.
+  static constexpr uint32_t TURN_COMPLETE_DRAIN_MS    = 150;
   static constexpr size_t   MIN_JITTER_CUSHION_BYTES  = 7200; // ~150ms of 24kHz 16-bit mono
 
   // ── Speaker amplifier ────────────────────────────────────────────────────
@@ -109,6 +116,7 @@ private:
 
   // ── State ─────────────────────────────────────────────────────────────────
   bool                      m_buffering         = true;
+  volatile int64_t          m_voice_hold_until_us = 0;
   esp_codec_dev_handle_t    m_device            = nullptr;
   IAudioSink*               m_custom_sink       = nullptr;
   AmpControl                m_amp_control       = nullptr;

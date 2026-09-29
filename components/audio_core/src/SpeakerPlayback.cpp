@@ -102,6 +102,8 @@ void SpeakerPlaybackTask::run() {
   auto &bm = BufferManager::getInstance();
 
   uint32_t sustained_empty = 0;
+  // When the voice track last went empty (0 = it has audio).
+  int64_t voice_empty_since_us = 0;
 
   // The amplifier is on from boot. It goes off after a stretch of silence
   // and comes back the moment any track has audio.
@@ -132,7 +134,7 @@ void SpeakerPlaybackTask::run() {
 
     // 1. Voice Track (Gemini Live 24kHz -> mixer rate)
     if (asst_speaking || turn_pending) {
-      if (m_buffering) {
+      if (m_buffering && esp_timer_get_time() >= m_voice_hold_until_us) {
         size_t buffered = bm.getUsedBytes(Buffers::VOICE_RX_BUF);
         if (buffered >= MIN_JITTER_CUSHION_BYTES || turn_pending) {
           m_buffering = false;
@@ -159,6 +161,12 @@ void SpeakerPlaybackTask::run() {
       }
     } else {
       m_buffering = true;
+    }
+
+    if (has_voice) {
+      voice_empty_since_us = 0;
+    } else if (voice_empty_since_us == 0) {
+      voice_empty_since_us = esp_timer_get_time();
     }
 
     // 2. Alert Track (mixer-rate mono chimes, pulled from PSRAM clips)
@@ -278,20 +286,22 @@ void SpeakerPlaybackTask::run() {
       if (asst_speaking && sustained_empty >= 2 && !turn_pending) {
         m_buffering = true;
       }
+    }
 
-      // Finalize turn_complete once voice buffer has thoroughly drained
-      if (sustained_empty >= TURN_COMPLETE_DRAIN_TICKS) {
-        if (turn_pending) {
-          LOGI_HAL("SpeakerPlayback: sustained empty after turn_complete — finalising.");
-          sysdb.mutate([](SystemState &s) {
-            s.audio.turn_complete_pending = false;
-            s.audio.assistant_speaking    = false;
-          });
-          AudioOrchestrator::getInstance().notifyVoiceEnded();
-          sustained_empty = 0;
-          m_buffering = true;
-        }
-      }
+    // Finalise turn_complete once the voice has drained. Only the voice
+    // track counts: music under the reply (the briefing) never goes quiet.
+    if (turn_pending && voice_empty_since_us != 0 &&
+        esp_timer_get_time() - voice_empty_since_us >= (int64_t)TURN_COMPLETE_DRAIN_MS * 1000 &&
+        bm.getUsedBytes(Buffers::VOICE_RX_BUF) == 0) {
+      LOGI_HAL("SpeakerPlayback: voice drained after turn_complete — finalising.");
+      sysdb.mutate([](SystemState &s) {
+        s.audio.turn_complete_pending = false;
+        s.audio.assistant_speaking    = false;
+      });
+      AudioOrchestrator::getInstance().notifyVoiceEnded();
+      sustained_empty = 0;
+      voice_empty_since_us = 0;
+      m_buffering = true;
     }
   }
 
