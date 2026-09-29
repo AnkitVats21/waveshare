@@ -148,7 +148,11 @@ bool McpService::refreshSync(std::string* error_out) {
     auto converted = Mcp::convertToolsListToDeclarations(raw_tools, m_max_tools);
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_tools = std::move(converted.tools);
+        m_tools.clear();
+        for (const auto& t : converted.tools) {
+            m_tools.push_back({PsramString(t.name.c_str()), PsramString(t.description.c_str()),
+                               PsramString(t.declaration_json.c_str())});
+        }
         m_connected = true;
         m_last_error.clear();
         m_last_refresh_epoch = time(nullptr);
@@ -195,13 +199,15 @@ bool McpService::hasToken() const {
 
 std::vector<ConvertedTool> McpService::tools() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_tools;
+    std::vector<ConvertedTool> out;
+    for (const auto& t : m_tools) out.push_back({t.name.c_str(), t.description.c_str(), ""});
+    return out;
 }
 
 bool McpService::hasTool(const std::string& name) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (const auto& t : m_tools) {
-        if (t.name == name) return true;
+        if (name == t.name.c_str()) return true;
     }
     return false;
 }
@@ -231,13 +237,12 @@ void McpService::populateGeminiDeclarations(JsonArray& functionDeclarations) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_tools.empty()) return;
 
-    PsramAllocator alloc;
+    // Inserted as raw JSON (validated when cached): no parsing or deep copy
+    // on the websocket task that sends the setup.
     for (const auto& t : m_tools) {
-        JsonDocument toolDoc(&alloc);
-        DeserializationError err = deserializeJson(toolDoc, t.declaration_json);
-        if (!err && toolDoc.is<JsonObject>()) {
-            functionDeclarations.add(toolDoc.as<JsonObject>());
-        }
+        // A std::string is always copied into the document, so a refresh
+        // meanwhile can't leave it pointing at freed text.
+        functionDeclarations.add(serialized(std::string(t.declaration_json.c_str(), t.declaration_json.size())));
     }
 }
 

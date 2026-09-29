@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nexus_db/PsramAllocator.h"
 #include "services/mcp/McpClient.h"
 #include "services/mcp/McpUtil.h"
 
@@ -52,7 +53,16 @@ private:
     McpClient m_client;
     uint8_t m_max_tools = 32;
 
-    std::vector<ConvertedTool> m_tools;
+    // The cache lives in PSRAM: allocations under 4 KB come from internal
+    // RAM, and 32 declarations of a few hundred bytes each would take
+    // 15-30 KB of it.
+    using PsramString = std::basic_string<char, std::char_traits<char>, nexus_db::PsramAllocator<char>>;
+    struct CachedTool {
+        PsramString name;
+        PsramString description;
+        PsramString declaration_json;
+    };
+    std::vector<CachedTool, nexus_db::PsramAllocator<CachedTool>> m_tools;
     bool m_connected = false;
     std::string m_last_error;
     int64_t m_last_refresh_epoch = 0;
