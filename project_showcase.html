@@ -594,7 +594,7 @@
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 2rem;
         }
 
@@ -868,7 +868,7 @@
     <header class="hero">
         <div class="hero-badge">Direct Gemini Live Integrator</div>
         <h1>Next-Gen Voice-Controlled<br><span>Media System</span></h1>
-        <p>A high-performance C++ firmware, lightweight Go command proxy, and Svelte 5 control interface combined into a single real-time voice-assistant media player ecosystem.</p>
+        <p>A high-performance C++ firmware, lightweight Go MCP service & command proxy, and reactive web control studio combined into a single real-time voice-assistant media player ecosystem.</p>
         <div class="hero-buttons">
             <a href="#projects" class="btn-primary">Explore Projects</a>
             <a href="#flow" class="btn-secondary">View Architecture</a>
@@ -879,7 +879,7 @@
     <section id="projects" class="projects-section">
         <div class="section-header">
             <h2>Ecosystem Projects</h2>
-            <p>Nexus is split into three decoupled components that communicate seamlessly using WebSockets, JSON-RPC, and MQTT.</p>
+            <p>Nexus is split into decoupled components that communicate seamlessly using WebSockets, JSON-RPC, and Model Context Protocol (MCP).</p>
         </div>
 
         <div class="tabs-nav">
@@ -893,15 +893,15 @@
             <button class="tab-btn" onclick="switchTab(1)">
                 <span class="number">02</span>
                 <div class="title-desc">
-                    <h3>Go Relay Backend</h3>
-                    <p>Pure Go / mpv / yt-dlp</p>
+                    <h3>Go MCP & Relay</h3>
+                    <p>Pure Go / MCP / SSE / mpv</p>
                 </div>
             </button>
             <button class="tab-btn" onclick="switchTab(2)">
                 <span class="number">03</span>
                 <div class="title-desc">
-                    <h3>Svelte 5 UI</h3>
-                    <p>Svelte 5 / Tailwind v4</p>
+                    <h3>Nexus Web Studio</h3>
+                    <p>React 19 / Vite / NDB</p>
                 </div>
             </button>
         </div>
@@ -935,15 +935,23 @@
                     <ul class="feature-bullets">
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            Direct Gemini Live Connection
+                            Direct Gemini Live & Real-time VAD
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            15 Hardened Core Device Skills
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            4-Source Alarm Engine & Morning Briefing
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            Unified Reminders & Action Scheduler
                         </li>
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
                             EmbeddedSysDb (State Reactor)
-                        </li>
-                        <li>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            WakeNet Local Wake Word
                         </li>
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -975,27 +983,27 @@
             </div>
         </div>
 
-        <!-- Tab 2: Go Backend -->
+        <!-- Tab 2: Go Backend & MCP -->
         <div class="tab-content" id="tab-1">
             <div class="panel-left">
                 <h3>
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
                     </svg>
-                    Go MPV Relay Backend
+                    Go MCP Server & Media Relay
                 </h3>
-                <p class="tagline">Robust media coordination & stream resolution</p>
-                <p class="desc">Acts as the central coordination agent. It runs on a local machine or home server, receiving MQTT messages from the ESP32 or WebSocket packages from the web dashboard. It dynamically fetches media links from YouTube via `yt-dlp`, plays them via `mpv`, tracks local play queues, and stores offline tracks in an SQLite database.</p>
+                <p class="tagline">Robust media coordination & Model Context Protocol skills</p>
+                <p class="desc">Acts as the central cloud capability provider and media agent. It hosts a high-performance Model Context Protocol (MCP) server over SSE providing external tools (news headlines, web search, weather forecasts) directly to the assistant without needing firmware updates. Also handles stream resolution and audio playback queues.</p>
                 
                 <div class="tech-stack-container">
                     <h4>Core Technologies</h4>
                     <div class="tech-pills">
-                        <span class="tech-pill">Go 1.25</span>
+                        <span class="tech-pill">Go 1.24+</span>
+                        <span class="tech-pill">Model Context Protocol (MCP)</span>
+                        <span class="tech-pill">Server-Sent Events (SSE)</span>
                         <span class="tech-pill">mpv Daemon</span>
                         <span class="tech-pill">yt-dlp</span>
-                        <span class="tech-pill">Gorilla WebSockets</span>
                         <span class="tech-pill">SQLite (Pure Go)</span>
-                        <span class="tech-pill">HiveMQ MQTT</span>
                     </div>
                 </div>
 
@@ -1004,7 +1012,11 @@
                     <ul class="feature-bullets">
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            Panic-Safe Async Command Routing
+                            Remote Skills over MCP (News, Search, Weather)
+                        </li>
+                        <li>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            No-Flash Firmware Extensibility
                         </li>
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -1029,45 +1041,38 @@
                             <span class="code-dot yellow"></span>
                             <span class="code-dot green"></span>
                         </div>
-                        <span class="code-title">queue.go</span>
+                        <span class="code-title">mcp_server.go</span>
                     </div>
                     <pre class="code-body">
-<span class="c-comment">// Intercept voice events to duck music</span>
-<span class="c-keyword">func</span> (q *Queue) <span class="c-func">HandleAssistantState</span>(state <span class="c-type">string</span>) {
-    <span class="c-keyword">switch</span> state {
-    <span class="c-keyword">case</span> <span class="c-string">"pause"</span>:
-        q.wasPlaying = q.mpv.IsPlaying()
-        q.mpv.<span class="c-func">Pause</span>()
-    <span class="c-keyword">case</span> <span class="c-string">"play"</span>:
-        <span class="c-keyword">if</span> q.wasPlaying {
-            q.mpv.<span class="c-func">Resume</span>()
-        }
-    }
-}</pre>
+<span class="c-comment">// Register remote MCP tools over SSE</span>
+s.RegisterTool(<span class="c-string">"news_headlines"</span>, <span class="c-func">handleNews</span>)
+s.RegisterTool(<span class="c-string">"web_search"</span>, <span class="c-func">handleSearch</span>)
+s.RegisterTool(<span class="c-string">"get_weather"</span>, <span class="c-func">handleWeather</span>)
+<span class="c-comment">// ESP32 queries tools dynamically without OTA</span></pre>
                 </div>
             </div>
         </div>
 
-        <!-- Tab 3: Svelte 5 Frontend -->
+        <!-- Tab 3: Nexus Web Studio -->
         <div class="tab-content" id="tab-2">
             <div class="panel-left">
                 <h3>
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0-2-.9-2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/>
                     </svg>
-                    Svelte 5 Web Dashboard
+                    Nexus Web Studio
                 </h3>
-                <p class="tagline">Beautiful, reactive user dashboard</p>
-                <p class="desc">A fast, reactive web interface built with Svelte 5 and Tailwind CSS v4. It monitors the MPV server state in real time, displays playback information, hosts a debug WebSocket message console, and provides UI controls to remotely update the ESP32 configuration.</p>
+                <p class="tagline">High-performance reactive control dashboard</p>
+                <p class="desc">A lightweight, single-bundle control center served directly from ESP32 flash memory. Provides live telemetry over WebSockets, dynamic Gemini Live model & VAD parameter selection, a 4-source alarm manager with YouTube and Opus upload, reminder & action scheduling, and dual-slot OTA firmware management.</p>
                 
                 <div class="tech-stack-container">
                     <h4>Core Technologies</h4>
                     <div class="tech-pills">
-                        <span class="tech-pill">Svelte 5</span>
-                        <span class="tech-pill">Tailwind CSS v4</span>
+                        <span class="tech-pill">React 19</span>
                         <span class="tech-pill">Vite</span>
                         <span class="tech-pill">HTML5 WebSockets</span>
-                        <span class="tech-pill">Svelte Runes</span>
+                        <span class="tech-pill">NDB Binary Database</span>
+                        <span class="tech-pill">Dual-Slot WebBundle</span>
                     </div>
                 </div>
 
@@ -1076,19 +1081,19 @@
                     <ul class="feature-bullets">
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            Real-time State Synchronization
+                            Real-time Device State Synchronization
                         </li>
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            Full Playback Controller
+                            Live Gemini Model & VAD Controls
                         </li>
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            Remote Settings Editor
+                            4-Source Alarm & Tone Manager
                         </li>
                         <li>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                            Live Console Frame Log
+                            Reminders & Scheduled Actions Engine
                         </li>
                     </ul>
                 </div>
@@ -1101,35 +1106,34 @@
                             <span class="code-dot yellow"></span>
                             <span class="code-dot green"></span>
                         </div>
-                        <span class="code-title">store.svelte.js</span>
+                        <span class="code-title">AlarmsView.jsx</span>
                     </div>
                     <pre class="code-body">
-<span class="c-comment">// Svelte 5 reactive stores using Runes</span>
-<span class="c-keyword">export</span> <span class="c-keyword">class</span> <span class="c-type">MpvStore</span> {
-    playbackState = $state({ title: <span class="c-string">""</span>, volume: <span class="c-keyword">100</span> });
-
-    <span class="c-func">update</span>(data) {
-        <span class="c-keyword">this</span>.playbackState.title = data.title;
-        <span class="c-keyword">this</span>.playbackState.volume = data.volume;
-    }
-}</pre>
+<span class="c-comment">// 4-source tone picker & morning briefing</span>
+<span class="c-keyword">const</span> saved = <span class="c-keyword">await</span> <span class="c-func">saveAlarm</span>({
+    tone: <span class="c-string">"builtin:chime"</span>,
+    briefing: <span class="c-keyword">true</span>,
+    snooze_min: <span class="c-keyword">9</span>,
+    kind: <span class="c-string">"alarm"</span>
+});</pre>
                 </div>
             </div>
         </div>
     </section>
 
     <!-- Interactive Dataflow Grid -->
+    <!-- Interactive Dataflow Grid -->
     <section id="flow" class="architecture-flow-section">
         <div class="section-header">
             <h2>Ecosystem Dataflow</h2>
-            <p>See how the entire system reacts when you say a voice command, streaming audio and instructions seamlessly in milliseconds.</p>
+            <p>See how the entire system reacts when you speak a voice command, streaming audio, instructions, and remote skills seamlessly in milliseconds.</p>
         </div>
 
         <div class="flow-container">
             <div class="flow-step edge">
                 <span class="badge">ESP32 Edge</span>
                 <h4>1. Wake & Capture</h4>
-                <p>WakeNet wakes up board. AudioService captures mic stream and pumps it to the WebSocket.</p>
+                <p>WakeNet wakes the board. AudioService captures mic stream, runs local VAD, and streams PCM to the WebSocket.</p>
             </div>
             
             <div class="flow-arrow">
@@ -1142,7 +1146,7 @@
             <div class="flow-step net">
                 <span class="badge">Google Cloud</span>
                 <h4>2. Gemini Live</h4>
-                <p>Decodes voice stream, matches tool calling schemas, and returns structured function call JSON.</p>
+                <p>Decodes voice stream with chosen model, applies search grounding, and returns structured function call JSON.</p>
             </div>
 
             <div class="flow-arrow">
@@ -1153,9 +1157,9 @@
             </div>
 
             <div class="flow-step relay">
-                <span class="badge">Go Backend</span>
-                <h4>3. Stream Resolver</h4>
-                <p>Receives tool call over MQTT/CMD, queries yt-dlp, and loads resolved stream URL to mpv socket.</p>
+                <span class="badge">Dual Dispatch</span>
+                <h4>3. Local Skills & MCP</h4>
+                <p>Core hardware skills (15 tools) execute locally on ESP32; remote tools (news, search, weather) query Go MCP over SSE.</p>
             </div>
 
             <div class="flow-arrow">
@@ -1166,9 +1170,9 @@
             </div>
 
             <div class="flow-step client">
-                <span class="badge">Svelte WebUI</span>
-                <h4>4. State Update</h4>
-                <p>Go server publishes play state over WebSockets, updating the user dashboard instantly.</p>
+                <span class="badge">Live Execution</span>
+                <h4>4. Action & Speech</h4>
+                <p>Audio plays, actions execute via the scheduler, and responses stream back to the speaker in real time.</p>
             </div>
         </div>
     </section>
@@ -1177,11 +1181,114 @@
     <section id="features" class="features-grid-section">
         <div class="section-header">
             <h2>Key Ecosystem Solutions</h2>
-            <p>Advanced engineering implementations resolving audio streaming, synchronization, and configuration problems across the projects.</p>
+            <p>Advanced engineering implementations resolving audio streaming, synchronization, and intelligent edge-cloud capabilities.</p>
         </div>
 
         <div class="features-grid">
-            <!-- Feature 1 -->
+            <!-- Feature 1: Gemini Live & Dynamic Model Engine -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M12 6v6l4 2"></path>
+                    </svg>
+                </div>
+                <h3>Gemini Live & Dynamic Model Engine</h3>
+                <p>Direct bidirectional voice streaming with runtime Gemini Live model selection, Google Search grounding where supported, adaptive voice-activity detection (VAD), and conversational barge-in sensitivity.</p>
+                <div class="card-projects">
+                    <span>ESP32-S3 Firmware</span>
+                    <span>Gemini Live</span>
+                </div>
+            </div>
+
+            <!-- Feature 2: Remote Skills over MCP -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                </div>
+                <h3>Remote Skills over MCP</h3>
+                <p>Powered by a dedicated Go Model Context Protocol (MCP) server over Server-Sent Events (SSE). Seamlessly extends assistant intelligence with real-time news headlines, web search, and weather forecasts without requiring firmware updates.</p>
+                <div class="card-projects">
+                    <span>Go MCP Server</span>
+                    <span>SSE</span>
+                    <span>Tool Calling</span>
+                </div>
+            </div>
+
+            <!-- Feature 3: Unified Scheduler for Reminders & Actions -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                </div>
+                <h3>Unified Scheduler: Reminders & Actions</h3>
+                <p>An autonomous cron-like task scheduler that handles both natural language spoken reminders and scheduled time-based device actions ("play lofi at 7", automated routine triggers from notes).</p>
+                <div class="card-projects">
+                    <span>ESP32-S3 Firmware</span>
+                    <span>EmbeddedSysDb</span>
+                </div>
+            </div>
+
+            <!-- Feature 4: 4-Source Alarm Engine & Morning Briefing -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                </div>
+                <h3>4-Source Alarms & Morning Briefing</h3>
+                <p>Wake-up tones selectable from synthesized hardware patterns, custom uploaded Opus audio files, YouTube downloads, or the offline music library with classic fallback. Delivers a spoken morning briefing upon stopping.</p>
+                <div class="card-projects">
+                    <span>Audio Decoder</span>
+                    <span>Opus</span>
+                    <span>AlarmService</span>
+                </div>
+            </div>
+
+            <!-- Feature 5: Voice Notes with Spoken Confirmation -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                </div>
+                <h3>Voice Notes & Safe Deletion</h3>
+                <p>Spoken note-taking stored persistently on SD card storage, protected with spoken verbal confirmations before any destructive deletion action.</p>
+                <div class="card-projects">
+                    <span>ESP-SR</span>
+                    <span>Notes Service</span>
+                    <span>Voice Safety</span>
+                </div>
+            </div>
+
+            <!-- Feature 6: 15 Hardened Core Device Skills -->
+            <div class="feature-card">
+                <div class="icon-box">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                        <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+                        <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+                    </svg>
+                </div>
+                <h3>15 Hardened Core Device Skills</h3>
+                <p>A trimmed and deterministic embedded toolset executing direct hardware control—alarms, timers, volume, display brightness, WiFi diagnostics, and audio recording—with low-latency edge execution.</p>
+                <div class="card-projects">
+                    <span>C++17</span>
+                    <span>FreeRTOS</span>
+                    <span>Tool Dispatch</span>
+                </div>
+            </div>
+
+            <!-- Feature 7: Dynamic Resampling & Leaky Playback -->
             <div class="feature-card">
                 <div class="icon-box">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1193,10 +1300,11 @@
                 <p>The ESP32 firmware dynamically handles linear upsampling (24kHz assistant to 32kHz native DAC) and downsampling (32kHz mic to 16kHz VAD/WakeNet), using a leaky bucket algorithm to prevent buffer starvation.</p>
                 <div class="card-projects">
                     <span>ESP32-S3 Firmware</span>
+                    <span>I2S DMA</span>
                 </div>
             </div>
 
-            <!-- Feature 2 -->
+            <!-- Feature 8: Real-time Stream Caching -->
             <div class="feature-card">
                 <div class="icon-box">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1204,29 +1312,28 @@
                     </svg>
                 </div>
                 <h3>Real-time Stream Caching</h3>
-                <p>The Go Backend instructs `mpv` to log played network stream packets directly to disk (using `stream-record`). This caches music transparently as you listen, ensuring no bandwidth is wasted on repeat tracks.</p>
+                <p>The media subsystem logs played network stream packets directly to disk (using stream-record). This caches music transparently as you listen, ensuring no bandwidth is wasted on repeat tracks.</p>
                 <div class="card-projects">
-                    <span>Go Backend</span>
-                    <span>mpv</span>
+                    <span>Media Subsystem</span>
+                    <span>Stream Cache</span>
                 </div>
             </div>
 
-            <!-- Feature 3 -->
+            <!-- Feature 9: Dual-Slot Web Studio & OTA -->
             <div class="feature-card">
                 <div class="icon-box">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-                        <line x1="6" y1="6" x2="6.01" y2="6"></line>
-                        <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
                     </svg>
                 </div>
-                <h3>Device Configuration Bridge</h3>
-                <p>Enables absolute administrative control. Svelte clients edit and write the ESP32 SD card's settings via custom JSON WebSocket commands that the Go backend translates to targeted MQTT packets.</p>
+                <h3>Dual-Slot Web Studio & OTA</h3>
+                <p>Complete browser management studio served directly by the ESP32 featuring real-time WebSocket telemetry, tone manager, scheduler controls, and failsafe dual-slot flash OTA updates with instant rollback.</p>
                 <div class="card-projects">
-                    <span>ESP32 Firmware</span>
-                    <span>Go Backend</span>
-                    <span>Svelte UI</span>
+                    <span>React / Vite</span>
+                    <span>WebSockets</span>
+                    <span>Dual-Slot OTA</span>
                 </div>
             </div>
         </div>
@@ -1274,12 +1381,12 @@
                 </a>
 
                 <!-- Repo 3 -->
-                <a href="https://github.com/AnkitVats21/mpv-relay-frontend" target="_blank" class="repo-card">
+                <a href="https://github.com/AnkitVats21/waveshare-dashboard" target="_blank" class="repo-card">
                     <div class="repo-meta">
-                        <span class="gh-badge">Svelte 5 / Tailwind</span>
+                        <span class="gh-badge">React 19 / Vite</span>
                     </div>
-                    <h3>mpv-relay-frontend</h3>
-                    <p>The control dashboard web application featuring custom media player slots, dynamic queue views, and a WS debugger log console.</p>
+                    <h3>waveshare-dashboard</h3>
+                    <p>The control dashboard web studio featuring real-time telemetry, Gemini Live model & VAD controls, 4-source alarm tones, and dual-slot OTA management.</p>
                     <div class="repo-link">
                         View Repository
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
