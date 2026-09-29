@@ -599,6 +599,7 @@ void AlarmService::publish() {
 
 const char* AlarmService::musicName(Music m) {
     switch (m) {
+    case Music::Waiting:      return "waiting";
     case Music::Intro:        return "intro";
     case Music::UnderVoice:   return "under_voice";
     case Music::Tail:         return "tail";
@@ -626,17 +627,21 @@ bool AlarmService::startBriefingMusic() {
         return false;
     }
     const int duck = std::clamp<int>(settings.briefing_duck, BRIEFING_DUCK_MIN, BRIEFING_DUCK_MAX);
-    // Before the music starts, so the session's wake leaves it playing.
+    // Before the session's wake, so it leaves the music playing.
     AudioOrchestrator::getInstance().setMusicUnderVoice(true, duck / 100.0f);
-    if (!NexusPlayer::getInstance().playAlarm("briefing_music", path.c_str())) {
-        ESP_LOGW(TAG, "Briefing music %s did not start; briefing without it", name.c_str());
-        AudioOrchestrator::getInstance().setMusicUnderVoice(false);
-        return false;
-    }
     m_music_path = path;
-    ESP_LOGI(TAG, "Briefing music %s playing (ducks to %d%%)", name.c_str(), duck);
-    setMusic(Music::Intro, MUSIC_INTRO_MAX_MS);
+    ESP_LOGI(TAG, "Briefing music %s once the session is up (ducks to %d%%)", name.c_str(), duck);
+    setMusic(Music::Waiting, MUSIC_CONNECT_WAIT_MS);
     return true;
+}
+
+void AlarmService::playBriefingMusic() {
+    if (!NexusPlayer::getInstance().playAlarm("briefing_music", m_music_path.c_str())) {
+        ESP_LOGW(TAG, "Briefing music did not start; briefing without it");
+        setMusic(Music::AfterSession);
+        return;
+    }
+    setMusic(Music::Intro, MUSIC_INTRO_MAX_MS);
 }
 
 void AlarmService::stopBriefingMusicSoon(const char* why) {
@@ -658,7 +663,8 @@ void AlarmService::endBriefingMusic(bool restore) {
 uint32_t AlarmService::tickBriefingMusic() {
     if (m_music == Music::None) return 0;
     const uint64_t now = nowMs();
-    const bool session = EmbeddedSysDb::getInstance().snapshot().assistant.session_state != AssistantState::Idle;
+    const AssistantState state = EmbeddedSysDb::getInstance().snapshot().assistant.session_state;
+    const bool session = state != AssistantState::Idle;
     auto& orch = AudioOrchestrator::getInstance();
     auto& gemini = GeminiProtocol::getInstance();
     // The briefing's turn is over and its voice has played out.
@@ -667,6 +673,15 @@ uint32_t AlarmService::tickBriefingMusic() {
         m_briefing_spoken = true;
     }
     switch (m_music) {
+    case Music::Waiting:
+        // Up: listening (connected and set up) or already answering. Not
+        // coming: the delivery gave up (offline). Or waited long enough.
+        if (state == AssistantState::StreamingUserAudio || state == AssistantState::AssistantSpeaking ||
+            state == AssistantState::WaitingForFollowup ||
+            (m_delivery == Delivery::None && !m_briefing_due) || now >= m_music_until_ms) {
+            playBriefingMusic();
+        }
+        break;
     case Music::Intro:
         if (orch.isVoiceActive()) {
             m_briefing_spoken = false;

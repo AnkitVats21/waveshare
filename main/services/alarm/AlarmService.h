@@ -102,6 +102,9 @@ public:
     static constexpr uint32_t MUSIC_STOP_MS = 1000;    // fade when the user takes over
     // No briefing voice this long after the music started: stop waiting.
     static constexpr uint32_t MUSIC_INTRO_MAX_MS = 60000;
+    // The music starts once the session is up (its TLS handshake and the
+    // music's decoding together took internal RAM to 7.7 KB), or after this.
+    static constexpr uint32_t MUSIC_CONNECT_WAIT_MS = 8000;
 
     // ── Ringing ──────────────────────────────────────────────────────────
     struct RingOptions {
@@ -170,10 +173,12 @@ private:
     void silence();
     void publish();
 
-    enum class Music : uint8_t { None, Intro, UnderVoice, Tail, Fading, Stopping, AfterSession };
+    enum class Music : uint8_t { None, Waiting, Intro, UnderVoice, Tail, Fading, Stopping, AfterSession };
     static const char* musicName(Music m);
-    // Starts the briefing music if one is set; false if none (or it can't play).
+    // Keeps the player for the briefing music if one is set (it starts once
+    // the session is up); false if none.
     bool startBriefingMusic();
+    void playBriefingMusic();
     // The user took over (a reply, the wake word, stop): fade out quickly.
     void stopBriefingMusicSoon(const char* why);
     // Stops it now and gives the player back (restore: resume the old music).

@@ -281,7 +281,8 @@ there must be Opus (checked from the first bytes, `AudioSniff`).
 
 | Phase | Music | Ends when |
 |---|---|---|
-| intro | full, from ~0.1 s after the stop; the session opens and the tools run | the briefing's voice starts |
+| waiting | none yet: the session opens first (at most 8 s; offline: at once) | the session is listening |
+| intro | full; the tools run | the briefing's voice starts |
 | under_voice | ducked to `briefing_duck` % over 500 ms, the voice held meanwhile; stays ducked after the reply (8 s follow-up window) | the session closes, or the user replies |
 | tail | back to full over 2 s | 60 s pass, or a session starts (wake word) |
 | fading | 0 over 3 s, then stopped | |
@@ -297,11 +298,13 @@ music plays the tail. The prompt asks for a slower pace and to leave playback
 alone. A test ring with `"briefing": true` runs it all; `/api/alarms/status`
 reports the phase as `briefing_music`.
 
-Measured (2026-09-29): briefing voice 13.2 s after the stop (four tools, MCP
+Measured (2026-09-29): briefing voice 13 s after the stop (four tools, MCP
 news), no stutter; the reply's end was found 0.76 s after `turnComplete` with
-the music playing. Internal RAM fell to 7.7 KB while the session's TLS
-connection opened over the music (16 KB when a session opened over music in the
-feasibility test): the tightest point.
+the music playing. Starting the music with the stop, internal RAM fell to
+7.7 KB while the session's TLS connection opened over it; with the music
+waiting for the session (2.2 s after the stop) the low point was 17.6 KB.
+A spoken "thank you" in the follow-up window faded the music out, and the old
+song resumed when the session closed.
 
 ## Earlier idea: pre-rendered briefing audio
 
