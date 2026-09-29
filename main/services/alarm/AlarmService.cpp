@@ -332,6 +332,9 @@ void AlarmService::handle(Command& cmd) {
             ESP_LOGI(TAG, "Alarm %d ignored: another alarm is ringing", cmd.ring.alarm_id);
             break;
         }
+        // The old music resumes first, so the alarm remembers it.
+        endBriefingMusic(true);
+        m_test_briefing = cmd.ring.briefing;
         AlarmRing::Config cfg;
         if (cmd.ring.ring_limit_ms) cfg.ring_limit_ms = cmd.ring.ring_limit_ms;
         if (cmd.ring.snooze_ms) cfg.snooze_ms = cmd.ring.snooze_ms;
@@ -375,6 +378,12 @@ void AlarmService::handle(Command& cmd) {
         break;
     }
     case CmdType::Stop:
+        if (m_ring.state() == AlarmRing::State::Idle && m_music != Music::None) {
+            // A music command (restore false) takes the player now.
+            if (cmd.restore) stopBriefingMusicSoon("stopped");
+            else endBriefingMusic(false);
+            break;
+        }
         if (m_ring.state() == AlarmRing::State::Idle && m_waiting_snooze_id) {
             ESP_LOGI(TAG, "Alarm %d: snooze from before the restart cancelled", m_waiting_snooze_id);
             AlarmDoc clear;
@@ -387,7 +396,8 @@ void AlarmService::handle(Command& cmd) {
         if (action == AlarmRing::Action::Finish && cmd.restore) {
             // Stopped by the user (not timed out, not replaced by music).
             AlarmDoc doc;
-            if (loadAlarm(m_ring.alarmId(), doc) && doc.briefing && doc.kind == 0) {
+            if (m_ring.alarmId() == 0 ? m_test_briefing
+                                      : loadAlarm(m_ring.alarmId(), doc) && doc.briefing && doc.kind == 0) {
                 ESP_LOGI(TAG, "Alarm %d stopped; briefing next", m_ring.alarmId());
                 m_briefing_due = true;
             }
@@ -404,9 +414,23 @@ void AlarmService::handle(Command& cmd) {
         action = m_ring.snooze(now);
         break;
     case CmdType::SongEnded:
+        if (m_music != Music::None) {
+            // The briefing music loops until its phases end it.
+            if (m_music <= Music::Fading &&
+                !NexusPlayer::getInstance().playAlarm("briefing_music", m_music_path.c_str())) {
+                setMusic(Music::AfterSession);
+            }
+            break;
+        }
         action = m_ring.songEnded(now);
         break;
     case CmdType::SongFailed:
+        if (m_music != Music::None) {
+            ESP_LOGW(TAG, "Briefing music failed; the briefing goes on without it");
+            NexusPlayer::getInstance().stopAlarmSong();
+            setMusic(Music::AfterSession);
+            break;
+        }
         if (m_ring.source() == AlarmRing::Source::Song) m_fallback_reason = "song playback failed";
         action = m_ring.songFailed(now);
         break;
@@ -435,7 +459,8 @@ void AlarmService::apply(AlarmRing::Action action) {
     case AlarmRing::Action::Finish:
         silence();
         giveBack();
-        NexusPlayer::getInstance().endAlarm(true);
+        // The briefing music keeps the player (and the old music waits).
+        if (!(m_briefing_due && startBriefingMusic())) NexusPlayer::getInstance().endAlarm(true);
         if (m_ring.lastEnd() == AlarmRing::EndReason::TimedOut) {
             ESP_LOGW(TAG, "Alarm %d rang for %u min without an answer; stopped", m_ring.alarmId(),
                      (unsigned)(m_ring.config().ring_limit_ms / 60000));
@@ -537,6 +562,7 @@ void AlarmService::publish() {
     st.ringing_ms = m_ring.ringingMs(now);
     st.snooze_left_ms = m_ring.snoozeLeftMs(now);
     st.snoozes = m_ring.snoozeCount();
+    st.music = musicName(m_music);
 
     const uint32_t wall = (uint32_t)time(nullptr);
     persistSnooze(st.state == AlarmRing::State::Snoozed ? st.alarm_id : 0,
@@ -567,6 +593,129 @@ void AlarmService::publish() {
         s.alarm.using_builtin = builtin;
         s.alarm.snooze_until = snooze_until;
     });
+}
+
+// ── Briefing music (this task only) ──────────────────────────────────────────
+
+const char* AlarmService::musicName(Music m) {
+    switch (m) {
+    case Music::Intro:        return "intro";
+    case Music::UnderVoice:   return "under_voice";
+    case Music::Tail:         return "tail";
+    case Music::Fading:       return "fading";
+    case Music::Stopping:     return "stopping";
+    case Music::AfterSession: return "after_session";
+    default:                  return "off";
+    }
+}
+
+void AlarmService::setMusic(Music m, uint32_t for_ms) {
+    ESP_LOGI(TAG, "Briefing music: %s -> %s", musicName(m_music), musicName(m));
+    m_music = m;
+    m_music_until_ms = nowMs() + for_ms;
+    publish();
+}
+
+bool AlarmService::startBriefingMusic() {
+    const auto settings = loadSettings();
+    const std::string& name = settings.briefing_music;
+    if (name.empty()) return false;
+    const std::string path = std::string(ALARM_TONE_DIR) + "/" + name;
+    if (!isValidToneFileName(name) || !sd_storage::Fs::isFile(path.c_str())) {
+        ESP_LOGW(TAG, "Briefing music %s missing; briefing without it", name.c_str());
+        return false;
+    }
+    const int duck = std::clamp<int>(settings.briefing_duck, BRIEFING_DUCK_MIN, BRIEFING_DUCK_MAX);
+    // Before the music starts, so the session's wake leaves it playing.
+    AudioOrchestrator::getInstance().setMusicUnderVoice(true, duck / 100.0f);
+    if (!NexusPlayer::getInstance().playAlarm("briefing_music", path.c_str())) {
+        ESP_LOGW(TAG, "Briefing music %s did not start; briefing without it", name.c_str());
+        AudioOrchestrator::getInstance().setMusicUnderVoice(false);
+        return false;
+    }
+    m_music_path = path;
+    ESP_LOGI(TAG, "Briefing music %s playing (ducks to %d%%)", name.c_str(), duck);
+    setMusic(Music::Intro, MUSIC_INTRO_MAX_MS);
+    return true;
+}
+
+void AlarmService::stopBriefingMusicSoon(const char* why) {
+    if (m_music == Music::None || m_music >= Music::Stopping) return;
+    ESP_LOGI(TAG, "Briefing music stops: %s", why);
+    AudioOrchestrator::getInstance().duckMedia(0.0f, MUSIC_STOP_MS);
+    setMusic(Music::Stopping, MUSIC_STOP_MS);
+}
+
+void AlarmService::endBriefingMusic(bool restore) {
+    if (m_music == Music::None) return;
+    NexusPlayer::getInstance().stopAlarmSong();
+    AudioOrchestrator::getInstance().setMusicUnderVoice(false);
+    AudioOrchestrator::getInstance().unduckMedia(0);
+    NexusPlayer::getInstance().endAlarm(restore);
+    setMusic(Music::None);
+}
+
+uint32_t AlarmService::tickBriefingMusic() {
+    if (m_music == Music::None) return 0;
+    const uint64_t now = nowMs();
+    const bool session = EmbeddedSysDb::getInstance().snapshot().assistant.session_state != AssistantState::Idle;
+    auto& orch = AudioOrchestrator::getInstance();
+    auto& gemini = GeminiProtocol::getInstance();
+    // The briefing's turn is over and its voice has played out.
+    if (m_music == Music::UnderVoice && !m_briefing_spoken &&
+        gemini.turnsCompleted() != m_sched_turn.load() && !orch.isVoiceActive()) {
+        m_briefing_spoken = true;
+    }
+    switch (m_music) {
+    case Music::Intro:
+        if (orch.isVoiceActive()) {
+            m_briefing_spoken = false;
+            setMusic(Music::UnderVoice);   // the orchestrator ducked it
+        } else if (m_delivery == Delivery::None && !m_briefing_due && !session) {
+            // No briefing (offline, or it was skipped): the music plays out.
+            setMusic(Music::Tail, MUSIC_TAIL_MS);
+        } else if (now >= m_music_until_ms) {
+            stopBriefingMusicSoon("no briefing");
+        }
+        break;
+    case Music::UnderVoice:
+        // After it, a new reply (or, with transcripts on, one owed) means
+        // the user said something.
+        if (m_briefing_spoken && (orch.isVoiceActive() || gemini.awaitingReply())) {
+            stopBriefingMusicSoon("the user replied");
+        } else if (!session) {
+            orch.unduckMedia(MUSIC_UP_MS);
+            setMusic(Music::Tail, MUSIC_TAIL_MS);
+        }
+        break;
+    case Music::Tail:
+        if (session) {
+            stopBriefingMusicSoon("a session started");
+        } else if (now >= m_music_until_ms) {
+            orch.duckMedia(0.0f, MUSIC_FADE_MS);
+            setMusic(Music::Fading, MUSIC_FADE_MS);
+        }
+        break;
+    case Music::Fading:
+        if (now >= m_music_until_ms) {
+            NexusPlayer::getInstance().stopAlarmSong();
+            setMusic(Music::AfterSession);
+        }
+        break;
+    case Music::Stopping:
+        if (now >= m_music_until_ms) {
+            NexusPlayer::getInstance().stopAlarmSong();
+            setMusic(Music::AfterSession);
+        }
+        break;
+    case Music::AfterSession:
+        // The old music resumes once the conversation is over.
+        if (!session) endBriefingMusic(true);
+        break;
+    default:
+        break;
+    }
+    return m_music == Music::None ? 0 : TICK_MS;
 }
 
 // ── Scheduler ────────────────────────────────────────────────────────────────
@@ -620,7 +769,9 @@ namespace {
 constexpr const char* BRIEFING =
     "The user just stopped their alarm. Give a short morning briefing: greet them, say the time, today's "
     "weather at home, their alarms and reminders for today (list_schedule), and three top headlines if you "
-    "have a news tool. If the note 'briefing' exists, read it first and follow it instead. Under a minute.";
+    "have a news tool. If the note 'briefing' exists, read it first and follow it instead. Under a minute. "
+    "Speak slowly and calmly; they have just woken up. Background music may be playing on purpose: leave "
+    "playback alone and don't mention it.";
 
 struct DueItem {
     std::string text;
@@ -659,6 +810,7 @@ void AlarmService::deliverReminders() {
     m_delivering.swap(m_reminders_due);
     std::vector<DueItem> items;
     m_delivering_reminder = false;
+    m_delivering_briefing = m_briefing_due;
     if (m_briefing_due) {
         items.push_back({BRIEFING, true});
         m_briefing_due = false;
@@ -723,7 +875,10 @@ uint32_t AlarmService::tickDelivery() {
         const bool open = st == AssistantState::StreamingUserAudio || st == AssistantState::WaitingForFollowup;
         // Actions alone open the session without the wake chimes.
         if (!open && !m_delivering_reminder) AssistantService::requestQuietWake();
-        if (!snap.system.wifi_connected || !(open || WakeWordEngine::getInstance().requestManualWake())) {
+        // After a briefing the user may answer: a longer silence timeout.
+        const uint32_t silence_ms = m_delivering_briefing ? BRIEFING_FOLLOWUP_MS : 0;
+        if (!snap.system.wifi_connected ||
+            !(open || WakeWordEngine::getInstance().requestManualWake(silence_ms))) {
             AssistantService::cancelQuietWake();
             startOfflineChimes();
             break;
@@ -879,7 +1034,7 @@ void AlarmService::run() {
     uint32_t schedule_ms = 0;
 
     while (m_running) {
-        const bool active = m_ring.state() != AlarmRing::State::Idle;
+        const bool active = m_ring.state() != AlarmRing::State::Idle || m_music != Music::None;
         // Idle: sleep until the next alarm is due. Ringing: tick.
         const uint32_t wait_ms = active ? std::min(TICK_MS, schedule_ms) : schedule_ms;
         uint32_t bits = 0;
@@ -915,6 +1070,7 @@ void AlarmService::run() {
         if (action != AlarmRing::Action::None || m_ring.state() != before) publish();
 
         schedule_ms = checkSchedule();
+        tickBriefingMusic();
     }
 }
 

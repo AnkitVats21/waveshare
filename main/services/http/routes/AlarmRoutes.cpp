@@ -13,8 +13,12 @@
 //                                video's audio into the library (then tone = the id)
 //   GET    /api/alarms/tones/youtube   {"state": idle|resolving|downloading|done|failed,
 //                                "id", "title", "bytes", "total", "error"?}
+//   GET    /api/alarms/briefing  {"music", "duck", "files": [{"name", "bytes"}]}: the music
+//                                played under the briefing ("" = none) and its level (%)
+//   POST   /api/alarms/briefing  {"music"?, "duck"?}: music is a file in /sdcard/media/alarm
+//                                or ""; duck 10-50
 //   GET    /api/alarms/status    ringing state
-//   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?}
+//   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?, "briefing"?}
 //   POST   /api/alarms/snooze
 //   POST   /api/alarms/stop
 //
@@ -247,6 +251,7 @@ void addStatus(JsonObject o) {
     if (st.last_end != AlarmRing::EndReason::None) {
         o["last_end"] = st.last_end == AlarmRing::EndReason::TimedOut ? "timed_out" : "stopped";
     }
+    o["briefing_music"] = st.music;   // after the alarm, while ringing is idle
     if (st.state == AlarmRing::State::Idle) return;
     o["alarm_id"] = st.alarm_id;
     o["tone"] = st.tone;
@@ -276,8 +281,9 @@ esp_err_t ringHandler(httpd_req_t* req) {
         std::string body;
         JsonDocument in;
         if (!Http::readBody(req, body, 512) || deserializeJson(in, body) || !in.is<JsonObject>()) {
-            return Http::sendError(req, 400, "Body must be {\"tone\"?, \"ring_limit_s\"?, \"snooze_s\"?}");
+            return Http::sendError(req, 400, "Body must be {\"tone\"?, \"ring_limit_s\"?, \"snooze_s\"?, \"briefing\"?}");
         }
+        opts.briefing = in["briefing"] | false;
         if (!in["tone"].isNull()) {
             if (!in["tone"].is<const char*>()) return Http::sendError(req, 400, "tone must be a string");
             if (const char* err = toneError(in["tone"].as<const char*>())) return Http::sendError(req, 400, err);
@@ -331,6 +337,47 @@ esp_err_t tonesHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+esp_err_t briefingGetHandler(httpd_req_t* req) {
+    const auto s = Services::loadSettings();
+    JsonDocument doc;
+    doc["music"] = s.briefing_music;
+    doc["duck"] = s.briefing_duck;
+    JsonArray files = doc["files"].to<JsonArray>();
+    if (sd_storage::Fs::isDir(Services::ALARM_TONE_DIR)) {
+        sd_storage::Fs::list(Services::ALARM_TONE_DIR, nullptr, true, listToneFile, &files);
+    }
+    return Http::sendJson(req, 200, doc);
+}
+
+esp_err_t briefingSetHandler(httpd_req_t* req) {
+    std::string body;
+    JsonDocument in;
+    if (!Http::readBody(req, body, 256) || deserializeJson(in, body)) return Http::sendError(req, 400, "Invalid JSON");
+    auto s = Services::loadSettings();
+    uint64_t fields = 0;
+    if (in["music"].is<const char*>()) {
+        std::string music = in["music"].as<const char*>();
+        if (!music.empty()) {
+            if (!Services::isValidToneFileName(music)) return Http::sendError(req, 400, "music must be an .ogg, .opus or .webm file name");
+            const std::string path = std::string(Services::ALARM_TONE_DIR) + "/" + music;
+            if (!sd_storage::Fs::isFile(path.c_str())) return Http::sendError(req, 404, "No such file in /sdcard/media/alarm");
+        }
+        s.briefing_music = music;
+        fields |= decltype(s)::F_BRIEFING_MUSIC;
+    }
+    if (!in["duck"].isNull()) {
+        const int duck = in["duck"] | -1;
+        if (!in["duck"].is<int>() || duck < Services::AlarmService::BRIEFING_DUCK_MIN ||
+            duck > Services::AlarmService::BRIEFING_DUCK_MAX) {
+            return Http::sendError(req, 400, "duck must be 10-50");
+        }
+        s.briefing_duck = duck;
+        fields |= decltype(s)::F_BRIEFING_DUCK;
+    }
+    if (fields && !Services::saveSettings(s, fields)) return Http::sendError(req, 500, "Could not save");
+    return briefingGetHandler(req);
+}
+
 esp_err_t youtubeStatusHandler(httpd_req_t* req) {
     const Services::ToneDownload::Status st = Services::ToneDownload::status();
     JsonDocument doc;
@@ -370,6 +417,8 @@ void Routes::registerAlarms(Http::Server& server) {
     server.on("/api/alarms/tones", HTTP_GET, tonesHandler);
     server.on("/api/alarms/tones/youtube", HTTP_GET, youtubeStatusHandler);
     server.on("/api/alarms/tones/youtube", HTTP_POST, youtubeStartHandler);   // before /api/alarms/*
+    server.on("/api/alarms/briefing", HTTP_GET, briefingGetHandler);
+    server.on("/api/alarms/briefing", HTTP_POST, briefingSetHandler);         // before /api/alarms/*
     server.on("/api/alarms/*", HTTP_POST, actionHandler);
     server.on("/api/reminders", HTTP_GET, reminderListHandler);
     server.on("/api/reminders", HTTP_POST, reminderSaveHandler);

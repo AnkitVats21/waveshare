@@ -87,6 +87,22 @@ public:
     // can't add or remove items unattended). Any task.
     bool inScheduledTurn() const;
 
+    // ── Briefing music (docs/alarm-design.md, "Briefing music") ──────────
+    // Played under the briefing after an alarm with briefing is stopped: full
+    // until the assistant speaks, ducked to briefing_duck % while it speaks
+    // and through the follow-up window, then full for MUSIC_TAIL_MS and faded
+    // out; the music from before the alarm resumes after it.
+    static constexpr int BRIEFING_DUCK_MIN = 10;
+    static constexpr int BRIEFING_DUCK_MAX = 50;
+    // Silence timeout of the briefing session (the user may reply).
+    static constexpr uint32_t BRIEFING_FOLLOWUP_MS = 8000;
+    static constexpr uint32_t MUSIC_UP_MS = 2000;      // back to full after the briefing
+    static constexpr uint32_t MUSIC_TAIL_MS = 60000;   // then plays this long
+    static constexpr uint32_t MUSIC_FADE_MS = 3000;    // and fades out
+    static constexpr uint32_t MUSIC_STOP_MS = 1000;    // fade when the user takes over
+    // No briefing voice this long after the music started: stop waiting.
+    static constexpr uint32_t MUSIC_INTRO_MAX_MS = 60000;
+
     // ── Ringing ──────────────────────────────────────────────────────────
     struct RingOptions {
         int alarm_id = 0;          // 0 = test ring
@@ -94,6 +110,7 @@ public:
         uint32_t ring_limit_ms = 0;  // 0 = default (test rings may shorten)
         uint32_t snooze_ms = 0;
         int volume = 0;            // volume floor while ringing; 0 = MIN_VOLUME
+        bool briefing = false;     // test ring: brief after it is stopped, like an alarm with briefing
     };
     // Each returns once the request is handled (or after timeout_ms; 0 = don't wait).
     bool ring(const RingOptions& opts, uint32_t timeout_ms = 0);
@@ -112,6 +129,7 @@ public:
         uint32_t snooze_left_ms = 0;
         uint32_t snoozes = 0;
         bool time_synced = false;
+        const char* music = "off";   // briefing music phase
     };
     Status status();
 
@@ -152,6 +170,18 @@ private:
     void silence();
     void publish();
 
+    enum class Music : uint8_t { None, Intro, UnderVoice, Tail, Fading, Stopping, AfterSession };
+    static const char* musicName(Music m);
+    // Starts the briefing music if one is set; false if none (or it can't play).
+    bool startBriefingMusic();
+    // The user took over (a reply, the wake word, stop): fade out quickly.
+    void stopBriefingMusicSoon(const char* why);
+    // Stops it now and gives the player back (restore: resume the old music).
+    void endBriefingMusic(bool restore);
+    void setMusic(Music m, uint32_t for_ms = 0);
+    // Advances the phases; returns ms until the next tick, 0 if no music.
+    uint32_t tickBriefingMusic();
+
     void migrateAlarmsFile();
     // Fires what is due; returns ms until the next check.
     uint32_t checkSchedule();
@@ -177,6 +207,7 @@ private:
     std::string m_builtin_tone;   // built-in pattern name; "" = default
     std::string m_fallback_reason;
     int m_min_volume = MIN_VOLUME;
+    bool m_test_briefing = false;   // the test ring asked for a briefing
     int m_saved_volume = -1;
     int m_raised_volume = -1;
     // Alarms due in (m_checked_until, now] fire; 0 until the clock is set.
@@ -196,6 +227,11 @@ private:
     std::vector<int> m_delivering;     // ids being delivered
     bool m_delivering_reminder = false; // at least one of them is a reminder (not an action)
     bool m_briefing_due = false;        // an alarm with briefing was stopped; delivered as an action
+    bool m_delivering_briefing = false; // the delivery carries the briefing
+    Music m_music = Music::None;
+    std::string m_music_path;
+    uint64_t m_music_until_ms = 0;      // end of the current phase
+    bool m_briefing_spoken = false;     // the briefing's reply has played out
     // The model turn answering a delivery: turnsCompleted() when it was
     // sent, until the deadline (inScheduledTurn).
     std::atomic<uint32_t> m_sched_turn{0};
