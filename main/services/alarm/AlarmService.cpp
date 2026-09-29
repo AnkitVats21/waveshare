@@ -426,7 +426,8 @@ void AlarmService::apply(AlarmRing::Action action) {
         break;
     case AlarmRing::Action::PlayBuiltin:
         if (!m_taken_over) takeOver();
-        startBuiltin(m_fallback_reason.empty() ? "no tone set" : m_fallback_reason.c_str());
+        startBuiltin(m_fallback_reason.empty() ? (m_builtin_tone.empty() ? "default" : "chosen")
+                                               : m_fallback_reason.c_str());
         break;
     case AlarmRing::Action::Silence:
         silence();
@@ -512,7 +513,8 @@ void AlarmService::startSong() {
 }
 
 void AlarmService::startBuiltin(const char* reason) {
-    ESP_LOGW(TAG, "Alarm rings the built-in tone (%s)", reason);
+    ESP_LOGI(TAG, "Alarm rings the built-in %s tone (%s)", m_builtin_tone.empty() ? "classic" : m_builtin_tone.c_str(),
+             reason);
     NexusPlayer::getInstance().stopAlarmSong();
     AlertPlayer::getInstance().startAlarmTone(m_builtin_tone.c_str());
 }
