@@ -60,8 +60,8 @@ void AudioOrchestrator::notifyWakeWordDetected() {
     // Pause (not duck) for the whole assistant session; NexusPlayer resumes it when
     // the session returns to Idle. Pausing also clears m_media_active (via
     // notifyMediaStopped), so the per-turn voice pause/resume below stays out of it.
-    if (m_voice_over_media) {
-        ESP_LOGI(TAG, "notifyWakeWordDetected: voice over media, music keeps playing");
+    if (m_under_voice) {
+        ESP_LOGI(TAG, "notifyWakeWordDetected: music under the voice keeps playing");
         return;
     }
     ESP_LOGI(TAG, "notifyWakeWordDetected: pausing background media for the session");
@@ -73,9 +73,12 @@ void AudioOrchestrator::notifyWakeWordDetected() {
 void AudioOrchestrator::notifyVoiceStarted() {
     ESP_LOGI(TAG, "notifyVoiceStarted: Assistant voice starting");
     m_voice_active = true;
-    if (m_media_active && m_voice_over_media) {
-        duckMedia(VOICE_OVER_MEDIA_GAIN, 1000);
-        m_media_ducked = true;
+    if (m_under_voice) {
+        if (m_media_active && !m_media_ducked) {
+            duckMedia(m_under_voice_gain, UNDER_VOICE_DUCK_MS);
+            if (m_speaker_task) m_speaker_task->holdVoice(UNDER_VOICE_DUCK_MS);
+            m_media_ducked = true;
+        }
     } else if (m_media_active) {
         m_media_paused_by_voice = true;
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::LOSS_PAUSE);
@@ -85,10 +88,10 @@ void AudioOrchestrator::notifyVoiceStarted() {
 void AudioOrchestrator::notifyVoiceEnded() {
     ESP_LOGI(TAG, "notifyVoiceEnded: Assistant voice finished");
     m_voice_active = false;
-    if (m_voice_over_media && m_media_ducked && !m_alert_active) {
-        unduckMedia(1000);
-        m_media_ducked = false;
-    } else if (m_media_paused_by_voice) {
+    if (m_under_voice) {
+        return;   // stays ducked; the owner brings it back
+    }
+    if (m_media_paused_by_voice) {
         m_media_paused_by_voice = false;
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::GAIN);
         unduckMedia(100);
@@ -99,6 +102,7 @@ void AudioOrchestrator::notifyVoiceEnded() {
 void AudioOrchestrator::notifyAlertStarted() {
     ESP_LOGI(TAG, "notifyAlertStarted: Alert chime starting");
     m_alert_active = true;
+    if (m_under_voice) return;   // the music's level is its owner's
     // The alarm's built-in tone plays on the alert track; it must not duck the
     // alarm (nor would any other chime play while an alarm rings).
     if (m_media_active && !m_voice_active && !m_alarm_active) {
@@ -110,6 +114,7 @@ void AudioOrchestrator::notifyAlertStarted() {
 void AudioOrchestrator::notifyAlertEnded() {
     ESP_LOGI(TAG, "notifyAlertEnded: Alert chime finished");
     m_alert_active = false;
+    if (m_under_voice) return;
     if (m_media_ducked && !m_voice_active && !m_media_paused_by_voice) {
         unduckMedia(100);
         m_media_ducked = false;
@@ -139,6 +144,14 @@ void AudioOrchestrator::notifyMediaStarted() {
         // The alarm song: AlarmService sets the media gain for its fade-in.
         return;
     }
+    if (m_under_voice) {
+        // Started (or looped) under a reply: keep its level.
+        if (m_voice_active && !m_media_ducked) {
+            duckMedia(m_under_voice_gain, 0);
+            m_media_ducked = true;
+        }
+        return;
+    }
     if (m_voice_active) {
         // Voice is running; immediately pause media
         m_media_paused_by_voice = true;
@@ -161,6 +174,13 @@ void AudioOrchestrator::notifyMediaStopped() {
     EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
         s.media.is_ducked = false;
     });
+}
+
+void AudioOrchestrator::setMusicUnderVoice(bool on, float gain) {
+    ESP_LOGI(TAG, "Music under the voice %s (duck to %d%%)", on ? "on" : "off", (int)(gain * 100 + 0.5f));
+    m_under_voice_gain = gain;
+    m_under_voice = on;
+    if (!on) m_media_ducked = false;   // the owner sets the level from here
 }
 
 void AudioOrchestrator::duckMedia(float targetGain, uint32_t rampMs) {
