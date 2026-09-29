@@ -41,10 +41,14 @@ public:
     void setThumbnail(const char* videoId, bool present);
     // A download was committed to the card (0: its file was deleted).
     void setSaved(const char* videoId, uint32_t fileSize);
-    // Deletes the saved file and thumbnail; the entry stays as not saved.
-    // False if the id isn't in the library or a file couldn't be deleted
+    // Deletes the saved file, thumbnail and entry (an entry with no file is
+    // just removed). False if the id isn't in the library or a file couldn't be deleted
     // (e.g. it is open).
     bool removeFiles(const char* videoId);
+    // Removes every entry that has no saved file (songs only streamed, and
+    // ones whose file is gone), except keepId and a song being downloaded.
+    // Returns how many were removed.
+    size_t removeUnsaved(const char* keepId);
 
     // Checks the library against the card: adds songs that aren't listed,
     // corrects file sizes and thumbnail flags, marks entries whose file is

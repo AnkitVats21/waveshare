@@ -321,6 +321,29 @@ bool CatalogDB::removeFiles(const char* videoId) {
     return false;
 }
 
+size_t CatalogDB::removeUnsaved(const char* keepId) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_initialized) return 0;
+    // Collected first: forEach holds the database lock.
+    PsVec<std::string> ids;
+    _db.tracks().forEach([&](std::string_view key, const TrackDoc& doc) {
+        if (doc.file_size == 0) ids.push_back(std::string(key));
+        return true;
+    });
+    auto& storage = NexusPlayer::getInstance().getStorageManager();
+    size_t removed = 0;
+    for (const std::string& id : ids) {
+        if (keepId && id == keepId) continue;
+        if (storage.isCaching(id.c_str())) continue;
+        char path[128];
+        snprintf(path, sizeof(path), "%s/%s.jpg", THUMBS_DIR, id.c_str());
+        if (Fs::isFile(path)) Fs::remove(path);
+        if (_db.tracks().remove(id)) ++removed;
+    }
+    ESP_LOGI(TAG, "Removed %u unsaved entries", (unsigned)removed);
+    return removed;
+}
+
 size_t CatalogDB::scanAndSync() {
     struct FileInfo {
         std::string id;  // video ids fit std::string's inline buffer

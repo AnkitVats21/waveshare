@@ -186,6 +186,15 @@ esp_err_t libraryScanHandler(httpd_req_t* req) {
 }
 
 esp_err_t libraryDeleteHandler(httpd_req_t* req) {
+    std::string unsaved;
+    if (Http::queryParam(req, "unsaved", unsaved) && unsaved == "1") {
+        // Clears the history of songs that have no saved file.
+        auto snap = EmbeddedSysDb::getInstance().snapshot();
+        JsonDocument doc;
+        doc["status"] = "ok";
+        doc["removed"] = CatalogDB::getInstance().removeUnsaved(snap.media.active_song_id);
+        return Http::sendJson(req, 200, doc);
+    }
     std::string id;
     if (!Http::queryParam(req, "id", id) || id.empty()) {
         std::string body;
