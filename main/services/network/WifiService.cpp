@@ -165,7 +165,6 @@ bool WifiService::begin() {
 
     // 2. Network interfaces: Create default STA and AP netifs
     m_sta_netif = esp_netif_create_default_wifi_sta();
-    NetStats::install(m_sta_netif);
     m_ap_netif  = esp_netif_create_default_wifi_ap();
 
     // 3. Configure and init WiFi driver
@@ -288,6 +287,7 @@ void WifiService::sysEventHandler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = static_cast<ip_event_got_ip_t*>(event_data);
         LOGI_WIFI("Connected! IP: " IPSTR, IP2STR(&event->ip_info.ip));
         self->m_retry_cnt = 0;
+        NetStats::install(self->m_sta_netif);  // the netif's functions exist only now
 
         // Disarm and close SoftAP now that STA connection is established
         self->stopSoftAp();

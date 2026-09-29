@@ -7,8 +7,9 @@
 // receives (TLS, headers and all), whichever feature it belongs to.
 namespace NetStats {
 
-// Hooks the interface's input and output functions. Call once, right after
-// the station netif is created and before Wi-Fi starts.
+// Hooks the interface's input and output functions. Call it once the
+// station has an address (the functions exist only after Wi-Fi started);
+// calling it again is harmless.
 void install(esp_netif_t* sta);
 
 // Totals since boot. 32-bit, so they wrap after 4 GB; the reader takes

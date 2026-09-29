@@ -28,9 +28,12 @@ err_t txHook(struct netif* n, struct pbuf* p) {
 namespace NetStats {
 
 void install(esp_netif_t* sta) {
-    if (!sta || s_inputFn) return;
+    if (!sta) return;
     auto* n = static_cast<struct netif*>(esp_netif_get_netif_impl(sta));
+    // lwIP fills these in when Wi-Fi starts (netif_add), not when the netif
+    // is created; a restart of the interface resets them, so hook again.
     if (!n || !n->input || !n->linkoutput) return;
+    if (n->input == rxHook && n->linkoutput == txHook) return;
     s_inputFn = n->input;
     s_outputFn = n->linkoutput;
     n->input = rxHook;
