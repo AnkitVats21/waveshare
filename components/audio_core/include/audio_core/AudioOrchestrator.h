@@ -69,6 +69,13 @@ public:
     // Media gain jumps to `from` and ramps to full over rampMs (alarm fade-in).
     void fadeInMedia(float from, uint32_t rampMs);
 
+    // Voice over media: sessions leave the music playing and duck it to
+    // VOICE_OVER_MEDIA_GAIN while the assistant speaks, instead of pausing
+    // it (briefing music; being measured, docs/alarm-design.md).
+    static constexpr float VOICE_OVER_MEDIA_GAIN = 0.20f;
+    void setVoiceOverMedia(bool on) { m_voice_over_media = on; }
+    bool voiceOverMedia() const { return m_voice_over_media; }
+
 private:
     AudioOrchestrator();
     ~AudioOrchestrator();
@@ -86,6 +93,7 @@ private:
     volatile bool m_alarm_active = false;
     volatile bool m_media_paused_by_voice = false;
     volatile bool m_media_ducked = false;
+    volatile bool m_voice_over_media = false;
 
     SpeakerPlaybackTask* m_speaker_task = nullptr;
 

@@ -1,5 +1,6 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
+#include "audio_core/AudioOrchestrator.h"
 #include "audio_core/WakeWordEngine.h"
 #include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/TranscriptLog.h"
@@ -64,6 +65,15 @@ esp_err_t handoffHandler(httpd_req_t* req) {
     return Http::sendOk(req, "Handoff requested");
 }
 
+// Test hook (briefing feasibility): ?on=1 lets sessions duck the music
+// instead of pausing it, ?on=0 restores the pause. Not saved.
+esp_err_t voiceOverMediaHandler(httpd_req_t* req) {
+    std::string on;
+    Http::queryParam(req, "on", on);
+    AudioOrchestrator::getInstance().setVoiceOverMedia(on == "1");
+    return Http::sendOk(req, on == "1" ? "Voice over media on" : "Voice over media off");
+}
+
 esp_err_t statusHandler(httpd_req_t* req) {
     auto snap = EmbeddedSysDb::getInstance().snapshot();
     JsonDocument doc;
@@ -90,6 +100,7 @@ void Routes::registerAssistant(Http::Server& server) {
     server.on("/api/assistant/start", HTTP_POST, startHandler);
     server.on("/api/assistant/stop", HTTP_POST, stopHandler);
     server.on("/api/assistant/handoff", HTTP_POST, handoffHandler);
+    server.on("/api/assistant/voice_over_media", HTTP_POST, voiceOverMediaHandler);
     server.on("/api/assistant/status", HTTP_GET, statusHandler);
     server.on("/api/assistant/transcript", HTTP_GET, transcriptHandler);
 }

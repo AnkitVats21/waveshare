@@ -60,6 +60,10 @@ void AudioOrchestrator::notifyWakeWordDetected() {
     // Pause (not duck) for the whole assistant session; NexusPlayer resumes it when
     // the session returns to Idle. Pausing also clears m_media_active (via
     // notifyMediaStopped), so the per-turn voice pause/resume below stays out of it.
+    if (m_voice_over_media) {
+        ESP_LOGI(TAG, "notifyWakeWordDetected: voice over media, music keeps playing");
+        return;
+    }
     ESP_LOGI(TAG, "notifyWakeWordDetected: pausing background media for the session");
     if (m_media_active) {
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::LOSS_PAUSE);
@@ -69,7 +73,10 @@ void AudioOrchestrator::notifyWakeWordDetected() {
 void AudioOrchestrator::notifyVoiceStarted() {
     ESP_LOGI(TAG, "notifyVoiceStarted: Assistant voice starting");
     m_voice_active = true;
-    if (m_media_active) {
+    if (m_media_active && m_voice_over_media) {
+        duckMedia(VOICE_OVER_MEDIA_GAIN, 1000);
+        m_media_ducked = true;
+    } else if (m_media_active) {
         m_media_paused_by_voice = true;
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::LOSS_PAUSE);
     }
@@ -78,7 +85,10 @@ void AudioOrchestrator::notifyVoiceStarted() {
 void AudioOrchestrator::notifyVoiceEnded() {
     ESP_LOGI(TAG, "notifyVoiceEnded: Assistant voice finished");
     m_voice_active = false;
-    if (m_media_paused_by_voice) {
+    if (m_voice_over_media && m_media_ducked && !m_alert_active) {
+        unduckMedia(1000);
+        m_media_ducked = false;
+    } else if (m_media_paused_by_voice) {
         m_media_paused_by_voice = false;
         broadcastFocusEvent(AudioTrack::MEDIA, FocusEvent::GAIN);
         unduckMedia(100);
