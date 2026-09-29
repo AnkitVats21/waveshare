@@ -8,8 +8,8 @@ Reminders share the scheduler: same "when", different delivery. A reminder does 
 take over the device; it chimes and speaks its text over whatever is going on (see
 *Reminders*).
 
-Status: steps A–D built (2026-09-27). Briefing alarms are the next addition
-(see *Later: briefing alarms*).
+Status: steps A–D built (2026-09-27); the briefing after an alarm and its
+background music built (2026-09-29, see *Briefing after the alarm*).
 
 ## Where we start
 
@@ -271,6 +271,37 @@ weather, `list_schedule`, headlines through MCP). A note called `briefing`
 overrides the contents. Nothing is fetched before the alarm, so offline it
 is skipped. The pre-rendered audio design below is kept for reference; the
 agent-driven version replaced it.
+
+### Briefing music
+
+Settings `briefing_music` (a file in `/sdcard/media/alarm`; `""` = none) and
+`briefing_duck` (10–50 %, default 20), through `GET`/`POST /api/alarms/briefing`.
+Several files may sit in the folder; the setting names the current one. Uploads
+there must be Opus (checked from the first bytes, `AudioSniff`).
+
+| Phase | Music | Ends when |
+|---|---|---|
+| intro | full, from ~0.1 s after the stop; the session opens and the tools run | the briefing's voice starts |
+| under_voice | ducked to `briefing_duck` % over 500 ms, the voice held meanwhile; stays ducked after the reply (8 s follow-up window) | the session closes, or the user replies |
+| tail | back to full over 2 s | 60 s pass, or a session starts (wake word) |
+| fading | 0 over 3 s, then stopped | |
+| stopping | 0 over 1 s, then stopped (a reply, the wake word, stop) | |
+| after_session | none | the session is idle: the music from before the alarm resumes |
+
+The alarm keeps `NexusPlayer` through all of it (focus events are ignored,
+the music loops) and gives it back at the end, so the old music resumes where
+the alarm cut it. A music command takes the player at once (no resume).
+`AudioOrchestrator::setMusicUnderVoice` keeps sessions from pausing the music
+and chimes from changing its level. Offline, the delivery is skipped and the
+music plays the tail. The prompt asks for a slower pace and to leave playback
+alone. A test ring with `"briefing": true` runs it all; `/api/alarms/status`
+reports the phase as `briefing_music`.
+
+Measured (2026-09-29): briefing voice 13.2 s after the stop (four tools, MCP
+news), no stutter; the reply's end was found 0.76 s after `turnComplete` with
+the music playing. Internal RAM fell to 7.7 KB while the session's TLS
+connection opened over the music (16 KB when a session opened over music in the
+feasibility test): the tightest point.
 
 ## Earlier idea: pre-rendered briefing audio
 
