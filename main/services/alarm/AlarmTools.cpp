@@ -117,6 +117,7 @@ void alarmToJson(int id, const AlarmDoc& a, JsonObject o, int64_t now) {
     }
     if (!a.label.empty()) o["label"] = a.label;
     o["enabled"] = a.enabled;
+    if (a.briefing) o["briefing"] = true;
     const AlarmTone tone = parseTone(a.tone);
     if (tone.kind == AlarmTone::Kind::Builtin) {
         if (!tone.value.empty()) o["tone"] = "built-in " + tone.value;
@@ -161,6 +162,7 @@ void setAlarm(const GeminiSkills::set_alarm_args_t& args, JsonDocument& r) {
     if (const char* err = setWhen(a, args.hour, args.minute, args.days, args.day, now)) return error(r, err);
     a.label = args.label.substr(0, 64);
     a.enabled = args.enabled;
+    a.briefing = args.briefing == "on";
 
     std::string tone_title;
     if (!args.tone.empty()) {
@@ -175,6 +177,7 @@ void setAlarm(const GeminiSkills::set_alarm_args_t& args, JsonDocument& r) {
             id = eid;
             if (args.label.empty()) a.label = e.label;
             if (args.tone.empty()) a.tone = e.tone;
+            if (args.briefing.empty()) a.briefing = e.briefing;
             a.snooze_min = e.snooze_min;
             a.volume = e.volume;
             break;

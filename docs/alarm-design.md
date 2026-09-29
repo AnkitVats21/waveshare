@@ -141,6 +141,21 @@ The alarm switches to it when:
 
 The switch is one way for that ring: the alarm does not go back to the song.
 
+### Tones
+
+`AlarmDoc::tone` (parsed by `parseTone`, `AlarmSchedule.h`):
+
+| Setting | Plays |
+|---|---|
+| `""`, `builtin`, `builtin:<name>` | A synthesized pattern: `classic` (default), `chime`, `digital`, `rising`. Rendered into the alarm slot when the alarm rings. |
+| `file:<name>` | An Opus file (`.ogg`, `.opus`, `.webm`; no MP3 decoder) uploaded to `/sdcard/media/alarm` with `/api/files/upload`, played by path. |
+| anything else | A library song id. A YouTube video becomes one with `POST /api/alarms/tones/youtube`, which downloads it into the music cache without playing it. |
+
+Whatever can't play falls back to the classic built-in tone, as above.
+`GET /api/alarms/tones` lists the patterns and uploaded files. By voice,
+`set_alarm`'s `tone` is matched against the pattern names, then the file names,
+then the library.
+
 ### Scheduling (step A)
 
 Until step B brings repeat days, the scheduler keeps the `hour:minute` alarms:
@@ -246,7 +261,18 @@ unattended.
 minutes, flagged so the dashboard shows a countdown. It rings through the alarm path
 and needs no scheduler work of its own; the voice tool comes with step C.
 
-## Later: briefing alarms
+## Briefing after the alarm (built)
+
+An alarm with `briefing` set gives a spoken briefing once the user stops it
+(key, voice, dashboard; not when it times out or music replaces it). It is
+delivered like a scheduled action (see Reminders): the session opens without
+a chime and Gemini is asked for a short briefing with its tools (time,
+weather, `list_schedule`, headlines through MCP). A note called `briefing`
+overrides the contents. Nothing is fetched before the alarm, so offline it
+is skipped. The pre-rendered audio design below is kept for reference; the
+agent-driven version replaced it.
+
+## Earlier idea: pre-rendered briefing audio
 
 A briefing alarm (like Bixby's): at the alarm time the device plays a short spoken
 briefing (news, weather, calendar) produced by a server, then music.

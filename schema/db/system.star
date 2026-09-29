@@ -70,6 +70,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field snooze_until: u32         tag=11   // epoch s; 0 = not snoozed
         field kind:         u8          tag=12   // 0 alarm, 1 timer
         field created:      u32         tag=13   // epoch s
+        field briefing:     bool        tag=14   // after the user stops it, Gemini gives a morning briefing
     }
 
     // One document per scheduled item (a reminder to say, or an action to

@@ -195,6 +195,7 @@ private:
     Delivery m_delivery = Delivery::None;
     std::vector<int> m_delivering;     // ids being delivered
     bool m_delivering_reminder = false; // at least one of them is a reminder (not an action)
+    bool m_briefing_due = false;        // an alarm with briefing was stopped; delivered as an action
     // The model turn answering a delivery: turnsCompleted() when it was
     // sent, until the deadline (inScheduledTurn).
     std::atomic<uint32_t> m_sched_turn{0};

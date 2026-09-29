@@ -3,7 +3,7 @@
 //   GET    /api/alarms           list
 //   POST   /api/alarms           create, or update the one with "id" (fields left out keep their values)
 //                                {"id"?, "hour", "minute", "days"?, "at"?, "label"?, "enabled"?,
-//                                 "tone"?, "snooze_min"?, "volume"?, "kind"?}
+//                                 "tone"?, "snooze_min"?, "volume"?, "kind"?, "briefing"?}
 //                                a new alarm with neither days nor at repeats daily
 //   DELETE /api/alarms?id=N
 //                                tone: "" or "builtin[:<name>]", "file:<name>" (in /sdcard/media/alarm),
@@ -54,6 +54,7 @@ void toJson(int id, const AlarmDoc& a, JsonObject out) {
     if (a.at) out["at"] = a.at;
     out["label"] = a.label;
     out["enabled"] = a.enabled;
+    out["briefing"] = a.briefing;
     out["tone"] = a.tone;
     out["snooze_min"] = a.snooze_min;
     out["volume"] = a.volume;
@@ -130,6 +131,7 @@ esp_err_t saveHandler(httpd_req_t* req) {
     }
     if (a.kind == 1 && !a.at) return Http::sendError(req, 400, "a timer needs at");
     if (!in["enabled"].isNull()) a.enabled = in["enabled"].as<bool>();
+    if (!in["briefing"].isNull()) a.briefing = in["briefing"].as<bool>();
     if (in["label"].is<const char*>()) a.label = in["label"].as<const char*>();
     // "tone_file" is the old name; a path (an old .wav tone) means the built-in tone.
     JsonVariant tone = in["tone"].isNull() ? in["tone_file"] : in["tone"];

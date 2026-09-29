@@ -384,6 +384,14 @@ void AlarmService::handle(Command& cmd) {
             break;
         }
         action = m_ring.stop(now);
+        if (action == AlarmRing::Action::Finish && cmd.restore) {
+            // Stopped by the user (not timed out, not replaced by music).
+            AlarmDoc doc;
+            if (loadAlarm(m_ring.alarmId(), doc) && doc.briefing && doc.kind == 0) {
+                ESP_LOGI(TAG, "Alarm %d stopped; briefing next", m_ring.alarmId());
+                m_briefing_due = true;
+            }
+        }
         if (action == AlarmRing::Action::Finish && !cmd.restore) {
             ESP_LOGI(TAG, "Alarm stopped by a music command");
             silence();
@@ -606,6 +614,12 @@ int64_t AlarmService::checkReminders(int64_t now) {
 
 namespace {
 
+// The briefing after an alarm with briefing set is stopped: a due action.
+constexpr const char* BRIEFING =
+    "The user just stopped their alarm. Give a short morning briefing: greet them, say the time, today's "
+    "weather at home, their alarms and reminders for today (list_schedule), and three top headlines if you "
+    "have a news tool. If the note 'briefing' exists, read it first and follow it instead. Under a minute.";
+
 struct DueItem {
     std::string text;
     bool action;
@@ -629,7 +643,10 @@ std::string schedulePrompt(const std::vector<DueItem>& items) {
 } // namespace
 
 void AlarmService::deliverReminders() {
-    if (m_reminders_due.empty() || m_delivery != Delivery::None || m_ring.state() != AlarmRing::State::Idle) return;
+    if ((m_reminders_due.empty() && !m_briefing_due) || m_delivery != Delivery::None ||
+        m_ring.state() != AlarmRing::State::Idle) {
+        return;
+    }
     // A session in the middle of a turn (or closing) finishes first.
     const AssistantState st = EmbeddedSysDb::getInstance().snapshot().assistant.session_state;
     if (st != AssistantState::Idle && st != AssistantState::StreamingUserAudio &&
@@ -640,6 +657,10 @@ void AlarmService::deliverReminders() {
     m_delivering.swap(m_reminders_due);
     std::vector<DueItem> items;
     m_delivering_reminder = false;
+    if (m_briefing_due) {
+        items.push_back({BRIEFING, true});
+        m_briefing_due = false;
+    }
     for (int id : m_delivering) {
         ReminderDoc r;
         if (loadReminder(id, r) && !r.text.empty()) {
@@ -683,7 +704,7 @@ void AlarmService::startOfflineChimes() {
 }
 
 uint32_t AlarmService::tickDelivery() {
-    if (m_delivery == Delivery::None) return m_reminders_due.empty() ? 0 : 500;   // retry when free
+    if (m_delivery == Delivery::None) return m_reminders_due.empty() && !m_briefing_due ? 0 : 500;   // retry when free
     // An alarm takes over; the reminders stay pending.
     if (m_ring.state() != AlarmRing::State::Idle) {
         ESP_LOGI(TAG, "Reminder delivery cut short by an alarm");
@@ -734,7 +755,7 @@ uint32_t AlarmService::tickDelivery() {
     default:
         break;
     }
-    if (m_delivery == Delivery::None) return m_reminders_due.empty() ? 0 : 500;
+    if (m_delivery == Delivery::None) return m_reminders_due.empty() && !m_briefing_due ? 0 : 500;
     if (m_delivery == Delivery::Speaking) return 250;
     return (uint32_t)std::max<uint64_t>(m_delivery_next_ms > now ? m_delivery_next_ms - now : 0, 1);
 }
