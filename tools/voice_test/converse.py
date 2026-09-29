@@ -43,6 +43,22 @@ def wait_for(pred, timeout, what):
     raise TimeoutError(f"timed out waiting for {what}; last status {s}")
 
 
+def open_session(a):
+    if a.wake_word:
+        say("Alexa", a.voice)
+    else:
+        try:
+            api("POST", "/api/assistant/wake")
+        except urllib.error.HTTPError as e:
+            sys.exit(f"wake refused: {e.code} {e.read().decode()}")
+    woke = time.time()
+    wait_for(lambda s: s["state"] == "listening" and s["connection"] == "connected", 20, "session to connect")
+    # A kept-alive connection is listening ~20 ms after the wake, while the
+    # ~1.1 s wake chime still plays; speech over it isn't heard.
+    time.sleep(max(0.0, woke + 1.4 - time.time()))
+    print("[session listening]")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("prompts", nargs="+")
@@ -60,21 +76,14 @@ def main():
             sys.exit(f"TTS for {text!r} failed: {e}")
 
     seq = api("GET", "/api/assistant/transcript")["seq"]
-    if a.wake_word:
-        say("Alexa", a.voice)
-    else:
-        try:
-            api("POST", "/api/assistant/wake")
-        except urllib.error.HTTPError as e:
-            sys.exit(f"wake refused: {e.code} {e.read().decode()}")
-    woke = time.time()
-    wait_for(lambda s: s["state"] == "listening" and s["connection"] == "connected", 20, "session to connect")
-    # A kept-alive connection is listening ~20 ms after the wake, while the
-    # ~1.1 s wake chime still plays; speech over it isn't heard.
-    time.sleep(max(0.0, woke + 1.4 - time.time()))
-    print("[session listening]")
+    open_session(a)
 
-    for prompt in a.prompts:
+    for i, prompt in enumerate(a.prompts):
+        # Transcribing the last reply outlasts the 3 s follow-up window; the
+        # device keeps the connection (and the context) alive, so reopen.
+        if i > 0 and status()["state"] == "idle":
+            print("[session had closed; reopening]")
+            open_session(a)
         print(f"> {prompt}")
         say(prompt, a.voice)
         rec = subprocess.Popen(["parecord", "--raw", "--rate=16000", "--channels=1", "--format=s16le"],
