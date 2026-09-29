@@ -584,10 +584,10 @@ void NexusPlayer::beginAlarm(IPlaybackObserver* alarm) {
     _alarmOwner = true;
 }
 
-bool NexusPlayer::playAlarm(const char* songId) {
+bool NexusPlayer::playAlarm(const char* songId, const char* path) {
     PlayerLock lock(_mutex);
-    if (!_alarmOwner || !songId || !_storageManager.fileExists(songId)) return false;
-    play_internal(songId, nullptr, 0);
+    if (!_alarmOwner || !songId || (!path && !_storageManager.fileExists(songId))) return false;
+    play_internal(songId, path, 0);
     return _state == STATE_LOCAL_PLAYBACK;
 }
 

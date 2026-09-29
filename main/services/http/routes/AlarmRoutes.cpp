@@ -6,6 +6,9 @@
 //                                 "tone"?, "snooze_min"?, "volume"?, "kind"?}
 //                                a new alarm with neither days nor at repeats daily
 //   DELETE /api/alarms?id=N
+//                                tone: "" or "builtin[:<name>]", "file:<name>" (in /sdcard/media/alarm),
+//                                or a library song id (docs/alarm-design.md, "Tones")
+//   GET    /api/alarms/tones     {"builtin": [names], "dir", "files": [{"name", "bytes"}]}
 //   GET    /api/alarms/status    ringing state
 //   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?}
 //   POST   /api/alarms/snooze
@@ -22,11 +25,14 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "services/alarm/AlarmService.h"
+#include "audio_core/AlertPlayer.h"
+#include "sd_storage/Fs.h"
 
 #include <cstring>
 #include <ctime>
 
 using Services::AlarmDoc;
+using Services::AlarmTone;
 using Services::AlarmRing;
 using Services::AlarmService;
 using Services::ReminderDoc;
@@ -74,6 +80,21 @@ bool takeInt(JsonObject in, const char* key, int64_t lo, int64_t hi, T& dst) {
     return true;
 }
 
+// Null if the tone setting is usable; else why not. A tone that is valid but
+// missing (a deleted file or song) is accepted: it rings the built-in tone.
+const char* toneError(const char* tone) {
+    if (strlen(tone) > AlarmService::MAX_TONE_LEN) return "tone too long";
+    const AlarmTone t = Services::parseTone(tone);
+    switch (t.kind) {
+    case AlarmTone::Kind::Builtin:
+        return t.value.empty() || AlertPlayer::alarmToneIndex(t.value.c_str()) >= 0 ? nullptr : "unknown built-in tone";
+    case AlarmTone::Kind::File:
+        return Services::isValidToneFileName(t.value) ? nullptr : "tone file must be a plain .ogg, .opus or .webm name";
+    default:
+        return strchr(tone, '/') ? "tone must be builtin[:name], file:<name> or a library song id" : nullptr;
+    }
+}
+
 esp_err_t saveHandler(httpd_req_t* req) {
     std::string body;
     if (!Http::readBody(req, body, 1024)) return Http::sendError(req, 400, "Missing or oversized body");
@@ -108,11 +129,10 @@ esp_err_t saveHandler(httpd_req_t* req) {
     // "tone_file" is the old name; a path (an old .wav tone) means the built-in tone.
     JsonVariant tone = in["tone"].isNull() ? in["tone_file"] : in["tone"];
     if (!tone.isNull()) {
-        if (!tone.is<const char*>() || strlen(tone.as<const char*>()) > AlarmService::MAX_TONE_LEN) {
-            return Http::sendError(req, 400, "tone must be a library song id");
-        }
+        if (!tone.is<const char*>()) return Http::sendError(req, 400, "tone must be a string");
         a.tone = tone.as<const char*>();
         if (!a.tone.empty() && a.tone[0] == '/') a.tone.clear();
+        if (const char* err = toneError(a.tone.c_str())) return Http::sendError(req, 400, err);
     }
     if (a.label.size() > 64) return Http::sendError(req, 400, "label too long");
 
@@ -252,9 +272,8 @@ esp_err_t ringHandler(httpd_req_t* req) {
             return Http::sendError(req, 400, "Body must be {\"tone\"?, \"ring_limit_s\"?, \"snooze_s\"?}");
         }
         if (!in["tone"].isNull()) {
-            if (!in["tone"].is<const char*>() || strlen(in["tone"].as<const char*>()) > AlarmService::MAX_TONE_LEN) {
-                return Http::sendError(req, 400, "tone must be a library song id");
-            }
+            if (!in["tone"].is<const char*>()) return Http::sendError(req, 400, "tone must be a string");
+            if (const char* err = toneError(in["tone"].as<const char*>())) return Http::sendError(req, 400, err);
             opts.tone = in["tone"].as<const char*>();
         }
         // Shorter limits for testing snooze and timeout.
@@ -283,6 +302,28 @@ esp_err_t actionHandler(httpd_req_t* req) {
     return sendStatus(req);
 }
 
+// The tones an alarm can use: built-in patterns and the files uploaded to
+// ALARM_TONE_DIR (library songs come from /api/music/library).
+bool listToneFile(const sd_storage::DirEntry& e, void* ctx) {
+    if (e.is_dir || !Services::isValidToneFileName(e.name)) return true;
+    JsonObject f = static_cast<JsonArray*>(ctx)->add<JsonObject>();
+    f["name"] = e.name;
+    f["bytes"] = e.size;
+    return true;
+}
+
+esp_err_t tonesHandler(httpd_req_t* req) {
+    JsonDocument doc;
+    JsonArray builtin = doc["builtin"].to<JsonArray>();
+    for (size_t i = 0; i < AlertPlayer::alarmToneCount(); ++i) builtin.add(AlertPlayer::alarmToneName(i));
+    doc["dir"] = Services::ALARM_TONE_DIR;
+    JsonArray files = doc["files"].to<JsonArray>();
+    if (sd_storage::Fs::isDir(Services::ALARM_TONE_DIR)) {
+        sd_storage::Fs::list(Services::ALARM_TONE_DIR, nullptr, true, listToneFile, &files);
+    }
+    return Http::sendJson(req, 200, doc);
+}
+
 } // namespace
 
 void Routes::registerAlarms(Http::Server& server) {
@@ -290,6 +331,7 @@ void Routes::registerAlarms(Http::Server& server) {
     server.on("/api/alarms", HTTP_POST, saveHandler);
     server.on("/api/alarms", HTTP_DELETE, deleteHandler);
     server.on("/api/alarms/status", HTTP_GET, statusHandler);
+    server.on("/api/alarms/tones", HTTP_GET, tonesHandler);
     server.on("/api/alarms/*", HTTP_POST, actionHandler);
     server.on("/api/reminders", HTTP_GET, reminderListHandler);
     server.on("/api/reminders", HTTP_POST, reminderSaveHandler);

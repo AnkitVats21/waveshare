@@ -203,7 +203,7 @@
         },
         "tone": {
           "type": "STRING",
-          "description": "Optional song from the device's music library to ring with (title or artist). Default: the built-in alarm tone."
+          "description": "Optional tone: a built-in one (classic, chime, digital, rising), a tone file the user uploaded, or a downloaded song from the library (title or artist). Default: the classic built-in tone."
         },
         "enabled": {
           "type": "BOOLEAN",

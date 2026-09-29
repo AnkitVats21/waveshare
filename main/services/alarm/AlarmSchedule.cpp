@@ -142,4 +142,33 @@ int64_t resolveDay(const std::string& day_text, int hour, int minute, int64_t no
     return int64_t(t) <= now ? DAY_PAST : int64_t(t);
 }
 
+AlarmTone parseTone(const std::string& tone) {
+    AlarmTone t;
+    if (tone.empty() || tone == "builtin") return t;
+    if (tone.compare(0, 8, "builtin:") == 0) {
+        t.value = tone.substr(8);
+    } else if (tone.compare(0, 5, "file:") == 0) {
+        t.kind = AlarmTone::Kind::File;
+        t.value = tone.substr(5);
+    } else {
+        t.kind = AlarmTone::Kind::Song;
+        t.value = tone;
+    }
+    return t;
+}
+
+bool isValidToneFileName(const std::string& name) {
+    if (name.empty() || name.size() > 48 || name[0] == '.' || name[0] == ' ') return false;
+    for (char c : name) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                        c == ' ' || c == '-' || c == '_' || c == '.';
+        if (!ok) return false;
+    }
+    const size_t dot = name.rfind('.');
+    if (dot == std::string::npos) return false;
+    std::string ext = name.substr(dot);
+    for (char& c : ext) c = char(std::tolower((unsigned char)c));
+    return ext == ".ogg" || ext == ".opus" || ext == ".webm";
+}
+
 } // namespace Services

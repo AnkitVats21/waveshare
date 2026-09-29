@@ -47,4 +47,21 @@ constexpr int64_t DAY_INVALID = -1;
 constexpr int64_t DAY_PAST = -2;
 int64_t resolveDay(const std::string& day, int hour, int minute, int64_t now);
 
+// An alarm's tone setting (AlarmDoc::tone):
+//   "" or "builtin"    the default built-in pattern
+//   "builtin:<name>"   a built-in pattern (AlertPlayer::alarmToneName)
+//   "file:<name>"      a file uploaded to ALARM_TONE_DIR (Opus: .ogg, .opus, .webm)
+//   anything else      a library song id (CatalogDB), e.g. a YouTube video
+// Whatever can't play rings the built-in tone instead.
+constexpr const char* ALARM_TONE_DIR = "/sdcard/media/alarm";
+struct AlarmTone {
+    enum class Kind { Builtin, File, Song };
+    Kind kind = Kind::Builtin;
+    std::string value;   // pattern name ("" = default), file name, or song id
+};
+AlarmTone parseTone(const std::string& tone);
+// A plain file name for ALARM_TONE_DIR: letters, digits, space, '-', '_',
+// '.', not hidden, at most 48 characters, ending in .ogg, .opus or .webm.
+bool isValidToneFileName(const std::string& name);
+
 } // namespace Services

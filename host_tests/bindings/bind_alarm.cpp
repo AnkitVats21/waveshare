@@ -3,6 +3,7 @@
 #include "services/alarm/AlarmSchedule.h"
 #include <cstdlib>
 #include <ctime>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <string>
 
@@ -36,6 +37,14 @@ void init_alarm(nb::module_& m) {
         w.at = at;
         return Services::nextFire(w, after);
     }, nb::arg("hour"), nb::arg("minute"), nb::arg("days") = 0, nb::arg("at") = 0, nb::arg("after") = 0);
+    // (kind, value): kind is "builtin", "file" or "song".
+    m.def("parse_tone", [](const std::string& tone) {
+        const Services::AlarmTone t = Services::parseTone(tone);
+        const char* kind = t.kind == Services::AlarmTone::Kind::File ? "file"
+                         : t.kind == Services::AlarmTone::Kind::Song ? "song" : "builtin";
+        return std::make_pair(std::string(kind), t.value);
+    });
+    m.def("is_valid_tone_file_name", &Services::isValidToneFileName);
     // None if not understood.
     m.def("parse_days", [](const std::string& text) -> nb::object {
         uint8_t days = 0;

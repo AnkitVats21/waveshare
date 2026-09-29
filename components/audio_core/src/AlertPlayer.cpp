@@ -4,6 +4,7 @@
 #include "core_sysdb/AudioRates.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -51,6 +52,26 @@ const ToneNote ALARM_BEEPS[] = {
     {1046.5f, 14000, 100, 8}, {0.0f, 0, 520, 0},
 };
 
+// Soft rising arpeggio, for waking gently.
+const ToneNote ALARM_CHIME[] = {
+    {523.3f, 11000, 250, 60},  // C5
+    {659.3f, 11000, 250, 60},  // E5
+    {784.0f, 11000, 250, 60},  // G5
+    {1046.5f, 11000, 400, 120}, // C6
+    {0.0f, 0, 900, 0},
+};
+// Fast digital-watch double beeps.
+const ToneNote ALARM_DIGITAL[] = {
+    {2093.0f, 12000, 70, 5}, {0.0f, 0, 50, 0},    // C7
+    {2093.0f, 12000, 70, 5}, {0.0f, 0, 400, 0},
+};
+// Steps up an octave, getting louder.
+const ToneNote ALARM_RISING[] = {
+    {523.3f, 6000, 120, 15}, {587.3f, 7000, 120, 15}, {659.3f, 8000, 120, 15}, {698.5f, 9000, 120, 15},
+    {784.0f, 10000, 120, 15}, {880.0f, 11000, 120, 15}, {987.8f, 12500, 120, 15}, {1046.5f, 14000, 200, 30},
+    {0.0f, 0, 400, 0},
+};
+
 struct ToneSet { const ToneNote* notes; size_t count; };
 template <size_t N> constexpr ToneSet tones(const ToneNote (&n)[N]) { return {n, N}; }
 const ToneSet TONES[ALERT_COUNT] = {
@@ -58,7 +79,29 @@ const ToneSet TONES[ALERT_COUNT] = {
     tones(REMINDER),
 };
 
+struct AlarmPattern { const char* name; ToneSet tones; };
+const AlarmPattern ALARM_PATTERNS[] = {
+    {"classic", tones(ALARM_BEEPS)},
+    {"chime", tones(ALARM_CHIME)},
+    {"digital", tones(ALARM_DIGITAL)},
+    {"rising", tones(ALARM_RISING)},
+};
+constexpr size_t ALARM_PATTERN_COUNT = sizeof(ALARM_PATTERNS) / sizeof(ALARM_PATTERNS[0]);
+
 } // namespace
+
+size_t AlertPlayer::alarmToneCount() { return ALARM_PATTERN_COUNT; }
+
+const char* AlertPlayer::alarmToneName(size_t i) {
+    return i < ALARM_PATTERN_COUNT ? ALARM_PATTERNS[i].name : nullptr;
+}
+
+int AlertPlayer::alarmToneIndex(const char* name) {
+    for (size_t i = 0; name && i < ALARM_PATTERN_COUNT; ++i) {
+        if (strcmp(name, ALARM_PATTERNS[i].name) == 0) return (int)i;
+    }
+    return -1;
+}
 
 const char* alertName(AlertType type) {
     return type < ALERT_COUNT ? NAMES[type] : "unknown";
@@ -123,7 +166,18 @@ void AlertPlayer::stop() {
     m_mixer.stop();
 }
 
-void AlertPlayer::startAlarmTone() {
+void AlertPlayer::startAlarmTone(const char* name) {
+    const int pattern = std::max(alarmToneIndex(name), 0);
+    if (pattern != m_alarm_pattern) {
+        // Rendered on demand (a few ms, PSRAM); the previous pattern stays if this fails.
+        const ToneSet& t = ALARM_PATTERNS[pattern].tones;
+        if (std::shared_ptr<AlertClip> clip = synthesizeTones(t.notes, t.count, MIXER_SAMPLE_RATE)) {
+            m_mixer.setClip(ALARM_SLOT, clip);
+            m_alarm_pattern = pattern;
+        } else {
+            ESP_LOGE(TAG, "No PSRAM for the %s alarm tone", ALARM_PATTERNS[pattern].name);
+        }
+    }
     m_requested_us = esp_timer_get_time();
     if (!m_mixer.play(ALARM_SLOT, true, true)) ESP_LOGE(TAG, "No built-in alarm tone");
 }

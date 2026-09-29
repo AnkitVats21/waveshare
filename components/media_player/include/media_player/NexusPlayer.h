@@ -53,7 +53,8 @@ public:
     // was playing is remembered for endAlarm(true).
     void beginAlarm(IPlaybackObserver* alarm);
     // Plays a local (cached) track for the alarm; false if it can't start.
-    bool playAlarm(const char* songId);
+    // path: play that file (an uploaded alarm tone) instead of the cached song.
+    bool playAlarm(const char* songId, const char* path = nullptr);
     // Stops the alarm song, keeping ownership (snooze, built-in fallback).
     void stopAlarmSong();
     // Gives the player back; with restore, the remembered music resumes.

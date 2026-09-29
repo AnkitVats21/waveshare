@@ -5,8 +5,11 @@
 #include "services/alarm/AlarmSchedule.h"
 #include "services/alarm/AlarmService.h"
 #include "services/time/TimeSyncHelper.h"
+#include "audio_core/AlertPlayer.h"
+#include "sd_storage/Fs.h"
 #include "esp_log.h"
 
+#include <cctype>
 #include <ctime>
 #include <string>
 
@@ -48,8 +51,46 @@ void addNow(JsonDocument& r) {
 }
 
 // A library song whose file is on the card, by title or artist; empty if none.
+std::string lower(std::string s) {
+    for (char& c : s) c = char(std::tolower((unsigned char)c));
+    return s;
+}
+
+struct ToneFileMatch {
+    std::string query;   // lower case
+    std::string name;
+};
+
+bool matchToneFile(const sd_storage::DirEntry& e, void* ctx) {
+    auto& m = *static_cast<ToneFileMatch*>(ctx);
+    if (e.is_dir || !isValidToneFileName(e.name)) return true;
+    std::string stem = lower(e.name);
+    stem.erase(stem.rfind('.'));
+    if (m.query.find(stem) != std::string::npos || stem.find(m.query) != std::string::npos) {
+        m.name = e.name;
+        return false;
+    }
+    return true;
+}
+
+// A tone by name: a built-in pattern ("chime"), an uploaded tone file, or a
+// downloaded library song. Returns the tone setting, "" if nothing matches.
 std::string findTone(const std::string& query, std::string& title) {
     if (query.empty()) return "";
+    const std::string q = lower(query);
+    for (size_t i = 0; i < AlertPlayer::alarmToneCount(); ++i) {
+        const char* name = AlertPlayer::alarmToneName(i);
+        if (q.find(name) != std::string::npos) {
+            title = std::string("built-in ") + name;
+            return std::string("builtin:") + name;
+        }
+    }
+    ToneFileMatch m{q, ""};
+    if (sd_storage::Fs::isDir(ALARM_TONE_DIR)) sd_storage::Fs::list(ALARM_TONE_DIR, nullptr, true, matchToneFile, &m);
+    if (!m.name.empty()) {
+        title = m.name;
+        return "file:" + m.name;
+    }
     auto& storage = NexusPlayer::getInstance().getStorageManager();
     for (const LibraryTrack& t : CatalogDB::getInstance().search(query.c_str())) {
         if (storage.fileExists(t.id.c_str())) {
@@ -76,7 +117,12 @@ void alarmToJson(int id, const AlarmDoc& a, JsonObject o, int64_t now) {
     }
     if (!a.label.empty()) o["label"] = a.label;
     o["enabled"] = a.enabled;
-    if (!a.tone.empty()) {
+    const AlarmTone tone = parseTone(a.tone);
+    if (tone.kind == AlarmTone::Kind::Builtin) {
+        if (!tone.value.empty()) o["tone"] = "built-in " + tone.value;
+    } else if (tone.kind == AlarmTone::Kind::File) {
+        o["tone"] = tone.value;
+    } else {
         ndb::music::TrackDoc rec;
         if (CatalogDB::getInstance().get(a.tone.c_str(), rec)) {
             o["tone"] = rec.title;
@@ -119,7 +165,7 @@ void setAlarm(const GeminiSkills::set_alarm_args_t& args, JsonDocument& r) {
     std::string tone_title;
     if (!args.tone.empty()) {
         a.tone = findTone(args.tone, tone_title);
-        if (a.tone.empty()) r["note"] = "No downloaded song matches '" + args.tone + "'; the built-in tone will ring.";
+        if (a.tone.empty()) r["note"] = "No built-in tone, tone file or downloaded song matches '" + args.tone + "'; the default tone will ring.";
     }
 
     // The same time and days as an existing alarm: update it.

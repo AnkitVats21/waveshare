@@ -339,9 +339,25 @@ void AlarmService::handle(Command& cmd) {
         m_min_volume = cmd.ring.volume > 0 ? std::min(cmd.ring.volume, 100) : MIN_VOLUME;
         m_tone = cmd.ring.tone;
         m_tone_title.clear();
+        m_tone_path.clear();
+        m_builtin_tone.clear();
         m_fallback_reason.clear();
         bool has_song = false;
-        if (!m_tone.empty()) {
+        const AlarmTone tone = parseTone(m_tone);
+        if (tone.kind == AlarmTone::Kind::Builtin) {
+            if (AlertPlayer::alarmToneIndex(tone.value.c_str()) >= 0) m_builtin_tone = tone.value;
+        } else if (tone.kind == AlarmTone::Kind::File) {
+            // Played by path; the song id is only a label for the player.
+            m_tone_path = std::string(ALARM_TONE_DIR) + "/" + tone.value;
+            if (!isValidToneFileName(tone.value)) {
+                m_fallback_reason = "invalid tone file name";
+            } else if (!sd_storage::Fs::isFile(m_tone_path.c_str())) {
+                m_fallback_reason = "tone file missing";
+            } else {
+                m_tone_title = tone.value;
+                has_song = true;
+            }
+        } else {
             ndb::music::TrackDoc rec;
             if (!CatalogDB::getInstance().get(m_tone.c_str(), rec)) {
                 m_fallback_reason = "tone not in the library";
@@ -353,7 +369,7 @@ void AlarmService::handle(Command& cmd) {
             }
         }
         ESP_LOGI(TAG, "Alarm %d firing (tone: %s%s%s)", cmd.ring.alarm_id,
-                 has_song ? m_tone_title.c_str() : "built-in",
+                 has_song ? m_tone_title.c_str() : (m_builtin_tone.empty() ? "built-in" : m_builtin_tone.c_str()),
                  m_fallback_reason.empty() ? "" : ", ", m_fallback_reason.c_str());
         action = m_ring.fire(cmd.ring.alarm_id, has_song, now);
         break;
@@ -475,7 +491,10 @@ void AlarmService::giveBack() {
 void AlarmService::startSong() {
     AlertPlayer::getInstance().stopAlarmTone();
     const int64_t t0 = esp_timer_get_time();
-    if (!NexusPlayer::getInstance().playAlarm(m_tone.c_str())) {
+    const bool started = m_tone_path.empty()
+        ? NexusPlayer::getInstance().playAlarm(m_tone.c_str())
+        : NexusPlayer::getInstance().playAlarm("alarm_tone", m_tone_path.c_str());
+    if (!started) {
         m_fallback_reason = "song did not start";
         apply(m_ring.songFailed(nowMs()));
         return;
@@ -487,7 +506,7 @@ void AlarmService::startSong() {
 void AlarmService::startBuiltin(const char* reason) {
     ESP_LOGW(TAG, "Alarm rings the built-in tone (%s)", reason);
     NexusPlayer::getInstance().stopAlarmSong();
-    AlertPlayer::getInstance().startAlarmTone();
+    AlertPlayer::getInstance().startAlarmTone(m_builtin_tone.c_str());
 }
 
 void AlarmService::silence() {

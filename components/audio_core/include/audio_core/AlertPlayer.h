@@ -44,8 +44,14 @@ public:
     // Built-in alarm tone, looped until stopAlarmTone(). It uses its own mixer
     // slot (not an AlertType: it is not configurable from the Sounds card) and
     // never touches the SD card, so it is the fallback when an alarm song fails.
-    void startAlarmTone();
+    // name picks a pattern (alarmToneName); unknown or null is "classic".
+    void startAlarmTone(const char* name = nullptr);
     void stopAlarmTone();
+    // The built-in alarm patterns: index 0 is the default ("classic").
+    static size_t alarmToneCount();
+    static const char* alarmToneName(size_t i);
+    // Index of the named pattern, or -1.
+    static int alarmToneIndex(const char* name);
     // While an alarm owns the device, alerts and previews are ignored so no
     // chime plays over it (or over its snooze silence).
     void setAlarmActive(bool active);
@@ -71,6 +77,7 @@ private:
     AlertMixer m_mixer;
     AlertClipPtr m_builtin[ALERT_COUNT];
     static constexpr size_t ALARM_SLOT = ALERT_COUNT;
+    int m_alarm_pattern = 0;   // pattern in ALARM_SLOT
     static_assert(ALARM_SLOT < AlertMixer::SLOTS, "one mixer slot per alert, plus the alarm");
     volatile bool m_alarm_active = false;
     // esp_timer time of the last playAlert(), for the trigger-to-mix latency log

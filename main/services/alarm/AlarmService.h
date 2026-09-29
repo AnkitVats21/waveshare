@@ -173,6 +173,8 @@ private:
     bool m_taken_over = false;
     std::string m_tone;
     std::string m_tone_title;
+    std::string m_tone_path;      // "file:" tone: its full path
+    std::string m_builtin_tone;   // built-in pattern name; "" = default
     std::string m_fallback_reason;
     int m_min_volume = MIN_VOLUME;
     int m_saved_volume = -1;
