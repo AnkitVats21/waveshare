@@ -53,6 +53,7 @@ namespace BIT_SYSTEM {
     static constexpr ComponentMask AP_ACTIVE        = (1u << 3);
     static constexpr ComponentMask WIFI_CONFIG      = (1u << 4);
     static constexpr ComponentMask APPLY_CREDS      = (1u << 5);
+    static constexpr ComponentMask NET_BYTES        = (1u << 6);
 }
 
 namespace BIT_AUDIO {
@@ -120,7 +121,9 @@ namespace BIT_MEDIA {
     X(bool, ap_active, false, BIT_SYSTEM::AP_ACTIVE, FieldAccess::ReadOnly) \
     X_STR(wifi_ssid, 33, "", BIT_SYSTEM::WIFI_CONFIG, FieldAccess::Writable) \
     X_STR(wifi_password, 65, "", BIT_SYSTEM::WIFI_CONFIG, FieldAccess::Writable) \
-    X(bool, wifi_apply_creds, false, BIT_SYSTEM::APPLY_CREDS, FieldAccess::Writable)
+    X(bool, wifi_apply_creds, false, BIT_SYSTEM::APPLY_CREDS, FieldAccess::Writable) \
+    X(uint32_t, net_rx_bytes, 0, BIT_SYSTEM::NET_BYTES, FieldAccess::ReadOnly) \
+    X(uint32_t, net_tx_bytes, 0, BIT_SYSTEM::NET_BYTES, FieldAccess::ReadOnly)
 
 #define AUDIO_FIELDS \
     X(uint32_t, sample_rate, LOCAL_SAMPLE_RATE, BIT_AUDIO::SAMPLE_RATE, FieldAccess::ReadOnly) \

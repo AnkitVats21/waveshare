@@ -1,5 +1,4 @@
 #include "services/http/ControlChannel.h"
-#include "services/network/NetStats.h"
 #include "services/http/SystemInfo.h"
 #include "services/http/StateNames.h"
 #include "app/audio/recording/AudioRecorder.h"
@@ -304,8 +303,8 @@ void ControlChannel::pushState() {
     doc["psram"] = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     wifi_ap_record_t ap = {};
     doc["rssi"] = (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) ? ap.rssi : 0;
-    doc["rx"] = NetStats::rxBytes();  // Wi-Fi bytes since boot (wraps at 4 GB)
-    doc["tx"] = NetStats::txBytes();
+    doc["rx"] = snap.system.net_rx_bytes;  // Wi-Fi bytes since boot (wraps at 4 GB)
+    doc["tx"] = snap.system.net_tx_bytes;
 
     JsonObject st = doc["state"].to<JsonObject>();
     st["speaker_volume"] = snap.audio.speaker_volume;

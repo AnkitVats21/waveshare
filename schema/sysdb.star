@@ -25,6 +25,9 @@ component System id=0 mask=0x00010000 {
     field wifi_ssid: string[33] = "" [writable, bit=4:WIFI_CONFIG]
     field wifi_password: string[65] = "" [writable, bit=4:WIFI_CONFIG]
     field wifi_apply_creds: bool = false [writable, bit=5:APPLY_CREDS]
+    // Wi-Fi bytes since boot, sampled every 2 s by NetStats (wraps at 4 GB).
+    field net_rx_bytes: uint32_t = 0 [readonly, bit=6:NET_BYTES]
+    field net_tx_bytes: uint32_t = 0 [readonly, bit=6:NET_BYTES]
 }
 
 component Audio id=1 mask=0x00020000 {
