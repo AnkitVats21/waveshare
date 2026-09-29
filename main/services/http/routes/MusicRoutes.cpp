@@ -5,6 +5,8 @@
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/CatalogDB.h"
 #include "media_player/NexusPlayer.h"
+#include "sd_storage/Fs.h"
+#include "services/alarm/AlarmSchedule.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -47,16 +49,41 @@ esp_err_t playHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, resp);
 }
 
+// Plays an alarm-folder file (a tone or briefing music) like a song, to
+// preview it: the path must be ALARM_TONE_DIR/<valid tone file name>.
+esp_err_t playAlarmFile(httpd_req_t* req, const std::string& path) {
+    const std::string dir = std::string(Services::ALARM_TONE_DIR) + "/";
+    const std::string name = path.compare(0, dir.size(), dir) == 0 ? path.substr(dir.size()) : "";
+    if (!Services::isValidToneFileName(name)) {
+        return Http::sendError(req, 400, "path must be a file in /sdcard/media/alarm");
+    }
+    if (!sd_storage::Fs::isFile(path.c_str())) return Http::sendError(req, 404, "No such file");
+    InvidiousTrack track;
+    track.videoId = std::string(MusicPlaybackService::FILE_TRACK_PREFIX) + "alarm/" + name;
+    track.title = name.substr(0, name.rfind('.'));
+    track.author = "Alarm folder";
+    if (!MusicPlaybackService::getInstance().playFile(track, path.c_str())) {
+        return Http::sendError(req, 500, "Could not start playback");
+    }
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["path"] = path;
+    return Http::sendJson(req, 200, resp);
+}
+
+// ?id=<library song id>, or ?path=<file in the alarm folder>; or the same
+// as a JSON body.
 esp_err_t playLocalHandler(httpd_req_t* req) {
-    std::string target;
-    if (!Http::queryParam(req, "id", target) && !Http::queryParam(req, "path", target)) {
+    std::string target, path;
+    if (!Http::queryParam(req, "id", target) && !Http::queryParam(req, "path", path)) {
         std::string body;
         JsonDocument doc;
         if (Http::readBody(req, body, 2047) && !deserializeJson(doc, body)) {
             if (const char* id = doc["id"]) target = id;
-            else if (const char* path = doc["path"]) target = path;
+            else if (const char* p = doc["path"]) path = p;
         }
     }
+    if (!path.empty()) return playAlarmFile(req, path);
     if (target.empty()) {
         return Http::sendError(req, 400, "Missing id or path parameter");
     }
