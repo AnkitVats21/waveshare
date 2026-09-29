@@ -64,4 +64,10 @@ AlarmTone parseTone(const std::string& tone);
 // '.', not hidden, at most 48 characters, ending in .ogg, .opus or .webm.
 bool isValidToneFileName(const std::string& name);
 
+// What a briefing alarm rings: its own file ("file:<name>"), else the
+// briefing music setting (a file name, "" = none), else the soft built-in
+// tone. Always "file:<name>" or "builtin:<name>".
+constexpr const char* BRIEFING_SOFT_TONE = "rising";
+std::string briefingTone(const std::string& alarm_tone, const std::string& briefing_music);
+
 } // namespace Services

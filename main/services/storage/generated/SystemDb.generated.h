@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0x1807C8CAu;
+constexpr uint32_t SCHEMA_HASH = 0xD32DE5EEu;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -136,7 +136,8 @@ struct AlarmDoc {
         F_KIND = 1ull << 11,
         F_CREATED = 1ull << 12,
         F_BRIEFING = 1ull << 13,
-        F_ALL = 0x3FFFull,
+        F_BRIEFING_START = 1ull << 14,
+        F_ALL = 0x7FFFull,
     };
 
     uint8_t hour = 0;
@@ -153,6 +154,7 @@ struct AlarmDoc {
     uint8_t kind = 0;
     uint32_t created = 0u;
     bool briefing = false;
+    uint8_t briefing_start = 0;
 
     void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
     // Fields missing from `value` keep their current values.

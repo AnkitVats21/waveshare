@@ -3,7 +3,9 @@
 //   GET    /api/alarms           list
 //   POST   /api/alarms           create, or update the one with "id" (fields left out keep their values)
 //                                {"id"?, "hour", "minute", "days"?, "at"?, "label"?, "enabled"?,
-//                                 "tone"?, "snooze_min"?, "volume"?, "kind"?, "briefing"?}
+//                                 "tone"?, "snooze_min"?, "volume"?, "kind"?, "briefing_start"?}
+//                                kind: alarm, timer, or briefing (rings its music, then a
+//                                spoken briefing; briefing_start: after_stop or automatic)
 //                                a new alarm with neither days nor at repeats daily
 //   DELETE /api/alarms?id=N
 //                                tone: "" or "builtin[:<name>]", "file:<name>" (in /sdcard/media/alarm),
@@ -18,7 +20,7 @@
 //   POST   /api/alarms/briefing  {"music"?, "duck"?}: music is a file in /sdcard/media/alarm
 //                                or ""; duck 10-50
 //   GET    /api/alarms/status    ringing state
-//   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?, "briefing"?}
+//   POST   /api/alarms/ring      test ring now {"tone"?, "ring_limit_s"?, "snooze_s"?, "briefing"?, "automatic"?}
 //   POST   /api/alarms/snooze
 //   POST   /api/alarms/stop
 //
@@ -58,11 +60,11 @@ void toJson(int id, const AlarmDoc& a, JsonObject out) {
     if (a.at) out["at"] = a.at;
     out["label"] = a.label;
     out["enabled"] = a.enabled;
-    out["briefing"] = a.briefing;
     out["tone"] = a.tone;
     out["snooze_min"] = a.snooze_min;
     out["volume"] = a.volume;
-    out["kind"] = a.kind == 1 ? "timer" : "alarm";
+    out["kind"] = a.kind == 1 ? "timer" : a.kind == 2 ? "briefing" : "alarm";
+    if (a.kind == 2) out["briefing_start"] = a.briefing_start == 1 ? "automatic" : "after_stop";
     if (a.last_fired) out["last_fired"] = a.last_fired;
     if (a.snooze_until) out["snooze_until"] = a.snooze_until;
     const int64_t next = AlarmService::nextFireOf(a, time(nullptr));
@@ -130,12 +132,20 @@ esp_err_t saveHandler(httpd_req_t* req) {
     if (!exists && in["days"].isNull() && !a.at) a.days = Services::AlarmWhen::EVERY_DAY;
     if (!in["kind"].isNull()) {
         const char* kind = in["kind"] | "";
-        if (strcmp(kind, "alarm") && strcmp(kind, "timer")) return Http::sendError(req, 400, "kind must be alarm or timer");
-        a.kind = strcmp(kind, "timer") == 0 ? 1 : 0;
+        if (strcmp(kind, "alarm") && strcmp(kind, "timer") && strcmp(kind, "briefing")) {
+            return Http::sendError(req, 400, "kind must be alarm, timer or briefing");
+        }
+        a.kind = strcmp(kind, "timer") == 0 ? 1 : strcmp(kind, "briefing") == 0 ? 2 : 0;
+    }
+    if (!in["briefing_start"].isNull()) {
+        const char* start = in["briefing_start"] | "";
+        if (strcmp(start, "after_stop") && strcmp(start, "automatic")) {
+            return Http::sendError(req, 400, "briefing_start must be after_stop or automatic");
+        }
+        a.briefing_start = strcmp(start, "automatic") == 0 ? 1 : 0;
     }
     if (a.kind == 1 && !a.at) return Http::sendError(req, 400, "a timer needs at");
     if (!in["enabled"].isNull()) a.enabled = in["enabled"].as<bool>();
-    if (!in["briefing"].isNull()) a.briefing = in["briefing"].as<bool>();
     if (in["label"].is<const char*>()) a.label = in["label"].as<const char*>();
     // "tone_file" is the old name; a path (an old .wav tone) means the built-in tone.
     JsonVariant tone = in["tone"].isNull() ? in["tone_file"] : in["tone"];
@@ -146,6 +156,9 @@ esp_err_t saveHandler(httpd_req_t* req) {
         if (const char* err = toneError(a.tone.c_str())) return Http::sendError(req, 400, err);
     }
     if (a.label.size() > 64) return Http::sendError(req, 400, "label too long");
+    if (a.kind == 2 && !a.tone.empty() && Services::parseTone(a.tone).kind != AlarmTone::Kind::File) {
+        return Http::sendError(req, 400, "a briefing alarm plays a file from /sdcard/media/alarm (tone \"file:<name>\" or \"\")");
+    }
 
     id = svc.saveAlarm(id, a);
     if (!id) return Http::sendError(req, 500, "Could not save the alarm");
@@ -281,9 +294,10 @@ esp_err_t ringHandler(httpd_req_t* req) {
         std::string body;
         JsonDocument in;
         if (!Http::readBody(req, body, 512) || deserializeJson(in, body) || !in.is<JsonObject>()) {
-            return Http::sendError(req, 400, "Body must be {\"tone\"?, \"ring_limit_s\"?, \"snooze_s\"?, \"briefing\"?}");
+            return Http::sendError(req, 400, "Body must be {\"tone\"?, \"ring_limit_s\"?, \"snooze_s\"?, \"briefing\"?, \"automatic\"?}");
         }
         opts.briefing = in["briefing"] | false;
+        opts.briefing_auto = opts.briefing && (in["automatic"] | false);
         if (!in["tone"].isNull()) {
             if (!in["tone"].is<const char*>()) return Http::sendError(req, 400, "tone must be a string");
             if (const char* err = toneError(in["tone"].as<const char*>())) return Http::sendError(req, 400, err);

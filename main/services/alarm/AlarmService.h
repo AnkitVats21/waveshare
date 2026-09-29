@@ -39,6 +39,8 @@ public:
     // Fade-in of the alarm song: from this media gain to full.
     static constexpr float FADE_FROM = 0.10f;
     static constexpr uint32_t FADE_MS = 10000;
+    // A briefing alarm's music rises more gently.
+    static constexpr uint32_t BRIEFING_FADE_MS = 30000;
 
     // Longest tone id (a CatalogDB song id).
     static constexpr size_t MAX_TONE_LEN = 63;
@@ -105,6 +107,10 @@ public:
     // The music starts once the session is up (its TLS handshake and the
     // music's decoding together took internal RAM to 7.7 KB), or after this.
     static constexpr uint32_t MUSIC_CONNECT_WAIT_MS = 8000;
+    // Automatic briefing: the music fades in over this once the session is
+    // up; after "stop" the music comes back over MUSIC_BACK_MS.
+    static constexpr uint32_t AUTO_FADE_MS = 10000;
+    static constexpr uint32_t MUSIC_BACK_MS = 2000;
 
     // ── Ringing ──────────────────────────────────────────────────────────
     struct RingOptions {
@@ -113,7 +119,12 @@ public:
         uint32_t ring_limit_ms = 0;  // 0 = default (test rings may shorten)
         uint32_t snooze_ms = 0;
         int volume = 0;            // volume floor while ringing; 0 = MIN_VOLUME
-        bool briefing = false;     // test ring: brief after it is stopped, like an alarm with briefing
+        // A briefing alarm (kind 2): rings its music (briefingTone); with
+        // briefing_auto the briefing starts at once and the alarm rings after it.
+        bool briefing = false;
+        bool briefing_auto = false;
+        bool briefed = false;      // internal: rings after an automatic briefing (none on stop)
+        bool keep_music = false;   // internal: the briefing music already playing is the ring
     };
     // Each returns once the request is handled (or after timeout_ms; 0 = don't wait).
     bool ring(const RingOptions& opts, uint32_t timeout_ms = 0);
@@ -177,8 +188,17 @@ private:
     static const char* musicName(Music m);
     // Keeps the player for the briefing music if one is set (it starts once
     // the session is up); false if none.
-    bool startBriefingMusic();
+    // path "" = no music (the soft tone rang): the phases run silently.
+    void startBriefingMusic(const std::string& path, uint32_t start_ms);
     void playBriefingMusic();
+    // Automatic briefing: at the alarm time, before it rings.
+    void startAutoBriefing(const RingOptions& opts, bool has_song);
+    // The automatic briefing is over (or snoozed): the alarm rings.
+    void ringAfterBriefing(bool briefing_after_stop);
+    // The alarm volume floor, for the ring and the automatic briefing.
+    void raiseVolume();
+    void restoreVolume();
+    void convertBriefingFlags();
     // The user took over (a reply, the wake word, stop): fade out quickly.
     void stopBriefingMusicSoon(const char* why);
     // Stops it now and gives the player back (restore: resume the old music).
@@ -212,7 +232,9 @@ private:
     std::string m_builtin_tone;   // built-in pattern name; "" = default
     std::string m_fallback_reason;
     int m_min_volume = MIN_VOLUME;
-    bool m_test_briefing = false;   // the test ring asked for a briefing
+    bool m_ring_briefing = false;   // the ringing alarm briefs when it is stopped
+    uint32_t m_fade_ms = FADE_MS;
+    bool m_keep_music = false;      // startSong: the music is already playing
     int m_saved_volume = -1;
     int m_raised_volume = -1;
     // Alarms due in (m_checked_until, now] fire; 0 until the clock is set.
@@ -234,7 +256,10 @@ private:
     bool m_briefing_due = false;        // an alarm with briefing was stopped; delivered as an action
     bool m_delivering_briefing = false; // the delivery carries the briefing
     Music m_music = Music::None;
-    std::string m_music_path;
+    std::string m_music_path;           // "" = silent (no music, the soft tone rang)
+    uint32_t m_music_start_ms = 0;      // where the music resumes
+    bool m_auto_pending = false;        // automatic briefing: the alarm rings after it
+    RingOptions m_auto_ring;
     uint64_t m_music_until_ms = 0;      // end of the current phase
     bool m_briefing_spoken = false;     // the briefing's reply has played out
     // The model turn answering a delivery: turnsCompleted() when it was

@@ -141,6 +141,7 @@ void AlarmDoc::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_KIND) w.u8(12, kind);
     if (fields & F_CREATED) w.u32(13, created);
     if (fields & F_BRIEFING) w.boolean(14, briefing);
+    if (fields & F_BRIEFING_START) w.u8(15, briefing_start);
 }
 
 void AlarmDoc::decode(std::string_view value) {
@@ -163,6 +164,7 @@ void AlarmDoc::decode(std::string_view value) {
             case 12: nexus_db::FieldReader::read(v, len, kind); break;
             case 13: nexus_db::FieldReader::read(v, len, created); break;
             case 14: nexus_db::FieldReader::read(v, len, briefing); break;
+            case 15: nexus_db::FieldReader::read(v, len, briefing_start); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

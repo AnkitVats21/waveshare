@@ -157,6 +157,13 @@ AlarmTone parseTone(const std::string& tone) {
     return t;
 }
 
+std::string briefingTone(const std::string& alarm_tone, const std::string& briefing_music) {
+    const AlarmTone t = parseTone(alarm_tone);
+    if (t.kind == AlarmTone::Kind::File && isValidToneFileName(t.value)) return alarm_tone;
+    if (isValidToneFileName(briefing_music)) return "file:" + briefing_music;
+    return std::string("builtin:") + BRIEFING_SOFT_TONE;
+}
+
 bool isValidToneFileName(const std::string& name) {
     if (name.empty() || name.size() > 48 || name[0] == '.' || name[0] == ' ') return false;
     for (char c : name) {

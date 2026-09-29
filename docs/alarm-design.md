@@ -8,8 +8,8 @@ Reminders share the scheduler: same "when", different delivery. A reminder does 
 take over the device; it chimes and speaks its text over whatever is going on (see
 *Reminders*).
 
-Status: steps A–D built (2026-09-27); the briefing after an alarm and its
-background music built (2026-09-29, see *Briefing after the alarm*).
+Status: steps A–D built (2026-09-27); briefing alarms built (2026-09-29, see
+*Briefing alarms*).
 
 ## Where we start
 
@@ -261,50 +261,85 @@ unattended.
 minutes, flagged so the dashboard shows a countdown. It rings through the alarm path
 and needs no scheduler work of its own; the voice tool comes with step C.
 
-## Briefing after the alarm (built)
+## Briefing alarms (built)
 
-An alarm with `briefing` set gives a spoken briefing once the user stops it
-(key, voice, dashboard; not when it times out or music replaces it). It is
-delivered like a scheduled action (see Reminders): the session opens without
-a chime and Gemini is asked for a short briefing with its tools (time,
-weather, `list_schedule`, headlines through MCP). A note called `briefing`
-overrides the contents. Nothing is fetched before the alarm, so offline it
-is skipped. The pre-rendered audio design below is kept for reference; the
-agent-driven version replaced it.
+A briefing alarm (`kind` 2) is its own type: it wakes the user with music
+instead of a tone and gives a spoken morning briefing. Normal alarms ring
+their tone and never brief. (Alarms with the old `briefing` switch are
+converted at startup.)
 
-### Briefing music
+**What it rings** (`briefingTone`, host-tested): its own `tone`
+(`"file:<name>"` in `/sdcard/media/alarm`; nothing else is accepted), else the
+`briefing_music` setting, else the soft built-in `rising` tone. A file that
+can't play also falls back to `rising`. The music fades in over 30 s.
 
-Settings `briefing_music` (a file in `/sdcard/media/alarm`; `""` = none) and
+**`briefing_start`:**
+
+| | after_stop (default) | automatic |
+|---|---|---|
+| Alarm time | the music (or soft tone) rings until stopped, snoozed or the ring limit | Gemini connects, then the music fades in (10 s); the briefing starts on its own |
+| Briefing | once the user stops it: the music waits for the session, then comes back from where it stopped | over the music, ducked |
+| After it | 8 s follow-up window, 60 s of music, 3 s fade | the music rises and rings as a normal alarm until stopped (or the ring limit) |
+| User replies, wake word, stop | the music fades out in 1 s; normal conversation | the same, and the alarm won't ring after it |
+| Snooze | as any alarm | ends the briefing; rings after the snooze and briefs when stopped |
+| Offline | the ring is unchanged; no briefing | no briefing: it rings at once |
+
+During an automatic briefing the alarm reports `ringing`, so Key 2 stops it
+and the other keys snooze it, as while ringing. The volume floor (60) applies
+from the alarm time.
+
+The briefing itself is delivered like a scheduled action (see Reminders): the
+session opens without a chime and Gemini is asked for a short briefing with
+its tools (time, weather, `list_schedule`, headlines through MCP), spoken
+slowly and leaving playback alone. A note called `briefing` overrides the
+contents. Nothing is fetched before the alarm.
+
+Settings: `briefing_music` (a file in `/sdcard/media/alarm`; `""` = none) and
 `briefing_duck` (10–50 %, default 20), through `GET`/`POST /api/alarms/briefing`.
-Several files may sit in the folder; the setting names the current one. Uploads
-there must be Opus (checked from the first bytes, `AudioSniff`).
+Uploads to the folder must be Opus (checked from the first bytes, `AudioSniff`).
+API: `POST /api/alarms` with `"kind": "briefing"`, `"briefing_start"`; voice:
+`set_alarm` with `type: briefing`, `briefing_start`. A test ring takes
+`"briefing": true` and `"automatic": true`.
+
+### Music phases
+
+`/api/alarms/status` reports the phase as `briefing_music`.
 
 | Phase | Music | Ends when |
 |---|---|---|
-| waiting | none yet: the session opens first (at most 8 s; offline: at once) | the session is listening |
-| intro | full; the tools run | the briefing's voice starts |
-| under_voice | ducked to `briefing_duck` % over 500 ms, the voice held meanwhile; stays ducked after the reply (8 s follow-up window) | the session closes, or the user replies |
-| tail | back to full over 2 s | 60 s pass, or a session starts (wake word) |
+| waiting | none yet: Gemini sets up first (at most 8 s; offline: at once) | Gemini's `setupComplete` |
+| intro | playing; the tools run | the briefing's voice starts |
+| under_voice | ducked to `briefing_duck` % over 500 ms, the voice held meanwhile; stays ducked for the 8 s follow-up window | no reply: the alarm service ends the session; or the user replies |
+| tail | back to full over 2 s (after_stop) | 60 s pass, or a session starts (wake word) |
 | fading | 0 over 3 s, then stopped | |
 | stopping | 0 over 1 s, then stopped (a reply, the wake word, stop) | |
 | after_session | none | the session is idle: the music from before the alarm resumes |
 
 The alarm keeps `NexusPlayer` through all of it (focus events are ignored,
-the music loops) and gives it back at the end, so the old music resumes where
-the alarm cut it. A music command takes the player at once (no resume).
-`AudioOrchestrator::setMusicUnderVoice` keeps sessions from pausing the music
-and chimes from changing its level. Offline, the delivery is skipped and the
-music plays the tail. The prompt asks for a slower pace and to leave playback
-alone. A test ring with `"briefing": true` runs it all; `/api/alarms/status`
-reports the phase as `briefing_music`.
+the music loops; `beginAlarm` again is a no-op, so the automatic briefing's
+music becomes the ring without restarting) and gives it back at the end, so
+the old music resumes where the alarm cut it. A music command takes the
+player at once (no resume). `AudioOrchestrator::setMusicUnderVoice` keeps
+sessions from pausing the music and chimes from changing its level.
 
-Measured (2026-09-29): briefing voice 13 s after the stop (four tools, MCP
-news), no stutter; the reply's end was found 0.76 s after `turnComplete` with
-the music playing. Starting the music with the stop, internal RAM fell to
-7.7 KB while the session's TLS connection opened over it; with the music
-waiting for the session (2.2 s after the stop) the low point was 17.6 KB.
-A spoken "thank you" in the follow-up window faded the music out, and the old
-song resumed when the session closed.
+Why the alarm service ends the follow-up window itself: the mic's voice
+detection counts the ducked music as speech, so the session's own silence
+timeout sometimes never came (the 60 s idle timeout ended it instead).
+
+Why the music waits for `setupComplete`: a TLS handshake while the music
+decodes took internal RAM to 7.7 KB. A session reports "listening" before
+setup completes, and a refused setup (Google Search without quota on
+Gemini 3.x) reconnects: waiting for "listening" still overlapped the second
+handshake (8.6 KB).
+
+Measured (2026-09-29, test rings): automatic: music 5.1 s after the alarm
+time (with the search reconnect), briefing voice 14 s after, then the music
+rang until stopped; internal RAM low point 15.9 KB. after_stop: the music
+came back from 6.1 s where it was stopped, briefing 12.7 s after the stop,
+follow-up closed after 8 s; 15.9 KB. A reply end was found 0.76 s after
+`turnComplete` with music playing. One briefing never spoke: the weather
+tool's response lost the WebSocket send lock (1 s) to the MCP response under
+load and was dropped; tool responses are now retried (3 × 3 s).
 
 ## Earlier idea: pre-rendered briefing audio
 

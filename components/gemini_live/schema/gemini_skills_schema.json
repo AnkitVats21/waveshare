@@ -203,18 +203,26 @@
         },
         "tone": {
           "type": "STRING",
-          "description": "Optional tone: a built-in one (classic, chime, digital, rising), a tone file the user uploaded, or a downloaded song from the library (title or artist). Default: the classic built-in tone."
+          "description": "Optional tone: a built-in one (classic, chime, digital, rising), a tone file the user uploaded, or a downloaded song from the library (title or artist). Default: the classic built-in tone. A briefing alarm takes only an uploaded file (its music)."
         },
         "enabled": {
           "type": "BOOLEAN",
           "description": "False to create or keep the alarm switched off. Default true."
         },
-        "briefing": {
+        "type": {
           "type": "STRING",
-          "description": "'on': after the user stops this alarm you give a short morning briefing (weather, today's schedule, headlines). 'off' to turn it off; omit to leave unchanged.",
+          "description": "'briefing': a briefing alarm, which wakes the user with soft music (a file from the alarm folder, else the briefing music, else a soft tone) and gives a spoken morning briefing (weather, today's schedule, headlines). 'alarm' (default): a normal alarm with a tone, no briefing. Omit to leave unchanged.",
           "enum": [
-            "on",
-            "off"
+            "alarm",
+            "briefing"
+          ]
+        },
+        "briefing_start": {
+          "type": "STRING",
+          "description": "Briefing alarms only. 'after_stop' (default): the music rings until the user stops it, then the briefing. 'automatic': the briefing starts at the alarm time over the music, and the music keeps ringing after it until the user stops it.",
+          "enum": [
+            "after_stop",
+            "automatic"
           ]
         }
       },

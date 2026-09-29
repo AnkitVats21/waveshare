@@ -70,9 +70,10 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field volume:       u8          tag=9    // 0 = the alarm floor (AlarmService::MIN_VOLUME)
         field last_fired:   u32         tag=10   // epoch s of the last fire
         field snooze_until: u32         tag=11   // epoch s; 0 = not snoozed
-        field kind:         u8          tag=12   // 0 alarm, 1 timer
+        field kind:         u8          tag=12   // 0 alarm, 1 timer, 2 briefing alarm (docs/alarm-design.md)
         field created:      u32         tag=13   // epoch s
-        field briefing:     bool        tag=14   // after the user stops it, Gemini gives a morning briefing
+        field briefing:     bool        tag=14   // old: a briefing after the alarm; converted to kind 2 at startup
+        field briefing_start: u8        tag=15   // briefing alarm: 0 after the user stops it, 1 automatic
     }
 
     // One document per scheduled item (a reminder to say, or an action to

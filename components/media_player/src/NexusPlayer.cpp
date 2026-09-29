@@ -558,6 +558,7 @@ void NexusPlayer::checkPlaybackFinished() {
 
 void NexusPlayer::beginAlarm(IPlaybackObserver* alarm) {
     PlayerLock lock(_mutex);
+    if (_alarmOwner && _alarmObserver == alarm) return;
     _resume = {};
     const bool playing = _state == STATE_STREAMING_AND_CACHING || _state == STATE_LOCAL_PLAYBACK;
     // Music paused for an assistant session was going to resume when the
@@ -584,10 +585,10 @@ void NexusPlayer::beginAlarm(IPlaybackObserver* alarm) {
     _alarmOwner = true;
 }
 
-bool NexusPlayer::playAlarm(const char* songId, const char* path) {
+bool NexusPlayer::playAlarm(const char* songId, const char* path, uint32_t startMs) {
     PlayerLock lock(_mutex);
     if (!_alarmOwner || !songId || (!path && !_storageManager.fileExists(songId))) return false;
-    play_internal(songId, path, 0);
+    play_internal(songId, path, startMs);
     return _state == STATE_LOCAL_PLAYBACK;
 }
 

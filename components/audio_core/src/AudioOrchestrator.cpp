@@ -201,6 +201,10 @@ void AudioOrchestrator::unduckMedia(uint32_t rampMs) {
     });
 }
 
+float AudioOrchestrator::mediaGain() const {
+    return m_speaker_task ? m_speaker_task->getMediaGain() : 1.0f;
+}
+
 void AudioOrchestrator::fadeInMedia(float from, uint32_t rampMs) {
     if (m_speaker_task) {
         m_speaker_task->setMediaGain(from, 0);

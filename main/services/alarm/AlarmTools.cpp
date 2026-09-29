@@ -107,7 +107,7 @@ void alarmToJson(int id, const AlarmDoc& a, JsonObject o, int64_t now) {
         o["type"] = "timer";
         if (a.at > now) o["remaining_s"] = (int64_t)a.at - now;
     } else {
-        o["type"] = "alarm";
+        o["type"] = a.kind == 2 ? (a.briefing_start == 1 ? "briefing alarm (automatic)" : "briefing alarm") : "alarm";
         if (a.at) {
             o["time"] = localText(a.at);
         } else {
@@ -117,7 +117,6 @@ void alarmToJson(int id, const AlarmDoc& a, JsonObject o, int64_t now) {
     }
     if (!a.label.empty()) o["label"] = a.label;
     o["enabled"] = a.enabled;
-    if (a.briefing) o["briefing"] = true;
     const AlarmTone tone = parseTone(a.tone);
     if (tone.kind == AlarmTone::Kind::Builtin) {
         if (!tone.value.empty()) o["tone"] = "built-in " + tone.value;
@@ -162,22 +161,28 @@ void setAlarm(const GeminiSkills::set_alarm_args_t& args, JsonDocument& r) {
     if (const char* err = setWhen(a, args.hour, args.minute, args.days, args.day, now)) return error(r, err);
     a.label = args.label.substr(0, 64);
     a.enabled = args.enabled;
-    a.briefing = args.briefing == "on";
+    a.kind = args.type == "briefing" ? 2 : 0;
+    a.briefing_start = args.briefing_start == "automatic" ? 1 : 0;
 
     std::string tone_title;
     if (!args.tone.empty()) {
         a.tone = findTone(args.tone, tone_title);
         if (a.tone.empty()) r["note"] = "No built-in tone, tone file or downloaded song matches '" + args.tone + "'; the default tone will ring.";
     }
+    if (a.kind == 2 && !a.tone.empty() && parseTone(a.tone).kind != AlarmTone::Kind::File) {
+        a.tone.clear();
+        r["note"] = "A briefing alarm plays a file from the alarm folder; '" + args.tone + "' isn't one, so it uses the briefing music.";
+    }
 
     // The same time and days as an existing alarm: update it.
     int id = 0;
     for (const auto& [eid, e] : svc.alarms()) {
-        if (e.kind == 0 && e.hour == a.hour && e.minute == a.minute && e.days == a.days && e.at == a.at) {
+        if (e.kind != 1 && e.hour == a.hour && e.minute == a.minute && e.days == a.days && e.at == a.at) {
             id = eid;
             if (args.label.empty()) a.label = e.label;
-            if (args.tone.empty()) a.tone = e.tone;
-            if (args.briefing.empty()) a.briefing = e.briefing;
+            if (args.type.empty()) a.kind = e.kind;
+            if (args.briefing_start.empty()) a.briefing_start = e.briefing_start;
+            if (args.tone.empty() && (a.kind != 2 || parseTone(e.tone).kind == AlarmTone::Kind::File)) a.tone = e.tone;
             a.snooze_min = e.snooze_min;
             a.volume = e.volume;
             break;

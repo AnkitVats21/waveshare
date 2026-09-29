@@ -68,6 +68,7 @@ public:
     void unduckMedia(uint32_t rampMs = 100);
     // Media gain jumps to `from` and ramps to full over rampMs (alarm fade-in).
     void fadeInMedia(float from, uint32_t rampMs);
+    float mediaGain() const;
 
     // Music under the voice (the briefing music after an alarm,
     // docs/alarm-design.md): sessions leave the music playing instead of

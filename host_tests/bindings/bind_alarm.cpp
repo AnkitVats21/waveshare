@@ -46,6 +46,7 @@ void init_alarm(nb::module_& m) {
         return std::make_pair(std::string(kind), t.value);
     });
     m.def("is_valid_tone_file_name", &Services::isValidToneFileName);
+    m.def("briefing_tone", &Services::briefingTone);
     // (playable, format) from a file's first bytes.
     m.def("sniff_audio", [](nb::bytes data) {
         const Services::AudioSniff r =

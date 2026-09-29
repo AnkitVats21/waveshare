@@ -26,3 +26,15 @@ def test_valid_tone_file_names(name):
 ])
 def test_invalid_tone_file_names(name):
     assert not wh.is_valid_tone_file_name(name)
+
+
+@pytest.mark.parametrize("alarm_tone, music, expected", [
+    ("file:birds.ogg", "bgm.ogg", "file:birds.ogg"),   # the alarm's own file first
+    ("", "bgm.ogg", "file:bgm.ogg"),                   # else the briefing music
+    ("builtin:chime", "bgm.ogg", "file:bgm.ogg"),      # a briefing alarm never rings a pattern it was given
+    ("dQw4w9WgXcQ", "", "builtin:rising"),             # nor a song; no music: the soft tone
+    ("file:../x.ogg", "", "builtin:rising"),
+    ("", "song.mp3", "builtin:rising"),
+])
+def test_briefing_tone(alarm_tone, music, expected):
+    assert wh.briefing_tone(alarm_tone, music) == expected

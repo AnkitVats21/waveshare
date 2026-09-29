@@ -50,11 +50,12 @@ public:
     // ── Alarm ownership (docs/alarm-design.md) ─────────────────────────────
     // While an alarm owns the player, playback events go only to `alarm`,
     // focus changes and music play requests are ignored, and the music that
-    // was playing is remembered for endAlarm(true).
+    // was playing is remembered for endAlarm(true). Nothing happens if
+    // `alarm` owns it already (what plays keeps playing).
     void beginAlarm(IPlaybackObserver* alarm);
     // Plays a local (cached) track for the alarm; false if it can't start.
     // path: play that file (an uploaded alarm tone) instead of the cached song.
-    bool playAlarm(const char* songId, const char* path = nullptr);
+    bool playAlarm(const char* songId, const char* path = nullptr, uint32_t startMs = 0);
     // Stops the alarm song, keeping ownership (snooze, built-in fallback).
     void stopAlarmSong();
     // Gives the player back; with restore, the remembered music resumes.
