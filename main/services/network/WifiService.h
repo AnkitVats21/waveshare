@@ -58,6 +58,32 @@ public:
     static bool clearStoredCredentials();
 
     /**
+     * @brief Station MAC override, for network tests: a random, locally
+     * administered address the router sees as a new device. Stored in NVS
+     * and applied at boot; changing it needs a reboot. `mac` is filled with
+     * the address in use (override or factory).
+     */
+    static bool randomMacEnabled(uint8_t mac[6]);
+    static bool setRandomMac(bool enabled, uint8_t mac[6]);
+
+    /**
+     * @brief Wi-Fi receive tuning, for network tests: static and dynamic RX
+     * buffers, the AMPDU RX Block Ack window, AMPDU RX on/off, and whether
+     * the station offers the 802.11b rates (1-11 Mbps). Stored in
+     * NVS, applied at boot (esp_wifi_init); 0 in a field keeps the built-in
+     * value. `has` is false when nothing is stored.
+     */
+    struct RxTuning {
+        uint8_t static_rx = 0;
+        uint8_t dynamic_rx = 0;
+        uint8_t ba_win = 0;
+        uint8_t ampdu_rx = 0;  // 0 built-in, 1 off, 2 on
+        uint8_t no_11b = 0;    // 1: don't offer 802.11b rates
+    };
+    static bool loadRxTuning(RxTuning& out);
+    static bool saveRxTuning(const RxTuning* tuning);  // nullptr clears it
+
+    /**
      * @brief Reconfigure and connect using new credentials (e.g. from SoftAP portal).
      */
     bool connectWithCredentials(const std::string& ssid, const std::string& password);

@@ -251,6 +251,98 @@ esp_err_t usbModeGetHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+void putMac(JsonDocument& doc, const uint8_t mac[6]) {
+    char buf[18];
+    snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3],
+             mac[4], mac[5]);
+    doc["mac"] = buf;
+}
+
+// Station MAC override for network tests (WifiService::setRandomMac).
+esp_err_t wifiMacGetHandler(httpd_req_t* req) {
+    uint8_t mac[6];
+    JsonDocument doc;
+    doc["random"] = WifiService::randomMacEnabled(mac);
+    putMac(doc, mac);
+    return Http::sendJson(req, 200, doc);
+}
+
+// {"random": true | false}: a new random MAC, or back to the factory one;
+// saves and reboots. The router then sees a new device (new IP via DHCP).
+esp_err_t wifiMacSetHandler(httpd_req_t* req) {
+    std::string body;
+    if (req->content_len == 0 || req->content_len > 128 || !Http::readBody(req, body, 128)) {
+        return Http::sendError(req, 400, "Missing JSON payload");
+    }
+    JsonDocument in;
+    if (deserializeJson(in, body) || !in["random"].is<bool>()) {
+        return Http::sendError(req, 400, "random must be true or false");
+    }
+    uint8_t mac[6];
+    if (!WifiService::setRandomMac(in["random"].as<bool>(), mac)) {
+        return Http::sendError(req, 500, "Could not save the MAC");
+    }
+    scheduleReboot();
+    JsonDocument doc;
+    doc["status"] = "ok";
+    doc["random"] = in["random"].as<bool>();
+    putMac(doc, mac);
+    doc["rebooting"] = true;
+    return Http::sendJson(req, 200, doc);
+}
+
+void putRxTuning(JsonDocument& doc) {
+    WifiService::RxTuning t;
+    doc["stored"] = WifiService::loadRxTuning(t);
+    doc["static"] = t.static_rx;
+    doc["dynamic"] = t.dynamic_rx;
+    doc["ba_win"] = t.ba_win;
+    doc["ampdu_rx"] = t.ampdu_rx == 0 ? "built-in" : (t.ampdu_rx == 2 ? "on" : "off");
+    doc["no_11b"] = t.no_11b != 0;
+}
+
+// Wi-Fi receive tuning for network tests (WifiService::RxTuning); 0 means
+// the built-in value.
+esp_err_t wifiRxGetHandler(httpd_req_t* req) {
+    JsonDocument doc;
+    putRxTuning(doc);
+    return Http::sendJson(req, 200, doc);
+}
+
+// {"static":N, "dynamic":N, "ba_win":N, "ampdu_rx":true|false, "no_11b":bool} or
+// {"reset":true}: saves and reboots.
+esp_err_t wifiRxSetHandler(httpd_req_t* req) {
+    std::string body;
+    if (req->content_len == 0 || req->content_len > 256 || !Http::readBody(req, body, 256)) {
+        return Http::sendError(req, 400, "Missing JSON payload");
+    }
+    JsonDocument in;
+    if (deserializeJson(in, body)) return Http::sendError(req, 400, "Invalid JSON payload");
+    bool ok;
+    if (in["reset"] | false) {
+        ok = WifiService::saveRxTuning(nullptr);
+    } else {
+        WifiService::RxTuning t;
+        const int st = in["static"] | 0, dy = in["dynamic"] | 0, ba = in["ba_win"] | 0;
+        if (st < 0 || st > 25 || dy < 0 || dy > 128 || ba < 0 || ba > 32 || (ba && ba < 2) ||
+            (st && st < 2)) {
+            return Http::sendError(req, 400, "static 2-25, dynamic 0-128, ba_win 2-32");
+        }
+        t.static_rx = st;
+        t.dynamic_rx = dy;
+        t.ba_win = ba;
+        if (in["ampdu_rx"].is<bool>()) t.ampdu_rx = in["ampdu_rx"].as<bool>() ? 2 : 1;
+        t.no_11b = (in["no_11b"] | false) ? 1 : 0;
+        ok = WifiService::saveRxTuning(&t);
+    }
+    if (!ok) return Http::sendError(req, 500, "Could not save");
+    scheduleReboot();
+    JsonDocument doc;
+    putRxTuning(doc);
+    doc["rebooting"] = true;
+    return Http::sendJson(req, 200, doc);
+}
+
 // {"mode": "serial" | "ethernet"}: saves the mode and reboots into it.
 esp_err_t usbModeSetHandler(httpd_req_t* req) {
     std::string body;
@@ -653,6 +745,10 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/reboot", HTTP_POST, rebootHandler);
     server.on("/api/system/usb-mode", HTTP_GET, usbModeGetHandler);
     server.on("/api/system/usb-mode", HTTP_POST, usbModeSetHandler);
+    server.on("/api/system/wifi-mac", HTTP_GET, wifiMacGetHandler);
+    server.on("/api/system/wifi-mac", HTTP_POST, wifiMacSetHandler);
+    server.on("/api/system/wifi-rx", HTTP_GET, wifiRxGetHandler);
+    server.on("/api/system/wifi-rx", HTTP_POST, wifiRxSetHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/system/nettest", HTTP_GET, netTestHandler);
