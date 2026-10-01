@@ -107,13 +107,18 @@ HTTP routes are in `main/services/http/routes/` (table in
 **Memory**
 - Internal RAM is scarce (tens of KB free while playing). Big buffers go in
   PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`, `nexus_db::PsramAllocator`).
-- Keep the Opus decode task and anything doing flash writes, partition
-  mmap or NVS writes on an internal-RAM stack: PSRAM stacks slow decoding
-  5-10× (watchdog) and flash operations freeze the cache. The httpd task's
-  stack is in PSRAM, so flash work runs on a worker (`FlashUpload`).
+- Keep the Opus decode task on an internal-RAM stack: a PSRAM stack slows
+  decoding 5-10× (watchdog). Flash writes, partition mmap and NVS writes
+  also run on internal-RAM stacks (the httpd task's stack is in PSRAM, so
+  flash work runs on a worker, `FlashUpload`); that rule dates from before
+  XIP and hasn't been re-tested, so keep it until it is.
 - RTC fast RAM is disabled as heap on purpose: DMA from it returned zeros
   and corrupted SD writes.
-- No XIP / code in PSRAM. It was measured and rejected.
+- Code and read-only data run from PSRAM (`CONFIG_SPIRAM_XIP_FROM_PSRAM`,
+  `SPIRAM_FETCH_INSTRUCTIONS`, `SPIRAM_RODATA`). With these on, the cache
+  stays enabled during flash writes (NVS, OTA, dashboard upload), so
+  nothing stalls while flash is erased. Octal PSRAM is also faster than
+  the quad flash on a cache miss. Keep it on.
 
 **Tasks**
 - Priorities and cores are in `core_sysdb/thread_config.h`: audio DSP on
