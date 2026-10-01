@@ -111,6 +111,24 @@ void SpeakerPlaybackTask::run() {
   auto &bm = BufferManager::getInstance();
 
   uint32_t sustained_empty = 0;
+
+  // Per-reply voice stats, logged when the reply drains: how often the voice
+  // track ran dry mid-reply (a network gap longer than the cushion). A dry
+  // spell counts only once audio resumes, so the drain before turnComplete
+  // at the end of every reply isn't one.
+  struct VoiceTurnStats {
+    bool     active = false;
+    int64_t  start_us = 0;
+    uint32_t played_bytes = 0;      // 24 kHz 16-bit mono
+    uint32_t underruns = 0;
+    int64_t  starved_since_us = 0;  // 0 = not starved
+    int64_t  starved_us = 0;
+    int64_t  longest_us = 0;
+  } vt;
+  constexpr uint32_t VOICE_BYTES_PER_MS = 24000 * sizeof(int16_t) / 1000;
+  auto markUnderrun = [&]() {
+    if (vt.active && vt.starved_since_us == 0) vt.starved_since_us = esp_timer_get_time();
+  };
   // When the voice track last went empty (0 = it has audio).
   int64_t voice_empty_since_us = 0;
 
@@ -157,6 +175,19 @@ void SpeakerPlaybackTask::run() {
         void *rx_ptr = bm.receive(Buffers::VOICE_RX_BUF, &rx_bytes, 0, target_voice_bytes);
 
         if (rx_ptr != nullptr && rx_bytes > 0) {
+          const int64_t now_us = esp_timer_get_time();
+          if (!vt.active) {
+            vt = VoiceTurnStats{};
+            vt.active = true;
+            vt.start_us = now_us;
+          } else if (vt.starved_since_us != 0) {
+            const int64_t gap_us = now_us - vt.starved_since_us;
+            vt.underruns++;
+            vt.starved_us += gap_us;
+            vt.longest_us = std::max(vt.longest_us, gap_us);
+            vt.starved_since_us = 0;
+          }
+          vt.played_bytes += rx_bytes;
           size_t samples_24k = rx_bytes / sizeof(int16_t);
           num_voice = (samples_24k * NATIVE_RATE) / VOICE_SRC_RATE;
           if (num_voice > MAX_AUDIO_CHUNK_SAMPLES) num_voice = MAX_AUDIO_CHUNK_SAMPLES;
@@ -166,10 +197,12 @@ void SpeakerPlaybackTask::run() {
         } else if (!turn_pending) {
           // Starved mid-speech: rebuffer to avoid playing chopped syllables
           m_buffering = true;
+          markUnderrun();
         }
       }
     } else {
       m_buffering = true;
+      vt.active = false;   // ended without draining (interrupted, closed)
     }
 
     if (has_voice) {
@@ -288,6 +321,7 @@ void SpeakerPlaybackTask::run() {
       }
 
       if (asst_speaking && sustained_empty >= 2 && !turn_pending) {
+        if (!m_buffering) markUnderrun();
         m_buffering = true;
       }
     }
@@ -298,6 +332,14 @@ void SpeakerPlaybackTask::run() {
         esp_timer_get_time() - voice_empty_since_us >= (int64_t)TURN_COMPLETE_DRAIN_MS * 1000 &&
         bm.getUsedBytes(Buffers::VOICE_RX_BUF) == 0) {
       LOGI_HAL("SpeakerPlayback: voice drained after turn_complete — finalising.");
+      if (vt.active) {
+        LOGI_HAL("Voice turn: %u ms audio in %u ms, underruns %u, starved %u ms, longest %u ms",
+                 (unsigned)(vt.played_bytes / VOICE_BYTES_PER_MS),
+                 (unsigned)((esp_timer_get_time() - vt.start_us) / 1000),
+                 (unsigned)vt.underruns, (unsigned)(vt.starved_us / 1000),
+                 (unsigned)(vt.longest_us / 1000));
+        vt.active = false;
+      }
       sysdb.mutate([](SystemState &s) {
         s.audio.turn_complete_pending = false;
         s.audio.assistant_speaking    = false;

@@ -236,6 +236,19 @@ private:
     uint32_t m_rx_dropped_frames = 0;
     uint32_t m_rx_audio_bytes = 0;
 
+    // Per-reply delivery, measured where frames arrive (WS task) and logged at
+    // turnComplete: is Gemini's audio arriving faster than real time, and how
+    // long was the longest wait between audio frames? Blocked time is the WS
+    // task waiting on a full queue (our backpressure, not the network).
+    std::atomic<int64_t>  m_reply_first_us{0};
+    std::atomic<int64_t>  m_reply_last_us{0};
+    std::atomic<int64_t>  m_reply_max_gap_us{0};
+    std::atomic<int64_t>  m_reply_blocked_us{0};
+    std::atomic<uint32_t> m_reply_frame_bytes{0};
+    std::atomic<uint32_t> m_reply_frames{0};
+    void noteAudioFrameArrival(size_t bytes);
+    void logReplyDelivery(const char* how);
+
     static constexpr const char* TAG = "GeminiProto";
 };
 

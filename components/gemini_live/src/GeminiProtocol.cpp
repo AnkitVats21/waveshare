@@ -678,6 +678,11 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                             strstr(reinterpret_cast<char*>(self->m_assembly_scratch), "\"interrupted\"")) {
                             self->m_interrupt_pending = true;
                         }
+                        // Audio frames are big; control and transcript frames are small.
+                        if (self->m_assembly_idx >= 1024) {
+                            self->noteAudioFrameArrival(self->m_assembly_idx);
+                        }
+                        const int64_t queue_start_us = esp_timer_get_time();
                         // Long wait on purpose: while blocked, the WS task stops reading the
                         // socket, so the TCP window closes and Gemini pauses sending. Not
                         // while a restart is pending (barge-in): its close frame needs the
@@ -689,6 +694,8 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                                                  self->m_assembly_idx + 1, pdMS_TO_TICKS(100));
                             if (ok == pdTRUE || waited + 100 >= INCOMING_RB_MAX_BLOCK_MS) break;
                         }
+                        const int64_t queued_us = esp_timer_get_time() - queue_start_us;
+                        if (queued_us >= 10000) self->m_reply_blocked_us += queued_us;
                         if (ok != pdTRUE && (self->m_restart_requested || self->m_restarting)) {
                             // Discarded: a frame of the connection being replaced.
                         } else if (ok == pdTRUE) {
@@ -777,6 +784,38 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             });
             break;
     }
+}
+
+void GeminiProtocol::noteAudioFrameArrival(size_t bytes) {
+    const int64_t now_us = esp_timer_get_time();
+    const int64_t last_us = m_reply_last_us.exchange(now_us);
+    if (m_reply_first_us.load() == 0) {
+        m_reply_first_us = now_us;
+    } else if (last_us != 0 && now_us - last_us > m_reply_max_gap_us.load()) {
+        m_reply_max_gap_us = now_us - last_us;
+    }
+    m_reply_frame_bytes += bytes;
+    m_reply_frames++;
+}
+
+void GeminiProtocol::logReplyDelivery(const char* how) {
+    const int64_t first_us = m_reply_first_us.exchange(0);
+    const int64_t last_us = m_reply_last_us.exchange(0);
+    const int64_t max_gap_us = m_reply_max_gap_us.exchange(0);
+    const int64_t blocked_us = m_reply_blocked_us.exchange(0);
+    const uint32_t frame_bytes = m_reply_frame_bytes.exchange(0);
+    const uint32_t frames = m_reply_frames.exchange(0);
+    if (frames == 0) return;
+    // Base64 is 4 chars per 3 bytes; 24 kHz 16-bit mono is 48 bytes per ms.
+    // The JSON around the data makes this a slight overestimate.
+    const uint32_t audio_ms = frame_bytes / 4 * 3 / 48;
+    const uint32_t span_ms = (uint32_t)((last_us - first_us) / 1000);
+    LOGI_NET("Reply delivery (%s): %u frames, ~%u ms audio over %u ms (%u.%02ux real time), "
+             "largest gap %u ms, queue blocked %u ms",
+             how, (unsigned)frames, (unsigned)audio_ms, (unsigned)span_ms,
+             span_ms ? (unsigned)(audio_ms / span_ms) : 0u,
+             span_ms ? (unsigned)(audio_ms * 100 / span_ms % 100) : 0u,
+             (unsigned)(max_gap_us / 1000), (unsigned)(blocked_us / 1000));
 }
 
 void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
@@ -884,6 +923,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
             recordTranscription(doc["serverContent"]);
             if (turn_complete) {
                 LOGI_NET("Assistant turn complete");
+                logReplyDelivery("complete");
                 m_turns_completed++;
                 {
                     std::lock_guard<std::mutex> lock(m_turn_mutex);
@@ -902,6 +942,7 @@ void GeminiProtocol::processIncomingFrame(char* payload, size_t length) {
                 // is queued; the drain after turn_complete_pending ends the
                 // voice (music, mic and state follow as after a reply).
                 LOGI_NET("Reply interrupted by the user.");
+                logReplyDelivery("interrupted");
                 BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
                 m_interrupt_pending = false;
                 sysdb.mutate([](SystemState& s) {
