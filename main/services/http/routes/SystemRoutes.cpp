@@ -11,6 +11,8 @@
 #include "media_player/TlsConfig.h"
 #include "audio_core/WakeWordEngine.h"
 #include "services/network/UsbNet.h"
+#include "services/network/NetStats.h"
+#include "services/network/WifiService.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -25,6 +27,7 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <lwip/stats.h>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -472,6 +475,55 @@ uint32_t ownRunTimeUs() {
     return st.ulRunTimeCounter;
 }
 
+// lwIP's drop and error counters (CONFIG_LWIP_STATS), for differences over
+// a network test. The counters are 16-bit; a test's differences fit.
+struct LwipCounts {
+    uint16_t link_recv, link_drop, link_memerr, ip_drop, tcp_recv, tcp_xmit, tcp_drop,
+        tcp_memerr, tcp_err;
+};
+
+LwipCounts lwipCounts() {
+#if LWIP_STATS
+    return {(uint16_t)lwip_stats.link.recv, (uint16_t)lwip_stats.link.drop,
+            (uint16_t)lwip_stats.link.memerr, (uint16_t)lwip_stats.ip.drop,
+            (uint16_t)lwip_stats.tcp.recv, (uint16_t)lwip_stats.tcp.xmit,
+            (uint16_t)lwip_stats.tcp.drop, (uint16_t)lwip_stats.tcp.memerr,
+            (uint16_t)lwip_stats.tcp.err};
+#else
+    return {};
+#endif
+}
+
+// Adds the receive-path counters since `rx0`/`lw0` to doc["rx"]: frames,
+// frames refused by lwIP, pauses between frames, and lwIP's drops/errors.
+void addRxDetail(JsonDocument& doc, const NetStats::RxDetail& rx0, const LwipCounts& lw0) {
+    const NetStats::RxDetail rx = NetStats::rxDetail();
+    const LwipCounts lw = lwipCounts();
+    JsonObject o = doc["rx"].to<JsonObject>();
+    o["frames"] = rx.frames - rx0.frames;
+    o["refused"] = rx.refused - rx0.refused;
+    o["gaps_100ms"] = rx.gaps_100ms;
+    o["gaps_500ms"] = rx.gaps_500ms;
+    o["gap_total_ms"] = rx.gap_total_ms;
+    o["max_gap_ms"] = rx.max_gap_ms;
+    JsonArray prec = o["precedence"].to<JsonArray>();
+    for (uint32_t c : rx.precedence) prec.add(c);
+#if LWIP_STATS
+    JsonObject l = doc["lwip"].to<JsonObject>();
+    l["link_recv"] = (uint16_t)(lw.link_recv - lw0.link_recv);
+    l["link_drop"] = (uint16_t)(lw.link_drop - lw0.link_drop);
+    l["link_memerr"] = (uint16_t)(lw.link_memerr - lw0.link_memerr);
+    l["ip_drop"] = (uint16_t)(lw.ip_drop - lw0.ip_drop);
+    l["tcp_recv"] = (uint16_t)(lw.tcp_recv - lw0.tcp_recv);
+    l["tcp_xmit"] = (uint16_t)(lw.tcp_xmit - lw0.tcp_xmit);
+    l["tcp_drop"] = (uint16_t)(lw.tcp_drop - lw0.tcp_drop);
+    l["tcp_memerr"] = (uint16_t)(lw.tcp_memerr - lw0.tcp_memerr);
+    l["tcp_err"] = (uint16_t)(lw.tcp_err - lw0.tcp_err);
+#else
+    (void)lw; (void)lw0;
+#endif
+}
+
 // Network test: downloads up to max bytes (default 1 MB) from url, discards
 // them and reports the rate, to measure the board's download speed one layer
 // at a time (plain HTTP from the LAN, then HTTPS from the internet). Runs on
@@ -502,6 +554,8 @@ esp_err_t netTestHandler(httpd_req_t* req) {
     // CPU during the body: this task's run time and each core's idle time
     // (run-time counters are in us). This task does the TLS decryption.
     uint32_t task0 = 0, idle0 = 0, idle1 = 0;
+    NetStats::RxDetail rx0 = {};
+    LwipCounts lw0 = {};
     size_t total = 0;
     int status = 0;
     if (err == ESP_OK) {
@@ -515,6 +569,9 @@ esp_err_t netTestHandler(httpd_req_t* req) {
                 task0 = ownRunTimeUs();
                 idle0 = ulTaskGetIdleRunTimeCounterForCore(0);
                 idle1 = ulTaskGetIdleRunTimeCounterForCore(1);
+                NetStats::resetRxDetail();
+                rx0 = NetStats::rxDetail();
+                lw0 = lwipCounts();
             }
             total += n;
         }
@@ -523,9 +580,10 @@ esp_err_t netTestHandler(httpd_req_t* req) {
     const uint32_t task_us = ownRunTimeUs() - task0;
     const uint32_t idle0_us = ulTaskGetIdleRunTimeCounterForCore(0) - idle0;
     const uint32_t idle1_us = ulTaskGetIdleRunTimeCounterForCore(1) - idle1;
+    JsonDocument doc;
+    if (t_first) addRxDetail(doc, rx0, lw0);  // before cleanup: the close adds frames
     esp_http_client_cleanup(client);
     if (pause) WakeWordEngine::getInstance().resumeProcessing();
-    JsonDocument doc;
     doc["status"] = status;
     doc["quiet"] = pause;
     doc["error"] = esp_err_to_name(err);
@@ -557,16 +615,26 @@ esp_err_t netTestUploadHandler(httpd_req_t* req) {
         static_cast<char*>(heap_caps_malloc(8192, MALLOC_CAP_SPIRAM)), &free);
     size_t total = 0;
     int64_t t_first = 0;
+    NetStats::RxDetail rx0 = {};
+    LwipCounts lw0 = {};
+    int timeouts = 0;  // a client that stops sending must not hold the httpd task
     while (buf && total < req->content_len) {
         int n = httpd_req_recv(req, buf.get(), 8192);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 3) continue;
         if (n <= 0) break;
-        if (total == 0) t_first = esp_timer_get_time();
+        timeouts = 0;
+        if (total == 0) {
+            t_first = esp_timer_get_time();
+            NetStats::resetRxDetail();
+            rx0 = NetStats::rxDetail();
+            lw0 = lwipCounts();
+        }
         total += n;
     }
     const int64_t t_end = esp_timer_get_time();
     if (pause) WakeWordEngine::getInstance().resumeProcessing();
     JsonDocument doc;
+    if (t_first) addRxDetail(doc, rx0, lw0);
     doc["bytes"] = total;
     doc["quiet"] = pause;
     const int64_t body_us = t_first ? t_end - t_first : 0;

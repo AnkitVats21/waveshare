@@ -86,6 +86,10 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
 CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
 
+# lwIP's link/IP/TCP counters, reported by /api/system/nettest (drops,
+# memory errors) to tell loss inside the board from a slow link.
+CONFIG_LWIP_STATS=y
+
 # USB network mode (main/services/network/UsbNet.h). The NTB buffers are
 # static internal RAM even in serial mode: 2 x 3200 receive + 2 x 2048 send.
 CONFIG_TINYUSB_NET_MODE_NCM=y
