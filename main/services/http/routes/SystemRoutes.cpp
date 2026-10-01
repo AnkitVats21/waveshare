@@ -9,6 +9,7 @@
 #include "services/http/FlashUpload.h"
 #include "http_server/WebBundle.h"
 #include "media_player/TlsConfig.h"
+#include "audio_core/WakeWordEngine.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -430,16 +431,27 @@ esp_err_t flashHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+// This task's run time so far (us).
+uint32_t ownRunTimeUs() {
+    TaskStatus_t st;
+    vTaskGetInfo(nullptr, &st, pdFALSE, eRunning);
+    return st.ulRunTimeCounter;
+}
+
 // Network test: downloads up to max bytes (default 1 MB) from url, discards
 // them and reports the rate, to measure the board's download speed one layer
 // at a time (plain HTTP from the LAN, then HTTPS from the internet). Runs on
-// the httpd task and blocks it for the download.
+// the httpd task and blocks it for the download. ?quiet=1 pauses the
+// wake-word pipeline for the test, as the upload test does.
 esp_err_t netTestHandler(httpd_req_t* req) {
     std::string url, max_str;
     if (!Http::queryParam(req, "url", url) || url.empty()) {
         return Http::sendError(req, 400, "url required");
     }
     size_t max_bytes = Http::queryParam(req, "max", max_str) ? strtoul(max_str.c_str(), nullptr, 10) : 1024 * 1024;
+    std::string quiet;
+    const bool pause = Http::queryParam(req, "quiet", quiet) && quiet == "1" &&
+                       !WakeWordEngine::getInstance().isStreamingActive();
     esp_http_client_config_t cfg = {};
     cfg.url = url.c_str();
     cfg.timeout_ms = 10000;
@@ -447,11 +459,15 @@ esp_err_t netTestHandler(httpd_req_t* req) {
     if (url.rfind("https://", 0) == 0) Tls::secure(cfg);
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) return Http::sendError(req, 500, "client init failed");
+    if (pause) WakeWordEngine::getInstance().pauseProcessing();
     std::unique_ptr<char, decltype(&free)> buf(
         static_cast<char*>(heap_caps_malloc(4096, MALLOC_CAP_SPIRAM)), &free);
     const int64_t t0 = esp_timer_get_time();
     esp_err_t err = buf ? esp_http_client_open(client, 0) : ESP_ERR_NO_MEM;
     int64_t t_first = 0;
+    // CPU during the body: this task's run time and each core's idle time
+    // (run-time counters are in us). This task does the TLS decryption.
+    uint32_t task0 = 0, idle0 = 0, idle1 = 0;
     size_t total = 0;
     int status = 0;
     if (err == ESP_OK) {
@@ -460,17 +476,65 @@ esp_err_t netTestHandler(httpd_req_t* req) {
         while (total < max_bytes) {
             int n = esp_http_client_read(client, buf.get(), 4096);
             if (n <= 0) break;
-            if (total == 0) t_first = esp_timer_get_time();
+            if (total == 0) {
+                t_first = esp_timer_get_time();
+                task0 = ownRunTimeUs();
+                idle0 = ulTaskGetIdleRunTimeCounterForCore(0);
+                idle1 = ulTaskGetIdleRunTimeCounterForCore(1);
+            }
             total += n;
         }
     }
     const int64_t t_end = esp_timer_get_time();
+    const uint32_t task_us = ownRunTimeUs() - task0;
+    const uint32_t idle0_us = ulTaskGetIdleRunTimeCounterForCore(0) - idle0;
+    const uint32_t idle1_us = ulTaskGetIdleRunTimeCounterForCore(1) - idle1;
     esp_http_client_cleanup(client);
+    if (pause) WakeWordEngine::getInstance().resumeProcessing();
     JsonDocument doc;
     doc["status"] = status;
+    doc["quiet"] = pause;
     doc["error"] = esp_err_to_name(err);
     doc["bytes"] = total;
     doc["connect_ms"] = (t_first ? t_first - t0 : t_end - t0) / 1000;
+    const int64_t body_us = t_first ? t_end - t_first : 0;
+    doc["body_ms"] = body_us / 1000;
+    doc["kb_per_s"] = body_us > 0 ? (double)total / 1024.0 / ((double)body_us / 1e6) : 0;
+    if (t_first) {
+        doc["task_cpu_ms"] = task_us / 1000;
+        doc["task_core"] = xPortGetCoreID();
+        doc["idle0_ms"] = idle0_us / 1000;
+        doc["idle1_ms"] = idle1_us / 1000;
+    }
+    return Http::sendJson(req, 200, doc);
+}
+
+// Upload half of the network test: the PC posts a body (curl --data-binary),
+// the board reads and discards it and reports the rate. Measures the board's
+// Wi-Fi + TCP receive path on the LAN, with no internet hop. ?quiet=1 pauses
+// the wake-word pipeline (AFE on core 1) for the test, to see whether the
+// audio work slows the network.
+esp_err_t netTestUploadHandler(httpd_req_t* req) {
+    std::string quiet;
+    const bool pause = Http::queryParam(req, "quiet", quiet) && quiet == "1" &&
+                       !WakeWordEngine::getInstance().isStreamingActive();
+    if (pause) WakeWordEngine::getInstance().pauseProcessing();
+    std::unique_ptr<char, decltype(&free)> buf(
+        static_cast<char*>(heap_caps_malloc(8192, MALLOC_CAP_SPIRAM)), &free);
+    size_t total = 0;
+    int64_t t_first = 0;
+    while (buf && total < req->content_len) {
+        int n = httpd_req_recv(req, buf.get(), 8192);
+        if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (n <= 0) break;
+        if (total == 0) t_first = esp_timer_get_time();
+        total += n;
+    }
+    const int64_t t_end = esp_timer_get_time();
+    if (pause) WakeWordEngine::getInstance().resumeProcessing();
+    JsonDocument doc;
+    doc["bytes"] = total;
+    doc["quiet"] = pause;
     const int64_t body_us = t_first ? t_end - t_first : 0;
     doc["body_ms"] = body_us / 1000;
     doc["kb_per_s"] = body_us > 0 ? (double)total / 1024.0 / ((double)body_us / 1e6) : 0;
@@ -488,5 +552,6 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/system/nettest", HTTP_GET, netTestHandler);
+    server.on("/api/system/nettest", HTTP_POST, netTestUploadHandler);
     server.on("/api/logs", HTTP_GET, logsHandler);
 }
