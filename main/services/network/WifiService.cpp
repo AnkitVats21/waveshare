@@ -103,7 +103,17 @@ bool WifiService::startSoftAp() {
 }
 
 void WifiService::stopSoftAp() {
-    if (!m_ap_active) return;
+    if (!m_ap_active) {
+        // connectWithCredentials() switches to APSTA even when the portal
+        // isn't running (a switch made over the API); go back to STA so the
+        // radio stops serving the setup AP next to the real connection.
+        wifi_mode_t mode;
+        if (esp_wifi_get_mode(&mode) == ESP_OK && mode == WIFI_MODE_APSTA) {
+            esp_wifi_set_mode(WIFI_MODE_STA);
+            LOGI_WIFI("Connected: setup AP off, back to STA mode");
+        }
+        return;
+    }
 
     CaptiveDnsServer::getInstance().stop();
     m_ap_active = false;
