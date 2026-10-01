@@ -24,6 +24,7 @@ dependencies:
   espressif/mdns: '*'
   bblanchon/arduinojson: '*'
   esphome/micro-opus: '*'
+  espressif/esp_tinyusb: "^2.0.1"
   # lvgl/lvgl: ^9.2.2
   # espressif/esp_lvgl_port: ^2.9.0
   # espressif/esp_lcd_ili9341: '*'

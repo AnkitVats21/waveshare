@@ -10,6 +10,7 @@
 #include "http_server/WebBundle.h"
 #include "media_player/TlsConfig.h"
 #include "audio_core/WakeWordEngine.h"
+#include "services/network/UsbNet.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -221,7 +222,7 @@ esp_err_t ledSetHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, resp);
 }
 
-esp_err_t rebootHandler(httpd_req_t* req) {
+void scheduleReboot() {
     static esp_timer_handle_t s_reboot_timer = nullptr;
     if (!s_reboot_timer) {
         esp_timer_create_args_t args = {};
@@ -231,7 +232,40 @@ esp_err_t rebootHandler(httpd_req_t* req) {
         esp_timer_create(&args, &s_reboot_timer);
     }
     esp_timer_start_once(s_reboot_timer, 1500000ULL); // let the response go out first
+}
+
+esp_err_t rebootHandler(httpd_req_t* req) {
+    scheduleReboot();
     return Http::sendOk(req, "Rebooting device...");
+}
+
+// What the USB port does: "serial" (Wi-Fi on) or "ethernet" (USB network,
+// Wi-Fi off). See UsbNet.h.
+esp_err_t usbModeGetHandler(httpd_req_t* req) {
+    JsonDocument doc;
+    doc["mode"] = UsbNet::modeName(UsbNet::savedMode());
+    doc["fallback_sec"] = UsbNet::kFallbackSec;
+    return Http::sendJson(req, 200, doc);
+}
+
+// {"mode": "serial" | "ethernet"}: saves the mode and reboots into it.
+esp_err_t usbModeSetHandler(httpd_req_t* req) {
+    std::string body;
+    if (req->content_len == 0 || req->content_len > 128 || !Http::readBody(req, body, 128)) {
+        return Http::sendError(req, 400, "Missing JSON payload");
+    }
+    JsonDocument doc;
+    UsbNet::Mode mode;
+    if (deserializeJson(doc, body) || !UsbNet::parseMode(doc["mode"] | "", mode)) {
+        return Http::sendError(req, 400, "mode must be \"serial\" or \"ethernet\"");
+    }
+    if (!UsbNet::saveMode(mode)) return Http::sendError(req, 500, "Could not save the mode");
+    scheduleReboot();
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["mode"] = UsbNet::modeName(mode);
+    resp["rebooting"] = true;
+    return Http::sendJson(req, 200, resp);
 }
 
 // ── GET /api/system/tasks ───────────────────────────────────────────────
@@ -549,6 +583,8 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/init", HTTP_GET, initHandler);
     server.on("/api/system/delta", HTTP_GET, deltaHandler);
     server.on("/api/system/reboot", HTTP_POST, rebootHandler);
+    server.on("/api/system/usb-mode", HTTP_GET, usbModeGetHandler);
+    server.on("/api/system/usb-mode", HTTP_POST, usbModeSetHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/system/nettest", HTTP_GET, netTestHandler);

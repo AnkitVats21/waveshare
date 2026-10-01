@@ -34,7 +34,7 @@ matching HTTP status.
 | MCP | `GET /api/mcp` (status, tools list, last error), `POST /api/mcp` (`url`, `token`, `max_tools`), `POST /api/mcp/refresh` (trigger background tools refresh) |
 | Time | `GET/POST /api/time`, `POST /api/time/sync` |
 | Wi-Fi | `GET /api/wifi/status`, `GET /api/wifi/scan`, `POST /api/wifi/configure` |
-| System | `GET /api/system/metrics`, `/init`, `/delta` (for the built-in page), `GET /api/system/tasks` (each task's stack: size, least free, internal or PSRAM), `GET /api/system/flash` (partitions: size and what is in use, e.g. firmware length and version), `GET /api/storage/info`, `GET /api/logs?since=<seq>` (~80 lines), `POST /api/led/set`, `POST /api/system/reboot` |
+| System | `GET /api/system/metrics`, `/init`, `/delta` (for the built-in page), `GET /api/system/tasks` (each task's stack: size, least free, internal or PSRAM), `GET /api/system/flash` (partitions: size and what is in use, e.g. firmware length and version), `GET /api/storage/info`, `GET /api/logs?since=<seq>` (~80 lines), `POST /api/led/set`, `POST /api/system/reboot`, `GET/POST /api/system/usb-mode` (`{"mode":"serial"|"ethernet"}`: the USB port as serial with Wi-Fi, or as a USB network adapter with Wi-Fi off; saving reboots), `GET /api/system/nettest?url=&max=[&quiet=1]` (download speed from the board), `POST /api/system/nettest[?quiet=1]` (upload speed to the board) |
 | OTA | `POST /api/ota` (firmware image as the body), `GET /api/ota/status`; `GET/POST /api/ota/frontend` (dashboard bundle), `POST /api/ota/frontend/rollback` |
 | Pages | `GET /recovery` (built-in dashboard), `GET /setup` (captive portal), `GET /*` (the dashboard bundle; the portal while the setup access point is up) |
 | Control | `/api/ws` (WebSocket) |

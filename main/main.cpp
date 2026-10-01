@@ -24,6 +24,7 @@
 #include "services/alerts/AlertLibrary.h"
 #include "hal/input/ExpanderKeyInput.h"
 #include "services/network/WifiService.h"
+#include "services/network/UsbNet.h"
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
 #include "services/mcp/McpService.h"
@@ -91,7 +92,9 @@ extern "C" void app_main(void) {
         .max_retries = 5,
     };
     static WifiService wifi(wifi_cfg);
-    wifi.begin();
+    // The USB port can carry the network instead (UsbNet.h); Wi-Fi stays off then.
+    const bool usb_net = UsbNet::savedMode() == UsbNet::Mode::Ethernet && UsbNet::begin();
+    if (!usb_net) wifi.begin();
 
 #if CONFIG_DISPLAY_ENABLE
     LcdManager::getInstance().begin();
@@ -175,7 +178,7 @@ extern "C" void app_main(void) {
     key_svc.begin();
 
     // 6.5 Spawn ReactorTask background threads
-    wifi.start();
+    if (!usb_net) wifi.start();
     audio_svc.start();
     led_svc.start();
     assistant_svc.start();
