@@ -13,7 +13,8 @@
 
 namespace {
 
-esp_err_t manualWake(httpd_req_t* req, uint32_t silence_timeout_ms) {
+esp_err_t manualWake(httpd_req_t* req, uint32_t silence_timeout_ms,
+                     const std::string& text = {}) {
     auto& ww = WakeWordEngine::getInstance();
     if (!ww.requestManualWake(silence_timeout_ms)) {
         const char* why = !ww.isRunning()            ? "Wake word engine is not running"
@@ -21,14 +22,26 @@ esp_err_t manualWake(httpd_req_t* req, uint32_t silence_timeout_ms) {
                                                      : "Wake word is suppressed (alarm or recording)";
         return Http::sendError(req, 409, why);
     }
+    if (!text.empty()) GeminiProtocol::getInstance().sendTextTurn(text);
     return Http::sendOk(req, "Wake requested");
 }
 
 // Starts a session as if the wake word was heard. The mic then streams to
 // Gemini exactly as after "Alexa", so speech near the device drives the test.
-// Keeps the wake word's silence timeout.
+// Keeps the wake word's silence timeout. An optional JSON body
+// {"text": "..."} is sent as the person's turn once the session is set up
+// (as reminders do), so a test can ask for a reply without speaking.
 esp_err_t wakeHandler(httpd_req_t* req) {
-    return manualWake(req, 0);
+    std::string body;
+    std::string text;
+    if (req->content_len > 0) {
+        JsonDocument doc;
+        if (!Http::readBody(req, body, 1024) || deserializeJson(doc, body)) {
+            return Http::sendError(req, 400, "Expected JSON {\"text\": ...}");
+        }
+        text = doc["text"] | "";
+    }
+    return manualWake(req, 0, text);
 }
 
 // The dashboard's Start: like wake, but the session waits manual_silence_s
