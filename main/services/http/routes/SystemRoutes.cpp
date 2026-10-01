@@ -8,6 +8,7 @@
 #include "app/audio/recording/AudioRecorder.h"
 #include "services/http/FlashUpload.h"
 #include "http_server/WebBundle.h"
+#include "media_player/TlsConfig.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -15,6 +16,7 @@
 #include <esp_partition.h>
 #include <nvs.h>
 #include <esp_heap_caps.h>
+#include <esp_http_client.h>
 #include <esp_memory_utils.h>
 #include <freertos/freertos_debug.h>
 #include <esp_ota_ops.h>
@@ -428,6 +430,53 @@ esp_err_t flashHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+// Network test: downloads up to max bytes (default 1 MB) from url, discards
+// them and reports the rate, to measure the board's download speed one layer
+// at a time (plain HTTP from the LAN, then HTTPS from the internet). Runs on
+// the httpd task and blocks it for the download.
+esp_err_t netTestHandler(httpd_req_t* req) {
+    std::string url, max_str;
+    if (!Http::queryParam(req, "url", url) || url.empty()) {
+        return Http::sendError(req, 400, "url required");
+    }
+    size_t max_bytes = Http::queryParam(req, "max", max_str) ? strtoul(max_str.c_str(), nullptr, 10) : 1024 * 1024;
+    esp_http_client_config_t cfg = {};
+    cfg.url = url.c_str();
+    cfg.timeout_ms = 10000;
+    cfg.buffer_size = 4096;
+    if (url.rfind("https://", 0) == 0) Tls::secure(cfg);
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) return Http::sendError(req, 500, "client init failed");
+    std::unique_ptr<char, decltype(&free)> buf(
+        static_cast<char*>(heap_caps_malloc(4096, MALLOC_CAP_SPIRAM)), &free);
+    const int64_t t0 = esp_timer_get_time();
+    esp_err_t err = buf ? esp_http_client_open(client, 0) : ESP_ERR_NO_MEM;
+    int64_t t_first = 0;
+    size_t total = 0;
+    int status = 0;
+    if (err == ESP_OK) {
+        esp_http_client_fetch_headers(client);
+        status = esp_http_client_get_status_code(client);
+        while (total < max_bytes) {
+            int n = esp_http_client_read(client, buf.get(), 4096);
+            if (n <= 0) break;
+            if (total == 0) t_first = esp_timer_get_time();
+            total += n;
+        }
+    }
+    const int64_t t_end = esp_timer_get_time();
+    esp_http_client_cleanup(client);
+    JsonDocument doc;
+    doc["status"] = status;
+    doc["error"] = esp_err_to_name(err);
+    doc["bytes"] = total;
+    doc["connect_ms"] = (t_first ? t_first - t0 : t_end - t0) / 1000;
+    const int64_t body_us = t_first ? t_end - t_first : 0;
+    doc["body_ms"] = body_us / 1000;
+    doc["kb_per_s"] = body_us > 0 ? (double)total / 1024.0 / ((double)body_us / 1e6) : 0;
+    return Http::sendJson(req, 200, doc);
+}
+
 } // namespace
 
 void Routes::registerSystem(Http::Server& server) {
@@ -438,5 +487,6 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/reboot", HTTP_POST, rebootHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
+    server.on("/api/system/nettest", HTTP_GET, netTestHandler);
     server.on("/api/logs", HTTP_GET, logsHandler);
 }
