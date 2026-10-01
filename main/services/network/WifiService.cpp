@@ -172,6 +172,9 @@ bool WifiService::begin() {
              (unsigned)esp_get_free_internal_heap_size(),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    // These override sdkconfig's buffer counts. Measured 2026-10-02: the
+    // sdkconfig values (10 static / 32 dynamic RX) cut a LAN upload to the
+    // board from ~1.7 MB/s to ~80 KB/s; internet downloads were unchanged.
     init_cfg.static_rx_buf_num = 4;
     init_cfg.dynamic_rx_buf_num = 16;
     init_cfg.cache_tx_buf_num = 16;
