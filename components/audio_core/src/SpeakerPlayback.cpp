@@ -71,10 +71,10 @@ void SpeakerPlaybackTask::run() {
 
   LinearResampler resampler;
 
+  static_assert(MAX_SILENCE_SAMPLES <= MAX_AUDIO_CHUNK_SAMPLES,
+                "silence is written from the expanded buffer");
   int32_t *expanded_buffer = (int32_t *)heap_caps_malloc(
       EXPANDED_BUF_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  int32_t *silence_buffer = (int32_t *)heap_caps_malloc(
-      MAX_SILENCE_SAMPLES * 2 * sizeof(int32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
   int16_t *voice_pcm = (int16_t *)heap_caps_malloc(
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -85,11 +85,9 @@ void SpeakerPlaybackTask::run() {
   int16_t *mix_pcm = (int16_t *)heap_caps_malloc(
       MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
-  if (!expanded_buffer || !silence_buffer || !voice_pcm || !alert_pcm || !media_pcm ||
-      !mix_pcm) {
+  if (!expanded_buffer || !voice_pcm || !alert_pcm || !media_pcm || !mix_pcm) {
     LOGE_HAL("Failed to allocate Multi-Track Mixer buffers!");
     if (expanded_buffer)   heap_caps_free(expanded_buffer);
-    if (silence_buffer)    heap_caps_free(silence_buffer);
     if (voice_pcm)         heap_caps_free(voice_pcm);
     if (alert_pcm)         heap_caps_free(alert_pcm);
     if (media_pcm)         heap_caps_free(media_pcm);
@@ -97,7 +95,18 @@ void SpeakerPlaybackTask::run() {
     m_running = false;
     return;
   }
-  memset(silence_buffer, 0, MAX_SILENCE_SAMPLES * 2 * sizeof(int32_t));
+
+  // Zeros from the start of the expanded buffer (it is rewritten by every mix).
+  auto writeSilence = [&](size_t frames) -> int {
+    int ret = ESP_CODEC_DEV_OK;
+    while (frames > 0 && ret == ESP_CODEC_DEV_OK) {
+      size_t chunk = std::min(frames, MAX_SILENCE_SAMPLES);
+      memset(expanded_buffer, 0, chunk * 2 * sizeof(int32_t));
+      ret = writeAudio(expanded_buffer, chunk * 2 * sizeof(int32_t));
+      frames -= chunk;
+    }
+    return ret;
+  };
 
   auto &bm = BufferManager::getInstance();
 
@@ -199,12 +208,7 @@ void SpeakerPlaybackTask::run() {
         LOGI_HAL("Speaker amp on.");
         // A few ms of zeros while the amp powers up, so the first syllable
         // or chime note isn't clipped.
-        size_t n = samplesForDurationMs(LOCAL_RATE, AMP_WAKE_SILENCE_MS);
-        while (n > 0) {
-          size_t chunk = std::min(n, MAX_SILENCE_SAMPLES);
-          writeAudio(silence_buffer, chunk * 2 * sizeof(int32_t));
-          n -= chunk;
-        }
+        writeSilence(samplesForDurationMs(LOCAL_RATE, AMP_WAKE_SILENCE_MS));
       }
 
       // Determine actual frames to write based on active sources
@@ -270,7 +274,7 @@ void SpeakerPlaybackTask::run() {
       size_t local_silence_samples = samplesForDurationMs(LOCAL_RATE, EMPTY_FILL_MS);
       if (local_silence_samples > MAX_SILENCE_SAMPLES) local_silence_samples = MAX_SILENCE_SAMPLES;
 
-      int ret = writeAudio(silence_buffer, local_silence_samples * 2 * sizeof(int32_t));
+      int ret = writeSilence(local_silence_samples);
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(10));
       }
@@ -307,7 +311,6 @@ void SpeakerPlaybackTask::run() {
 
   if (!amp_on && amp_control != nullptr) amp_control(true);
   LOGI_HAL("SpeakerPlaybackTask exiting.");
-  heap_caps_free(silence_buffer);
   heap_caps_free(expanded_buffer);
   heap_caps_free(voice_pcm);
   heap_caps_free(alert_pcm);

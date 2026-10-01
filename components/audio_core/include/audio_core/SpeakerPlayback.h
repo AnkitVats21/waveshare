@@ -109,10 +109,12 @@ private:
   static constexpr uint32_t AMP_WAKE_SILENCE_MS       = 20;    // zeros written while it powers up
 
   // ── I/O chunk sizing ─────────────────────────────────────────────────────
-  static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 2048;
+  // A pass writes at most one 20 ms frame (640 samples at 32 kHz); the
+  // stereo 32-bit expansion of this many samples is internal RAM.
+  static constexpr size_t   MAX_AUDIO_CHUNK_SAMPLES   = 1024;
   static constexpr size_t   MAX_AUDIO_CHUNK_BYTES     = MAX_AUDIO_CHUNK_SAMPLES * sizeof(int16_t);
   static constexpr size_t   EXPANDED_BUF_BYTES        = MAX_AUDIO_CHUNK_SAMPLES * 2 * sizeof(int32_t);
-  static constexpr size_t   MAX_SILENCE_SAMPLES       = 512;
+  static constexpr size_t   MAX_SILENCE_SAMPLES       = 512;   // per silence write (<= MAX_AUDIO_CHUNK_SAMPLES)
 
   // ── State ─────────────────────────────────────────────────────────────────
   bool                      m_buffering         = true;
