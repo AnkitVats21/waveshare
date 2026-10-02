@@ -30,6 +30,7 @@
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
 #if CONFIG_WAVESHARE_VOICE_HUB
+#include "services/hub/HubAgent.h"
 #include "services/hub/HubLink.h"
 #endif
 #include "services/http/OrbitChannel.h"
@@ -131,7 +132,20 @@ extern "C" void app_main(void) {
     // per session from the voice_backend setting.
     static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
     VoiceAgent::setActive(gemini_proto);
+#if CONFIG_WAVESHARE_VOICE_HUB
+    static Services::HubAgent&  hub_agent = Services::HubAgent::getInstance();
+    Services::HubAgent::setBackendSetting(Services::loadSettings().voice_backend);
+#endif
     VoiceAgent::setSelector([](void*) -> VoiceAgent& {
+#if CONFIG_WAVESHARE_VOICE_HUB
+        // voice_backend: 0 direct, 1 hub, 2 auto (the hub if its link is up
+        // and it takes voice). With "hub" and the hub away, the session fails
+        // with the error chime.
+        uint8_t backend = Services::HubAgent::backendSetting();
+        if (backend == 1 || (backend == 2 && Services::HubLink::getInstance().voiceAvailable())) {
+            return Services::HubAgent::getInstance();
+        }
+#endif
         return GeminiProtocol::getInstance();
     }, nullptr);
     gemini_proto.setSettingsSource([]() {
@@ -215,6 +229,7 @@ extern "C" void app_main(void) {
     http_server.start();
 #endif
 #if CONFIG_WAVESHARE_VOICE_HUB
+    hub_agent.start();
     Services::HubLink::getInstance().start();
 #endif
 

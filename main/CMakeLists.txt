@@ -81,9 +81,10 @@ if(CONFIG_WAVESHARE_USB_NET)
     list(APPEND srcs "services/network/UsbNet.cpp")
 endif()
 
-# The link to a LAN hub; off by default (Kconfig WAVESHARE_VOICE_HUB).
+# The link to a LAN hub and the voice backend through it; off by default
+# (Kconfig WAVESHARE_VOICE_HUB).
 if(CONFIG_WAVESHARE_VOICE_HUB)
-    list(APPEND srcs "services/hub/HubLink.cpp")
+    list(APPEND srcs "services/hub/HubLink.cpp" "services/hub/HubAgent.cpp")
 endif()
 
 if(CONFIG_DISPLAY_ENABLE)

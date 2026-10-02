@@ -3,6 +3,7 @@
 #include "services/storage/SystemDatabase.h"
 #include "credentials/Credentials.h"
 #if CONFIG_WAVESHARE_VOICE_HUB
+#include "services/hub/HubAgent.h"
 #include "services/hub/HubLink.h"
 #endif
 
@@ -56,6 +57,9 @@ esp_err_t setHubConfig(httpd_req_t* req) {
         if (!Services::saveSettings(settings, ndb::system::Settings::F_VOICE_BACKEND)) {
             return Http::sendError(req, 500, "Could not save the backend");
         }
+#if CONFIG_WAVESHARE_VOICE_HUB
+        Services::HubAgent::setBackendSetting((uint8_t)backend);
+#endif
     }
     bool link_changed = doc["url"].is<const char*>() || doc["token"].is<const char*>();
     if (doc["url"].is<const char*>()) {

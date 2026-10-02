@@ -20,7 +20,10 @@ namespace Services {
  *   - the dashboard's live state and transcript go to the hub
  *     (ControlChannel's relay), which fans them out to its browsers;
  *   - frames with "cmd" and no "type" are those browsers' commands, handled
- *     like /api/ws commands.
+ *     like /api/ws commands;
+ *   - voice (HubAgent): other typed messages and binary frames go to the
+ *     voice listener. A binary frame is byte 0 channel, byte 1 flags, then
+ *     the payload (channel 1 mic up, channel 2 reply down, PCM).
  * WebSocket pings every 5 s; no pong for 10 s drops the link. It reconnects
  * on its own; a hub found by mDNS is looked up again after a minute down.
  *
@@ -37,8 +40,26 @@ public:
 
     // Welcomed by the hub.
     bool isUp() const { return m_up.load(); }
-    // Sends a text frame; false if the link is down or the send failed.
+    // Up, and the hub takes voice sessions (it has a Gemini key).
+    bool voiceAvailable() const { return m_up.load() && m_hub_voice.load(); }
+    // Sends a text frame; false if the link is down or the send failed. A
+    // long text goes in fragments of one message.
     bool sendText(const std::string& text);
+    // Sends a binary frame (header included); false if down or failed.
+    bool sendBinary(const uint8_t* frame, size_t len, uint32_t timeout_ms);
+
+    // The voice backend's hooks. onMessage: a typed message the link doesn't
+    // handle itself (link task). onAudio: a piece of a binary frame (the
+    // client's task, small internal stack: copy and return); start is true
+    // for the first piece of a frame, whose header is already stripped.
+    // onLinkChange: up or down (link task).
+    struct VoiceListener {
+        void (*onMessage)(const std::string& text, void* ctx);
+        void (*onAudio)(uint8_t channel, const uint8_t* data, size_t len, bool start, void* ctx);
+        void (*onLinkChange)(bool up, void* ctx);
+        void* ctx;
+    };
+    void setVoiceListener(const VoiceListener& listener) { m_voice = listener; }
 
     struct Status {
         bool up = false;
@@ -74,6 +95,9 @@ private:
     esp_websocket_client_handle_t m_client = nullptr;
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_up{false};
+    std::atomic<bool> m_hub_voice{false};   // the welcome offered voice
+    bool m_reported_up = false;             // last link state given to the voice listener; run() only
+    VoiceListener m_voice{};
 
     std::mutex m_status_mutex;
     std::string m_url;
@@ -84,6 +108,9 @@ private:
     // Client task only: the frame being reassembled.
     std::string m_rx;
     bool m_rx_dropping = false;
+    bool m_rx_binary = false;             // the current frame is binary
+    uint8_t m_rx_channel = 0;
+    size_t m_rx_header = 0;               // header bytes of the binary frame seen
 
     int64_t m_down_since_us = 0;          // run() only
     bool m_rejected = false;              // the hub refused the hello; run() only
@@ -93,7 +120,10 @@ private:
     static constexpr uint32_t BIT_RX          = 1u << 2;
     static constexpr uint32_t BIT_RECONFIGURE = 1u << 3;
 
+    void reportLink();
+
     static constexpr size_t MAX_RX_FRAME = 4096;
+    static constexpr size_t TEXT_FRAGMENT = 4096;           // below CLIENT_BUFFER
     static constexpr int RX_QUEUE_LEN = 8;
     static constexpr uint32_t TASK_STACK = 6 * 1024;        // PSRAM
     static constexpr int CLIENT_TASK_STACK = 3584;          // internal (esp_websocket_client); 1.7 KB used

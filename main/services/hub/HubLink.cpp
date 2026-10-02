@@ -58,8 +58,39 @@ void HubLink::setError(const char* error) {
 bool HubLink::sendText(const std::string& text) {
     std::lock_guard<std::mutex> lock(m_client_mutex);
     if (!m_client || !m_up.load()) return false;
-    int sent = esp_websocket_client_send_text(m_client, text.data(), text.size(), pdMS_TO_TICKS(1000));
-    return sent == static_cast<int>(text.size());
+    const TickType_t timeout = pdMS_TO_TICKS(1000);
+    if (text.size() <= TEXT_FRAGMENT) {
+        return esp_websocket_client_send_text(m_client, text.data(), text.size(), timeout) ==
+               static_cast<int>(text.size());
+    }
+    // One message in fragments (a voice session's setup is ~20 KB).
+    const char* p = text.data();
+    size_t left = text.size();
+    if (esp_websocket_client_send_text_partial(m_client, p, TEXT_FRAGMENT, timeout) < 0) return false;
+    p += TEXT_FRAGMENT;
+    left -= TEXT_FRAGMENT;
+    while (left > 0) {
+        size_t n = std::min(left, TEXT_FRAGMENT);
+        if (esp_websocket_client_send_cont_msg(m_client, p, n, timeout) < 0) return false;
+        p += n;
+        left -= n;
+    }
+    return esp_websocket_client_send_fin(m_client, timeout) >= 0;
+}
+
+bool HubLink::sendBinary(const uint8_t* frame, size_t len, uint32_t timeout_ms) {
+    std::lock_guard<std::mutex> lock(m_client_mutex);
+    if (!m_client || !m_up.load()) return false;
+    return esp_websocket_client_send_bin(m_client, reinterpret_cast<const char*>(frame), len,
+                                         pdMS_TO_TICKS(timeout_ms)) == static_cast<int>(len);
+}
+
+// The voice listener hears every change of the link, once.
+void HubLink::reportLink() {
+    bool up = m_up.load();
+    if (up == m_reported_up) return;
+    m_reported_up = up;
+    if (m_voice.onLinkChange) m_voice.onLinkChange(up, m_voice.ctx);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,6 +128,7 @@ void HubLink::run() {
         }
         if (bits & BIT_DOWN) setDown();
         if ((bits & BIT_CONNECTED) && m_connected.load()) sendHello();
+        reportLink();
 
         now = esp_timer_get_time();
         if (m_rejected) {
@@ -181,10 +213,12 @@ void HubLink::close() {
     m_up = false;
     m_connected = false;
     ControlChannel::getInstance().setRelayUp(false);
+    reportLink();
     esp_websocket_client_destroy(m_client);
     m_client = nullptr;
     m_rx.clear();
     m_rx_dropping = false;
+    m_rx_binary = false;
 }
 
 void HubLink::setDown() {
@@ -260,14 +294,20 @@ void HubLink::handleMessage(const std::string& text) {
             m_last_error.clear();
         }
         m_down_since_us = 0;
+        // voice: {"up": "pcm", "down": "pcm", ...}, or false without Gemini on the hub.
+        bool voice = doc["voice"].is<JsonObjectConst>() && strcmp(doc["voice"]["down"] | "", "pcm") == 0 &&
+                     strcmp(doc["voice"]["up"] | "", "pcm") == 0;
+        m_hub_voice = voice;
         m_up = true;
         ControlChannel::getInstance().setRelayUp(true);
-        ESP_LOGI(TAG, "Hub link up (%s)", doc["hub"] | "?");
+        ESP_LOGI(TAG, "Hub link up (%s, voice %s)", doc["hub"] | "?", voice ? "yes" : "no");
     } else if (strcmp(type, "rejected") == 0) {
         const char* reason = doc["reason"] | "rejected";
         ESP_LOGW(TAG, "The hub refused the board: %s", reason);
         setError(reason);
         m_rejected = true;
+    } else if (m_voice.onMessage) {
+        m_voice.onMessage(text, m_voice.ctx);
     } else {
         ESP_LOGD(TAG, "Ignoring '%s'", type);
     }
@@ -298,7 +338,30 @@ void HubLink::onEvent(void* arg, esp_event_base_t, int32_t id, void* data) {
 
         case WEBSOCKET_EVENT_DATA: {
             auto* d = static_cast<esp_websocket_event_data_t*>(data);
+            // Binary: straight to the voice listener, piece by piece (reply
+            // audio isn't queued behind control messages).
+            if (d->op_code == 0x2 || (d->op_code == 0x0 && d->payload_offset > 0 && self->m_rx_binary)) {
+                if (d->payload_offset == 0) {
+                    self->m_rx_binary = true;
+                    self->m_rx_header = 0;
+                }
+                const auto* p = reinterpret_cast<const uint8_t*>(d->data_ptr);
+                size_t len = d->data_len > 0 ? d->data_len : 0;
+                bool start = false;
+                while (self->m_rx_header < 2 && len > 0) {
+                    if (self->m_rx_header == 0) self->m_rx_channel = *p;
+                    ++self->m_rx_header;
+                    ++p;
+                    --len;
+                    start = self->m_rx_header == 2;
+                }
+                if (self->m_rx_header == 2 && (len > 0 || start) && self->m_voice.onAudio) {
+                    self->m_voice.onAudio(self->m_rx_channel, p, len, start, self->m_voice.ctx);
+                }
+                break;
+            }
             if (d->op_code != 0x1 && !(d->op_code == 0x0 && d->payload_offset > 0)) break;  // text only
+            self->m_rx_binary = false;
             if (d->payload_offset == 0) {
                 self->m_rx.clear();
                 self->m_rx_dropping = d->payload_len > static_cast<int>(MAX_RX_FRAME);
