@@ -164,6 +164,7 @@ void NexusPlayer::playAt(const char* songId, const char* downloadUrl, uint32_t s
         if (snap.assistant.session_state == AssistantState::WaitingForFollowup) {
             ESP_LOGI(TAG, "Play requested during WaitingForFollowup. Terminating assistant session immediately to start playback.");
             _session_active = false;
+            _streamManager.hold(false);
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                 s.assistant.session_state = AssistantState::Idle;
                 s.assistant.media_pending_idle = false;
@@ -193,6 +194,8 @@ void NexusPlayer::play_internal(const char* songId, const char* downloadUrl, uin
     _should_resume_after_session = false;
     _should_play_after_session = false;
     _pendingStartPosMs = 0;
+    // A hold belongs to a session; a track started outside one must stream.
+    if (!_session_active) _streamManager.hold(false);
 
     if (_state != STATE_IDLE) {
         stop();
@@ -451,12 +454,16 @@ void NexusPlayer::stopActivePipelines() {
 // with the assistant session: hold it until the session ends. Only while the
 // session has the music paused: music kept playing under the voice needs
 // its data. The wake's pause and the session start come in either order, so
-// both call this; the caller holds _mutex.
+// both call this; the caller holds _mutex. Every way a session ends must
+// release it (onStateChanged, the WaitingForFollowup play shortcut), and
+// play_internal releases it outside a session in case one is missed: a
+// hold left on silently stalls every later stream.
 void NexusPlayer::holdDownloadForSession() {
     if (!_session_active || _state == STATE_STREAMING_AND_CACHING) return;
+    if (!_streamManager.isStreaming()) return;  // nothing to hold
     if (!Tuning::get("hold_download_in_session", 1)) return;
     _streamManager.hold(true);
-    if (_streamManager.isStreaming()) ESP_LOGI(TAG, "Download held for the assistant session");
+    ESP_LOGI(TAG, "Download held for the assistant session");
 }
 
 void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap) {
