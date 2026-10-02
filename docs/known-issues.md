@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-What doesn't work, or works with a catch, as of 2026-09-27. Each entry
+What doesn't work, or works with a catch, as of 2026-10-02. Each entry
 gives the symptom, the cause if known, and a workaround if there is one.
 Fix something here, or find something new: update this file in the same
 commit.
@@ -16,10 +16,27 @@ downloads from the nearest
 index point, up to 10 s of audio before the target, at ~70 KB/s. (A
 redirect to a nearby cache, which googlevideo sends when the resolver runs
 behind a VPN, is followed once per track and then remembered.) The
-download is slow because the TCP receive window is small
-(`CONFIG_LWIP_TCP_WND_DEFAULT` 5760), which is small because internal RAM is
-short. **Options:** a bigger window if RAM allows, or start decoding
-mid-cluster.
+download is slow because of the router issue below ("Internet downloads
+are capped at ~85 KB/s"); a bigger TCP window measured no difference.
+**Options:** fix the link, or start decoding mid-cluster.
+
+### Internet downloads are capped at ~85 KB/s on the home router
+On the Airtel/Nokia router (2.4 GHz) most internet downloads reach the
+board at 60-85 KB/s, against 0.4-1.4 MB/s for the same data from the LAN or
+through another access point. Gemini's replies need ~64 KB/s, so they have
+almost no margin. **Cause** (radio capture, `/api/system/wifi-sniff`): the
+ISP marks each internet connection with an IP precedence (0, 1 or 5,
+varying per connection), and the router maps it to a Wi-Fi traffic class:
+best effort arrives as TID 1, marked connections as TID 2, 6 or 7. The
+board keeps Block Ack (aggregation) sessions for TIDs 0 and 1 only; the
+router's ADDBA requests for the other TIDs get no session, and the router
+then sends those frames one at a time at 1 Mbps. After TID 2 traffic it
+also keeps TID 1 at 1 Mbps until the board reconnects. A connection that
+arrives unmarked runs at 0.4-0.8 MB/s. Disabling 802.11b rates, RX buffer
+counts and the BA window made no difference. **Workarounds:** another
+access point for the board (a laptop hotspot measured 1.2 MB/s), or a relay
+on the LAN that re-sends the traffic unmarked (1.4 MB/s); reconnecting
+Wi-Fi clears the stuck state. Not yet reported to Espressif.
 
 ### Seeking a song while it is being saved stops the saving
 The song keeps playing from the new position but isn't saved this time;
