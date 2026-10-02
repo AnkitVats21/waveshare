@@ -1,5 +1,6 @@
 #include "gemini_live/VoiceAgent.h"
 #include "common/AppLogger.h"
+#include "common/sysdb/EmbeddedSysDb.h"
 #include <atomic>
 #include <cassert>
 #include <cstring>
@@ -34,6 +35,13 @@ void VoiceAgent::selectForSession() {
     VoiceAgent* previous = s_active.exchange(&chosen);
     if (previous != &chosen) {
         LOGI_NET("Voice backend: %s (was %s)", chosen.name(), previous ? previous->name() : "none");
+        // ws_state was the old backend's (a kept connection reads CONNECTED):
+        // the new one starts from DISCONNECTED. The old one closes without
+        // touching it.
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.assistant.ws_state = WsState::DISCONNECTED;
+            s.audio.assistant_speaking = false;
+        });
     }
 }
 

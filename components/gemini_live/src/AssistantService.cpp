@@ -333,9 +333,6 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             sessionActive = false;
             micEnabled = false;
             connectRequested = false;
-            // Before Connecting asks for the connection: the backend stays
-            // the same until the session is over.
-            VoiceAgent::selectForSession();
             break;
 
         case AssistantState::Connecting:

@@ -164,6 +164,8 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
 
 void AudioService::onWakeWord(uint8_t channel) {
     LOGI_AUDIO("Wake word (ch %d) — mutating SysDb COMP_ASSISTANT.", channel);
+    // The backend first: the connection is requested in the same mutation.
+    VoiceAgent::selectForSession();
     sysdb.mutate([](SystemState& s) {
         s.assistant.session_state  = AssistantState::StartingSession;
         s.assistant.visual_state   = AssistantVisualState::Thinking;

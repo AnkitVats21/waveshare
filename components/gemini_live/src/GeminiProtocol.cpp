@@ -318,7 +318,7 @@ bool GeminiProtocol::simulateGoAway() {
 }
 
 void GeminiProtocol::endSession() {
-    SessionSettings cfg = m_settings_source ? m_settings_source() : SessionSettings{};
+    SessionSettings cfg = settings();
     auto snap = sysdb.snapshot();
     bool quiet;
     {
@@ -385,23 +385,16 @@ void GeminiProtocol::connect() {
 // Transmit API
 // ─────────────────────────────────────────────────────────────────────────────
 
-void GeminiProtocol::transmitSetupHandshake() {
-    if (!m_client.isConnected()) return;
-
+bool GeminiProtocol::buildSessionSetup(JsonDocument& doc, const SessionSettings& cfg) {
     // Start from the compiled-in setup (model, voice, tool declarations), then
     // apply the saved settings and the long-term memory.
-    PsramAllocator psramAlloc;
-    JsonDocument doc(&psramAlloc);
     DeserializationError err = deserializeJson(doc, GeminiSkills::SETUP_HANDSHAKE_JSON);
     if (err) {
-        LOGE_NET("Failed to parse SETUP_HANDSHAKE_JSON (%s); sending it unmodified", err.c_str());
-        m_client.sendLargeText(GeminiSkills::SETUP_HANDSHAKE_JSON, strlen(GeminiSkills::SETUP_HANDSHAKE_JSON),
-                               pdMS_TO_TICKS(2000));
-        return;
+        LOGE_NET("Failed to parse SETUP_HANDSHAKE_JSON (%s)", err.c_str());
+        return false;
     }
     JsonObject setup = doc["setup"];
 
-    SessionSettings cfg = m_settings_source ? m_settings_source() : SessionSettings{};
     if (!cfg.model.empty()) {
         setup["model"] = cfg.model.rfind("models/", 0) == 0 ? cfg.model : "models/" + cfg.model;
     }
@@ -413,21 +406,11 @@ void GeminiProtocol::transmitSetupHandshake() {
     // timeout waits for it). Off, the session ended 3 s after speech while
     // gemini-2.5 was still working (replies ~12 s later with tool calls).
     // The text is then neither shown nor logged.
-    m_record_transcripts = cfg.transcripts;
     if (!cfg.transcripts) {
         setup.remove("outputAudioTranscription");
     }
     TranscriptLog::instance().setLogging(cfg.transcripts && cfg.transcript_log);
 
-    bool search = false;
-    {
-        std::lock_guard<std::mutex> lock(m_turn_mutex);
-        m_last_setup_model = setup["model"] | "";
-        search = cfg.web_search && modelHasGoogleSearch(m_last_setup_model) &&
-                 m_search_refused_model != m_last_setup_model;
-        m_search_in_setup = search;
-        m_search_quota_closed = false;
-    }
     std::string instruction = cfg.system_prompt;
     std::string memory = sd_storage::Fs::readText("/sdcard/gemini_memory.txt");
     if (!memory.empty()) {
@@ -436,37 +419,13 @@ void GeminiProtocol::transmitSetupHandshake() {
                        "or preferences about the user from previous conversations. Use it to inform your responses:\n";
         instruction += memory;
     }
-    if (search) {
-        // With ~30 function declarations and a long prompt, gemini-2.5 on the
-        // device answered "I don't have real-time data" without searching;
-        // this line made it search.
-        if (!instruction.empty()) instruction += "\n\n";
-        instruction += "You have Google Search. Use it for anything current or that you are unsure of: news, "
-                       "prices, markets, sports, weather, events, recent facts. Never say you lack real-time "
-                       "data without searching first.";
-    }
     if (!instruction.empty()) {
         JsonArray parts = setup["systemInstruction"]["parts"].to<JsonArray>();
         parts.add<JsonObject>()["text"] = instruction;
     }
 
-    // Always ask for resumption handles, and resume the last conversation
-    // if it is recent. Compression lets Gemini drop old turns instead of
-    // ending the session at the context limit (~15 min of audio).
-    int resume_age_s = -1;
-    {
-        std::lock_guard<std::mutex> lock(m_turn_mutex);
-        int64_t age_us = esp_timer_get_time() - m_resume_handle_us;
-        m_resuming = !m_resume_handle.empty() &&
-                     (m_force_resume || (cfg.resume_min > 0 &&
-                                         age_us < (int64_t)cfg.resume_min * 60 * 1000000));
-        m_force_resume = false;
-        JsonObject resumption = setup["sessionResumption"].to<JsonObject>();
-        if (m_resuming) {
-            resumption["handle"] = m_resume_handle;
-            resume_age_s = (int)(age_us / 1000000);
-        }
-    }
+    // Compression lets Gemini drop old turns instead of ending the session
+    // at the context limit (~15 min of audio).
     setup["contextWindowCompression"]["slidingWindow"].to<JsonObject>();
 
     // Field names checked against gemini-2.5-flash-native-audio-latest and
@@ -484,6 +443,66 @@ void GeminiProtocol::transmitSetupHandshake() {
     }
     if (cfg.vad_prefix_ms) detection()["prefixPaddingMs"] = cfg.vad_prefix_ms;
     if (cfg.vad_silence_ms) detection()["silenceDurationMs"] = cfg.vad_silence_ms;
+    return true;
+}
+
+void GeminiProtocol::transmitSetupHandshake() {
+    if (!m_client.isConnected()) return;
+
+    PsramAllocator psramAlloc;
+    JsonDocument doc(&psramAlloc);
+    SessionSettings cfg = settings();
+    if (!buildSessionSetup(doc, cfg)) {
+        LOGE_NET("Sending the compiled-in setup unmodified");
+        m_client.sendLargeText(GeminiSkills::SETUP_HANDSHAKE_JSON, strlen(GeminiSkills::SETUP_HANDSHAKE_JSON),
+                               pdMS_TO_TICKS(2000));
+        return;
+    }
+    JsonObject setup = doc["setup"];
+    m_record_transcripts = cfg.transcripts;
+
+    bool search = false;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        m_last_setup_model = setup["model"] | "";
+        search = cfg.web_search && modelHasGoogleSearch(m_last_setup_model) &&
+                 m_search_refused_model != m_last_setup_model;
+        m_search_in_setup = search;
+        m_search_quota_closed = false;
+    }
+    if (search) {
+        // With ~30 function declarations and a long prompt, gemini-2.5 on the
+        // device answered "I don't have real-time data" without searching;
+        // this line made it search.
+        static constexpr char SEARCH_LINE[] =
+            "You have Google Search. Use it for anything current or that you are unsure of: news, "
+            "prices, markets, sports, weather, events, recent facts. Never say you lack real-time "
+            "data without searching first.";
+        JsonArray parts = setup["systemInstruction"]["parts"];
+        if (!parts.isNull() && parts.size() > 0) {
+            std::string text = parts[0]["text"] | "";
+            parts[0]["text"] = text + "\n\n" + SEARCH_LINE;
+        } else {
+            setup["systemInstruction"]["parts"].to<JsonArray>().add<JsonObject>()["text"] = SEARCH_LINE;
+        }
+    }
+
+    // Always ask for resumption handles, and resume the last conversation
+    // if it is recent.
+    int resume_age_s = -1;
+    {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        int64_t age_us = esp_timer_get_time() - m_resume_handle_us;
+        m_resuming = !m_resume_handle.empty() &&
+                     (m_force_resume || (cfg.resume_min > 0 &&
+                                         age_us < (int64_t)cfg.resume_min * 60 * 1000000));
+        m_force_resume = false;
+        JsonObject resumption = setup["sessionResumption"].to<JsonObject>();
+        if (m_resuming) {
+            resumption["handle"] = m_resume_handle;
+            resume_age_s = (int)(age_us / 1000000);
+        }
+    }
 
     if (search) {
         // get_weather is the fallback for models without search; with search
@@ -505,6 +524,7 @@ void GeminiProtocol::transmitSetupHandshake() {
 
     std::string payload;
     serializeJson(doc, payload);
+    std::string instruction = setup["systemInstruction"]["parts"][0]["text"] | "";
     LOGI_NET("Uplinking setup: model=%s voice=%s transcripts=%s search=%s vad=%u/%u/%u/%u instruction=%zu bytes (payload %zu bytes) resume=%s",
              setup["model"] | "?",
              setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] | "?",

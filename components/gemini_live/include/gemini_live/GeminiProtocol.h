@@ -39,6 +39,14 @@ public:
     };
     typedef SessionSettings (*SettingsSourceFn)();
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
+    SessionSettings settings() const { return m_settings_source ? m_settings_source() : SessionSettings{}; }
+
+    // The setup every backend starts from: the compiled-in setup (model,
+    // voice, the board's tool declarations) with the settings, the system
+    // prompt and the long-term memory applied, and context compression. Not
+    // added: Google Search, remote (MCP) tools, the resumption handle. Also
+    // sets TranscriptLog's logging from the settings.
+    static bool buildSessionSetup(JsonDocument& doc, const SessionSettings& cfg);
 
     // VoiceAgent
     const char* name() const override { return "direct"; }

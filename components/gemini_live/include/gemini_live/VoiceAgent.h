@@ -35,9 +35,10 @@ public:
     static void setActive(VoiceAgent& agent);
     bool isActive() const;
     // Picks the backend for a session (main: the voice_backend setting and
-    // whether the hub is up). AssistantService calls selectForSession() as a
-    // session starts, before it asks for a connection, so the choice never
-    // changes during a session.
+    // whether the hub is up). The wake (AudioService::onWakeWord, every
+    // session's start) calls selectForSession() just before it asks for the
+    // connection, so the choice never changes during a session. It runs on
+    // the wake word task: the selector must be quick and use little stack.
     typedef VoiceAgent& (*SelectorFn)(void* ctx);
     static void setSelector(SelectorFn selector, void* ctx);
     static void selectForSession();
