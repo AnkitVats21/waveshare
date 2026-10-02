@@ -649,6 +649,15 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                         reason.find("quota") != std::string::npos) {
                         self->m_search_quota_closed = true;
                     }
+                    // 1011: Gemini dropped the session, and its handle with
+                    // it (the next setup resuming it was refused with 1007
+                    // "Invalid session handle", costing a reconnect). Not on
+                    // the old connection of a restart: the new one resumes.
+                    if (((p[0] << 8) | p[1]) == 1011 && !self->m_restarting &&
+                        !self->m_resume_handle.empty()) {
+                        self->m_resume_handle.clear();
+                        LOGW_NET("Session ended by the server; the next one starts fresh.");
+                    }
                 }
                 break;
             }
