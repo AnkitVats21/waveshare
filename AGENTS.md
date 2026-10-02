@@ -22,7 +22,7 @@ built into a bundle and uploaded to the device.
 |---|---|
 | `main/main.cpp` | Startup order (below) |
 | `main/app/` | App logic: `AppController` (keys, modes), `audio/` (`AudioService`, recorder), `input/`, `led/` |
-| `main/services/` | `alarm/`, `alerts/` (chimes), `http/` (server, routes, `/api/ws`), `network/` (Wi-Fi, captive portal), `storage/` (system.ndb, recordings.ndb), `time/` |
+| `main/services/` | `alarm/`, `alerts/` (chimes), `http/` (server, routes, `/api/ws`), `hub/` (`HubLink`, the link to a LAN hub; `CONFIG_WAVESHARE_VOICE_HUB`), `mcp/`, `network/` (Wi-Fi, captive portal), `storage/` (system.ndb, recordings.ndb), `time/` |
 | `main/hal/` | Board bring-up: codec, I2C, IO expander, keys, LEDs, LCD |
 | `components/audio_core/` | Mic capture, speaker mixer, wake word + AFE, alert mixer, `AudioOrchestrator` (who owns the speaker) |
 | `components/core_sysdb/` | `EmbeddedSysDb`: in-RAM system state with change bits, generated from `schema/sysdb.star`; `BufferManager` ring buffers; task priorities (`thread_config.h`) |

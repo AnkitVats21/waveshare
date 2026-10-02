@@ -1,6 +1,6 @@
 # Plan: Hub mode (voice relay and music control on a LAN hub)
 
-Status: **proposed**, for review before any code
+Status: **phase 1 built** (link and dashboard); phase 2 (voice) next
 Last updated: 2026-10-02
 
 ---
@@ -145,7 +145,8 @@ about 60 ms per frame to keep the frame count down.
 | board | `hello` | device id, name, firmware version, token, formats it can send and play, hash of its skill declarations |
 | hub | `welcome` | hub version, chosen uplink format (codec, bitrate, complexity), downlink format, whether it controls music, `need_skills` if the hash is unknown |
 | board | `skills` | the board's tool declarations (generated from `gemini_skills_schema.json`), only when asked |
-| both | `ping` / `pong` | every 5 s; no answer for 10 s marks the link down (a closed socket marks it down at once) |
+| hub | `rejected` | reason (bad token); the hub closes the socket, and the board tries again after 5 minutes or a settings change |
+| both | WebSocket ping / pong | every 5 s; no answer for 10 s marks the link down (a closed socket marks it down at once). Protocol-level pings, not JSON messages: both WebSocket libraries answer them on their own |
 
 ### 4.2 Voice
 
@@ -191,7 +192,9 @@ check in the player).
 
 | From | Message | Content |
 |---|---|---|
-| board | `state` | the same JSON `/api/ws` pushes today, on change, at most twice a second |
+| board | state (no `type`) | the same JSON `/api/ws` pushes, on change (at most every 200 ms) and every second |
+| board | `transcript` | the same transcript messages as `/api/ws`; the board always sends them to the hub, and the hub keeps a copy for browsers that subscribe |
+| hub | `{"cmd": ...}` (no `type`) | a browser's command, forwarded as the browser sent it and handled like an `/api/ws` command |
 
 ## 5. Hub side
 
@@ -305,7 +308,35 @@ separately, with what was measured.
   deciding (a key press during `music_play`) need a clear owner: the hub
   decides, the board only reports.
 
-## 10. Settled after review (2026-10-02)
+## 10. Phase 1 as built (2026-10-02)
+
+- **Board:** `main/services/hub/HubLink` (`CONFIG_WAVESHARE_VOICE_HUB`,
+  default off) and a relay sink in `ControlChannel`: the same state pushes and
+  transcript go to the hub, and the hub's `{"cmd"}` frames are handled like
+  `/api/ws` commands. `GET /api/hub` shows the link; `POST /api/hub` sets
+  `url` (setting `hub_url`) and `token` (NVS, write-only).
+- **Hub:** `cmd/nexus-hub` and `pkg/hub` in nexus-orbit. Board tokens are
+  read from `~/.config/nexus/hub_tokens`, one per line. Browsers are closed
+  while no board is connected (close code 4003) and reconnect on their own.
+  `/api/*` is forwarded to the board's address as the hub sees it plus the
+  `http_port` from the hello.
+- **mDNS** works from the hub's side (advertised on LAN interfaces only;
+  Docker and VPN bridges are skipped, since their addresses are no use to a
+  board). On the home router it does not cross from the 5 GHz band (PC) to
+  the 2.4 GHz band (board), in either direction (`nexus.local` never
+  resolved from the PC either), so the board there uses `hub_url`.
+- **Measured** on the board, home Wi-Fi:
+  - Internal RAM: 55.4 KB free when idle with the link up, against 61.2 KB
+    without it in the baseline. The cost is the client task's stack (3.5 KB,
+    1.7 KB used) and the socket. The client's two buffers are made larger than
+    4096 bytes so that malloc puts them in PSRAM; at 2048 bytes they took
+    another 4 KB of internal RAM.
+  - The link comes up 8 s after boot.
+  - A command from one browser shows up in another browser's state 121 ms
+    later.
+  - REST calls through the hub take 35-100 ms, the same as direct.
+
+## 11. Settled after review (2026-10-02)
 
 - **Repository:** the hub is a second program in nexus-orbit, not a new
   repository; the shared protocol package keeps the satellite and board
