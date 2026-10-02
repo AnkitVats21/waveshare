@@ -10,7 +10,9 @@
 #include "http_server/WebBundle.h"
 #include "media_player/TlsConfig.h"
 #include "audio_core/WakeWordEngine.h"
+#if CONFIG_WAVESHARE_USB_NET
 #include "services/network/UsbNet.h"
+#endif
 #include "services/network/NetStats.h"
 
 #include <esp_app_desc.h>
@@ -241,6 +243,7 @@ esp_err_t rebootHandler(httpd_req_t* req) {
     return Http::sendOk(req, "Rebooting device...");
 }
 
+#if CONFIG_WAVESHARE_USB_NET
 // What the USB port does: "serial" (Wi-Fi on) or "ethernet" (USB network,
 // Wi-Fi off). See UsbNet.h.
 esp_err_t usbModeGetHandler(httpd_req_t* req) {
@@ -269,6 +272,7 @@ esp_err_t usbModeSetHandler(httpd_req_t* req) {
     resp["rebooting"] = true;
     return Http::sendJson(req, 200, resp);
 }
+#endif
 
 // ── GET /api/system/tasks ───────────────────────────────────────────────
 // Every task's stack: size, the least free since it started, and whether it
@@ -648,8 +652,10 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/init", HTTP_GET, initHandler);
     server.on("/api/system/delta", HTTP_GET, deltaHandler);
     server.on("/api/system/reboot", HTTP_POST, rebootHandler);
+#if CONFIG_WAVESHARE_USB_NET
     server.on("/api/system/usb-mode", HTTP_GET, usbModeGetHandler);
     server.on("/api/system/usb-mode", HTTP_POST, usbModeSetHandler);
+#endif
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/system/nettest", HTTP_GET, netTestHandler);

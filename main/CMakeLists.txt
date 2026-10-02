@@ -33,7 +33,6 @@ set(srcs
             # Services
             "services/network/WifiService.cpp"
             "services/network/NetStats.cpp"
-            "services/network/UsbNet.cpp"
             "services/network/CaptiveDnsServer.cpp"
             "services/http/HttpService.cpp"
             "services/http/ControlChannel.cpp"
@@ -74,6 +73,11 @@ set(srcs
             "services/mcp/McpClient.cpp"
             "services/mcp/McpService.cpp"
 )
+
+# The USB port as a network adapter; off by default (Kconfig WAVESHARE_USB_NET).
+if(CONFIG_WAVESHARE_USB_NET)
+    list(APPEND srcs "services/network/UsbNet.cpp")
+endif()
 
 if(CONFIG_DISPLAY_ENABLE)
     list(APPEND srcs "hal/display/LcdManager.cpp")

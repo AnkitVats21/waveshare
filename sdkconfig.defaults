@@ -109,7 +109,8 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 CONFIG_LWIP_STATS=y
 
 # USB network mode (main/services/network/UsbNet.h). The NTB buffers are
-# static internal RAM even in serial mode: 2 x 3200 receive + 2 x 2048 send.
+# static internal RAM even in serial mode: 2 x 3200 receive + 2 x 2048 send,
+# so the mode is only built with CONFIG_WAVESHARE_USB_NET (default off).
 CONFIG_TINYUSB_NET_MODE_NCM=y
 CONFIG_TINYUSB_NCM_OUT_NTB_BUFFS_COUNT=2
 CONFIG_TINYUSB_NCM_IN_NTB_BUFFS_COUNT=2

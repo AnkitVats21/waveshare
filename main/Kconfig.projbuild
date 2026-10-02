@@ -167,6 +167,15 @@ config WAVESHARE_WIFI_CONNECT_TIMEOUT_MS
     range 1000 60000
     default 15000
 
+config WAVESHARE_USB_NET
+    bool "USB network mode (the USB port as a network adapter)"
+    default n
+    help
+        Lets /api/system/usb-mode switch the USB-C port to a USB network
+        adapter (NCM) with Wi-Fi off (main/services/network/UsbNet.h).
+        TinyUSB's buffers take ~11.7 KB of internal RAM even while the port
+        is in serial mode, so it is off unless needed.
+
 config WAVESHARE_SDCARD_ENABLE
     bool "Enable SD card runtime"
     default y

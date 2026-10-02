@@ -24,7 +24,9 @@
 #include "services/alerts/AlertLibrary.h"
 #include "hal/input/ExpanderKeyInput.h"
 #include "services/network/WifiService.h"
+#if CONFIG_WAVESHARE_USB_NET
 #include "services/network/UsbNet.h"
+#endif
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
 #include "services/http/OrbitChannel.h"
@@ -94,7 +96,11 @@ extern "C" void app_main(void) {
     };
     static WifiService wifi(wifi_cfg);
     // The USB port can carry the network instead (UsbNet.h); Wi-Fi stays off then.
+#if CONFIG_WAVESHARE_USB_NET
     const bool usb_net = UsbNet::savedMode() == UsbNet::Mode::Ethernet && UsbNet::begin();
+#else
+    const bool usb_net = false;
+#endif
     if (!usb_net) wifi.begin();
 
 #if CONFIG_DISPLAY_ENABLE
