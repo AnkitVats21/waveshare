@@ -90,7 +90,6 @@ public:
     bool                cacheDownloads()       const;
     bool                bluetoothConnected()   const;
     MediaOutputTarget   mediaOutputTarget()    const;
-    MediaPendingCommand mediaPendingCommand()  const;
 
     // ── Reactor registration ──────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InvidiousClient.h"
+#include "RemoteOutput.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/IPlaybackObserver.h"
 #include "freertos/FreeRTOS.h"
@@ -29,7 +30,8 @@ enum class MediaCmdType : uint8_t {
     STOP,
     TOGGLE_PLAY_PAUSE,
     REPLAY,
-    SEEK
+    SEEK,
+    SWITCH_OUTPUT  // query "1": to the satellite, "0": to the board
 };
 
 struct MediaCommand {
@@ -86,9 +88,17 @@ public:
     bool seekTo(uint32_t positionMs);
     uint32_t getPositionMs() const;
 
-    // Bluetooth connection and handoff
-    void onBluetoothConnectionChanged(bool connected);
-    void handoffToLocal(const std::string& songId, uint32_t posMs);
+    // Satellite playback (nexus-orbit). main sets the output once at startup.
+    // While media.output_target is SATELLITE, play/pause/seek/stop go to the
+    // active satellite instead of NexusPlayer; the queue stays here.
+    void setRemoteOutput(RemoteOutput* remote) { _remote = remote; }
+    RemoteOutput* remoteOutput() const { return _remote; }
+    // Moves the music to the active satellite (true) or the board (false),
+    // carrying the current song and position. Queued to the media worker.
+    bool switchOutput(bool satellite);
+    // The assistant session started or ended (from NexusPlayer). Music on a
+    // satellite pauses for the session, as on the board.
+    void onAssistantSession(bool active);
 
     // Playlist / Queue Management
     // Adds an already-identified track (no search). front = play next.
@@ -132,10 +142,19 @@ public:
 
 private:
     void endFileTrack();
+    bool isRemote(const SystemState& snap) const;
+    void switchOutputInternal(bool satellite);
+    void handoffToLocal(const std::string& songId, uint32_t posMs, bool paused);
     MusicPlaybackService();
     ~MusicPlaybackService() override = default;
 
     InvidiousClient _invidious;
+    RemoteOutput* _remote = nullptr;
+    // Guarded by _serviceMutex: the assistant session is on, and music on the
+    // satellite was paused for it (or asked to start during it), so it
+    // resumes when the session ends.
+    bool _sessionActive = false;
+    bool _remoteHeldForSession = false;
     bool _initialized = false;
     bool _autoplayEnabled = true;
     RepeatMode _repeatMode = RepeatMode::Off;

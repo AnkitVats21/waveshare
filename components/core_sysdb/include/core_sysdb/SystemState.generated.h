@@ -109,7 +109,6 @@ namespace BIT_MEDIA {
     static constexpr ComponentMask AUTOPLAY         = (1u << 4);
     static constexpr ComponentMask CACHE            = (1u << 5);
     static constexpr ComponentMask TARGET           = (1u << 8);
-    static constexpr ComponentMask CMD              = (1u << 9);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,8 +176,7 @@ namespace BIT_MEDIA {
     X(bool, is_ducked, false, BIT_MEDIA::DUCKED, FieldAccess::ReadOnly) \
     X(bool, autoplay_enabled, true, BIT_MEDIA::AUTOPLAY, FieldAccess::Writable) \
     X(bool, cache_downloads, false, BIT_MEDIA::CACHE, FieldAccess::Writable) \
-    X(MediaOutputTarget, output_target, MediaOutputTarget::LOCAL, BIT_MEDIA::TARGET, FieldAccess::ReadOnly) \
-    X(MediaPendingCommand, pending_command, {}, BIT_MEDIA::CMD, FieldAccess::Writable)
+    X(MediaOutputTarget, output_target, MediaOutputTarget::LOCAL, BIT_MEDIA::TARGET, FieldAccess::ReadOnly)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SystemState — the single shared in-memory database

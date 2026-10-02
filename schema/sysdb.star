@@ -91,5 +91,4 @@ component Media id=8 mask=0x01000000 {
     field autoplay_enabled: bool = true [writable, bit=4:AUTOPLAY]
     field cache_downloads: bool = false [writable, bit=5:CACHE]
     field output_target: MediaOutputTarget = MediaOutputTarget::LOCAL [readonly, bit=8:TARGET]
-    field pending_command: MediaPendingCommand = {} [writable, bit=9:CMD]
 }

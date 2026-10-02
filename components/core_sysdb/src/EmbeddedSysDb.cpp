@@ -195,13 +195,6 @@ MediaOutputTarget EmbeddedSysDb::mediaOutputTarget() const {
     return v;
 }
 
-MediaPendingCommand EmbeddedSysDb::mediaPendingCommand() const {
-    acquireRead();
-    MediaPendingCommand v = m_state.media.pending_command;
-    releaseRead();
-    return v;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Reactor registration
 // ─────────────────────────────────────────────────────────────────────────────

@@ -133,15 +133,18 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
     if (type != MediaCmdType::QUEUE) NexusPlayer::getInstance().yieldAlarm();
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
-    bool isPiBt = (snap.bluetooth.connected || snap.media.output_target == MediaOutputTarget::PI_BT);
+    const bool remote = isRemote(snap);
 
     // Fast-path low-latency controls execute directly without queue delay
     if (type == MediaCmdType::PAUSE) {
-        if (isPiBt) {
+        if (remote) {
+            {
+                std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+                _remoteHeldForSession = false;
+            }
+            _remote->pause();
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                 s.media.state = MediaPlaybackState::PAUSED;
-                s.media.pending_command.cmd = MediaCmdId::PAUSE;
-                s.media.pending_command.nonce++;
             });
         } else {
             NexusPlayer::getInstance().pause();
@@ -149,19 +152,27 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
         return true;
     }
     if (type == MediaCmdType::RESUME) {
-        if (isPiBt) {
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.media.state = MediaPlaybackState::PLAYING;
-                s.media.pending_command.cmd = MediaCmdId::RESUME;
-                s.media.pending_command.nonce++;
-            });
+        if (remote) {
+            // During a session it resumes when the session ends, as on the board.
+            bool defer;
+            {
+                std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+                defer = _sessionActive;
+                _remoteHeldForSession = defer;
+            }
+            if (!defer) {
+                _remote->resume();
+                EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                    s.media.state = MediaPlaybackState::PLAYING;
+                });
+            }
         } else {
             NexusPlayer::getInstance().resume();
         }
         return true;
     }
     if (type == MediaCmdType::TOGGLE_PLAY_PAUSE) {
-        if (isPiBt) {
+        if (remote) {
             if (snap.media.state == MediaPlaybackState::PAUSED) {
                 return postCommand(MediaCmdType::RESUME);
             } else {
@@ -178,17 +189,8 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
         return true;
     }
     if (type == MediaCmdType::STOP) {
-        if (isPiBt) {
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.media.state = MediaPlaybackState::IDLE;
-                s.media.active_song_id[0] = '\0';
-                s.media.title[0] = '\0';
-                s.media.artist[0] = '\0';
-                s.media.position_ms = 0;
-                s.media.duration_ms = 0;
-                s.media.pending_command.cmd = MediaCmdId::STOP;
-                s.media.pending_command.nonce++;
-            });
+        if (remote) {
+            _remote->stop();
         } else {
             NexusPlayer::getInstance().stop();
         }
@@ -197,33 +199,30 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
         {
             std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
             _currentTrack = InvidiousTrack();
+            _remoteHeldForSession = false;
         }
         if (m_cmd_queue) {
             MediaCommand dummy;
             while (xQueueReceive(m_cmd_queue, &dummy, 0) == pdTRUE) {}
         }
-        if (!isPiBt) {
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.media.state = MediaPlaybackState::IDLE;
-                s.media.active_song_id[0] = '\0';
-                s.media.title[0] = '\0';
-                s.media.artist[0] = '\0';
-                s.media.position_ms = 0;
-                s.media.duration_ms = 0;
-                s.media.seekable = false;
-            });
-        }
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.state = MediaPlaybackState::IDLE;
+            s.media.active_song_id[0] = '\0';
+            s.media.title[0] = '\0';
+            s.media.artist[0] = '\0';
+            s.media.position_ms = 0;
+            s.media.duration_ms = 0;
+            s.media.seekable = false;
+        });
         return true;
     }
 
     if (type == MediaCmdType::SEEK) {
-        if (isPiBt) {
+        if (remote) {
             uint32_t ms = query ? static_cast<uint32_t>(strtoul(query, nullptr, 10)) : 0;
+            _remote->seek(ms);
             EmbeddedSysDb::getInstance().mutate([ms](SystemState& s) {
                 s.media.position_ms = ms;
-                s.media.pending_command.cmd = MediaCmdId::SEEK;
-                s.media.pending_command.nonce++;
-                s.media.pending_command.param = ms;
             });
             return true;
         }
@@ -281,7 +280,10 @@ void MusicPlaybackService::workerLoop() {
         if (xQueueReceive(m_cmd_queue, &cmd, portMAX_DELAY) == pdTRUE) {
             {
                 std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-                if (cmd.type != MediaCmdType::PLAY && cmd.generation != _queueGeneration) {
+                // A track change makes queued commands stale; an output
+                // switch (or a satellite's failover) still applies.
+                if (cmd.type != MediaCmdType::PLAY && cmd.type != MediaCmdType::SWITCH_OUTPUT &&
+                    cmd.generation != _queueGeneration) {
                     ESP_LOGD(TAG, "Discarding stale media command %d (gen %lu != %lu)",
                              static_cast<int>(cmd.type),
                              (unsigned long)cmd.generation,
@@ -318,6 +320,9 @@ void MusicPlaybackService::workerLoop() {
                     }
                     break;
                 }
+                case MediaCmdType::SWITCH_OUTPUT:
+                    switchOutputInternal(cmd.query[0] == '1');
+                    break;
                 case MediaCmdType::SEEK: {
                     uint32_t ms = static_cast<uint32_t>(strtoul(cmd.query, nullptr, 10));
                     ESP_LOGI(TAG, "Executing SEEK command to %u ms", (unsigned int)ms);
@@ -479,22 +484,31 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
     if (track.videoId.empty()) return ESP_ERR_INVALID_ARG;
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
-    MediaOutputTarget target = snap.bluetooth.connected ? MediaOutputTarget::PI_BT : MediaOutputTarget::LOCAL;
 
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         _currentTrack = track;
     }
 
-    if (target == MediaOutputTarget::PI_BT) {
-        ESP_LOGI(TAG, "Routing playback to Pi Bluetooth (Tribit speaker) for '%s' [%s]",
-                 track.title.c_str(), track.videoId.c_str());
-
+    if (isRemote(snap)) {
+        // The satellite resolves the track itself; it reports the position,
+        // and the end of the track or an error, back over OrbitChannel.
+        ESP_LOGI(TAG, "Playing on the satellite: '%s' [%s]", track.title.c_str(), track.videoId.c_str());
         NexusPlayer::getInstance().stop();
+        _remote->play(track, 0);
 
-        EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
-            s.media.output_target = MediaOutputTarget::PI_BT;
-            s.media.state = MediaPlaybackState::PLAYING;
+        // Asked during a session (not its follow-up wait): starts when the
+        // session ends, as a board play would.
+        bool held;
+        {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            held = _sessionActive && snap.assistant.session_state != AssistantState::WaitingForFollowup;
+            _remoteHeldForSession = held;
+        }
+        if (held) _remote->pause();
+
+        EmbeddedSysDb::getInstance().mutate([&track, held](SystemState& s) {
+            s.media.state = held ? MediaPlaybackState::PAUSED : MediaPlaybackState::BUFFERING;
             strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
             s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
             strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
@@ -503,14 +517,10 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
             s.media.artist[sizeof(s.media.artist) - 1] = '\0';
             s.media.duration_ms = track.durationSeconds * 1000;
             s.media.position_ms = 0;
-            s.media.pending_command.cmd = MediaCmdId::PLAY;
-            s.media.pending_command.nonce++;
-            s.media.pending_command.param = 0;
-            strncpy(s.media.pending_command.data, track.videoId.c_str(), sizeof(s.media.pending_command.data) - 1);
-            s.media.pending_command.data[sizeof(s.media.pending_command.data) - 1] = '\0';
+            s.media.seekable = true;
         });
 
-        checkAndReplenishQueue();
+        if (isAutoplayEnabled()) checkAndReplenishQueue();
         return ESP_OK;
     }
 
@@ -625,7 +635,7 @@ bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
     if (track.videoId.empty()) return false;
 
     auto snap = EmbeddedSysDb::getInstance().snapshot();
-    if (snap.bluetooth.connected || snap.media.output_target == MediaOutputTarget::PI_BT) {
+    if (isRemote(snap)) {
         return playTrackInternal(track) == ESP_OK;
     }
 
@@ -1047,6 +1057,10 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
     // Dispatch thumbnail prefetch to background aux task
     postAuxCommand(MediaAuxCmdType::FETCH_THUMBNAIL, track.videoId.c_str(), track.author.c_str(), track.title.c_str());
 
+    // The satellite resolves the track itself (the board's URL is bound to
+    // the board's IP).
+    if (isRemote(EmbeddedSysDb::getInstance().snapshot())) return playTrackInternal(track) == ESP_OK;
+
     // The player reads duration_ms to decide whether the track may be cached.
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
         s.media.duration_ms = track.durationSeconds * 1000;
@@ -1100,6 +1114,7 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
     }
 
     CatalogDB::getInstance().recordPlay(id.c_str());
+    if (isRemote(EmbeddedSysDb::getInstance().snapshot())) return playTrackInternal(track) == ESP_OK;
     // Before play: the player reads it, and fills it in from the file if 0.
     EmbeddedSysDb::getInstance().mutate([&track](SystemState& s) {
         s.media.duration_ms = track.durationSeconds * 1000;
@@ -1122,6 +1137,14 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
 bool MusicPlaybackService::playFile(const InvidiousTrack& track, const char* path) {
     if (!path || path[0] != '/' || track.videoId.rfind(FILE_TRACK_PREFIX, 0) != 0) return false;
     NexusPlayer::getInstance().yieldAlarm();
+    // Recordings play on the board: the satellite has no access to the card.
+    if (isRemote(EmbeddedSysDb::getInstance().snapshot())) {
+        ESP_LOGI(TAG, "Recording plays on the board; music output moves back from the satellite");
+        _remote->stop();
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+            s.media.output_target = MediaOutputTarget::LOCAL;
+        });
+    }
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         _queueGeneration++;
@@ -1418,101 +1441,158 @@ bool MusicPlaybackService::seekTo(uint32_t positionMs) {
 
 uint32_t MusicPlaybackService::getPositionMs() const {
     auto snap = EmbeddedSysDb::getInstance().snapshot();
-    if (snap.media.output_target == MediaOutputTarget::PI_BT) {
+    if (snap.media.output_target == MediaOutputTarget::SATELLITE) {
         return snap.media.position_ms;
     }
     return NexusPlayer::getInstance().getPositionMs();
 }
 
-void MusicPlaybackService::onBluetoothConnectionChanged(bool connected) {
-    std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
-    auto snap = EmbeddedSysDb::getInstance().snapshot();
-
-    ESP_LOGI(TAG, "Bluetooth connection event: connected=%s (current output=%s, state=%d)",
-             connected ? "true" : "false",
-             snap.media.output_target == MediaOutputTarget::PI_BT ? "PI_BT" : "LOCAL",
-             static_cast<int>(snap.media.state));
-
-    if (connected) {
-        // BT connected: if locally playing, hand off to Pi MPD
-        if (snap.media.state == MediaPlaybackState::PLAYING &&
-            snap.media.output_target == MediaOutputTarget::LOCAL) {
-            std::string songId = snap.media.active_song_id;
-            uint32_t posMs = NexusPlayer::getInstance().getPositionMs();
-
-            ESP_LOGI(TAG, "Handoff to Pi MPD: '%s' at %u ms", songId.c_str(), (unsigned int)posMs);
-            NexusPlayer::getInstance().stop();
-
-            EmbeddedSysDb::getInstance().mutate([&songId, posMs](SystemState& s) {
-                s.media.output_target = MediaOutputTarget::PI_BT;
-                s.media.state = MediaPlaybackState::PLAYING;
-                s.media.position_ms = posMs;
-                s.media.pending_command.cmd = MediaCmdId::PLAY;
-                s.media.pending_command.nonce++;
-                s.media.pending_command.param = posMs;
-                strncpy(s.media.pending_command.data, songId.c_str(), sizeof(s.media.pending_command.data) - 1);
-                s.media.pending_command.data[sizeof(s.media.pending_command.data) - 1] = '\0';
-            });
-        } else {
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.media.output_target = MediaOutputTarget::PI_BT;
-            });
-        }
-    } else {
-        // BT disconnected: if playing on Pi, hand off to local speaker
-        if ((snap.media.state == MediaPlaybackState::PLAYING || snap.media.state == MediaPlaybackState::PAUSED) &&
-            snap.media.output_target == MediaOutputTarget::PI_BT) {
-            std::string songId = snap.media.active_song_id;
-            uint32_t posMs = snap.media.position_ms;
-
-            ESP_LOGI(TAG, "Handoff to Local Speaker: '%s' at %u ms", songId.c_str(), (unsigned int)posMs);
-
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.media.output_target = MediaOutputTarget::LOCAL;
-            });
-
-            if (!songId.empty()) {
-                handoffToLocal(songId, posMs);
-            }
-        } else {
-            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-                s.media.output_target = MediaOutputTarget::LOCAL;
-            });
-        }
-    }
+bool MusicPlaybackService::isRemote(const SystemState& snap) const {
+    return _remote && snap.media.output_target == MediaOutputTarget::SATELLITE;
 }
 
-void MusicPlaybackService::handoffToLocal(const std::string& songId, uint32_t posMs) {
-    if (NexusPlayer::getInstance().getStorageManager().fileExists(songId.c_str())) {
-        ESP_LOGI(TAG, "Handoff local cache hit: playing '%s' from %u ms", songId.c_str(), (unsigned int)posMs);
-        EmbeddedSysDb::getInstance().mutate([&songId, posMs](SystemState& s) {
-            s.media.state = MediaPlaybackState::PLAYING;
-            s.media.output_target = MediaOutputTarget::LOCAL;
-            strncpy(s.media.active_song_id, songId.c_str(), sizeof(s.media.active_song_id) - 1);
-            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-            s.media.position_ms = posMs;
+bool MusicPlaybackService::switchOutput(bool satellite) {
+    return postCommand(MediaCmdType::SWITCH_OUTPUT, satellite ? "1" : "0");
+}
+
+void MusicPlaybackService::switchOutputInternal(bool satellite) {
+    auto snap = EmbeddedSysDb::getInstance().snapshot();
+    const bool onSatellite = snap.media.output_target == MediaOutputTarget::SATELLITE;
+    const bool playing = snap.media.state == MediaPlaybackState::PLAYING ||
+                         snap.media.state == MediaPlaybackState::BUFFERING;
+    const bool paused = snap.media.state == MediaPlaybackState::PAUSED;
+
+    InvidiousTrack curr;
+    bool sessionActive;
+    // Paused only for the assistant session ("play this on my PC" asked
+    // over music): it plays on the new output when the session ends.
+    bool heldForSession;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        curr = _currentTrack;
+        sessionActive = _sessionActive;
+        heldForSession = onSatellite ? _remoteHeldForSession : NexusPlayer::getInstance().pausedForSession();
+    }
+    // A recording has no video id the satellite could play.
+    const bool carry = !curr.videoId.empty() && !isFileTrack(curr.videoId.c_str()) && (playing || paused);
+
+    if (satellite) {
+        if (!_remote) return;
+        // From the board, or from another satellite (OrbitChannel stopped it).
+        // A board player still opening the stream has no position yet; the
+        // position it was asked to start at is in SysDb.
+        const PlayerState ps = NexusPlayer::getInstance().getState();
+        const bool boardRunning = ps == STATE_STREAMING_AND_CACHING || ps == STATE_LOCAL_PLAYBACK || ps == STATE_PAUSED;
+        uint32_t posMs = (onSatellite || !boardRunning) ? snap.media.position_ms
+                                                        : NexusPlayer::getInstance().getPositionMs();
+        if (!onSatellite) NexusPlayer::getInstance().stop();
+        if (!curr.videoId.empty() && !carry) {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            _currentTrack = InvidiousTrack();
+        }
+
+        bool held = false;
+        if (carry) {
+            ESP_LOGI(TAG, "Handoff to the satellite: '%s' at %u ms", curr.videoId.c_str(), (unsigned)posMs);
+            _remote->play(curr, posMs);
+            if (paused || sessionActive) _remote->pause();
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            held = sessionActive && (playing || heldForSession);
+            _remoteHeldForSession = held;
+        }
+        // NexusPlayer::stop() cleared the track; the satellite's reports
+        // are matched against it.
+        EmbeddedSysDb::getInstance().mutate([&curr, &snap, carry, playing, held, posMs](SystemState& s) {
+            s.media.output_target = MediaOutputTarget::SATELLITE;
+            if (carry) {
+                s.media.state = playing && !held ? MediaPlaybackState::BUFFERING : MediaPlaybackState::PAUSED;
+                strncpy(s.media.active_song_id, curr.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
+                s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+                memcpy(s.media.title, snap.media.title, sizeof(s.media.title));
+                memcpy(s.media.artist, snap.media.artist, sizeof(s.media.artist));
+                s.media.duration_ms = snap.media.duration_ms;
+                s.media.position_ms = posMs;
+                s.media.seekable = true;
+            } else {
+                s.media.state = MediaPlaybackState::IDLE;
+                s.media.active_song_id[0] = '\0';
+                s.media.title[0] = '\0';
+                s.media.artist[0] = '\0';
+                s.media.position_ms = 0;
+            }
         });
-        NexusPlayer::getInstance().playAt(songId.c_str(), "", posMs);
         return;
     }
 
-    ESP_LOGI(TAG, "Handoff re-resolving stream URL for '%s' from %u ms...", songId.c_str(), (unsigned int)posMs);
-    std::string streamUrl;
-    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(songId, streamUrl);
-    if (err == ESP_OK && !streamUrl.empty()) {
-        EmbeddedSysDb::getInstance().mutate([&songId, posMs](SystemState& s) {
-            s.media.state = MediaPlaybackState::PLAYING;
-            s.media.output_target = MediaOutputTarget::LOCAL;
-            strncpy(s.media.active_song_id, songId.c_str(), sizeof(s.media.active_song_id) - 1);
-            s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-            s.media.position_ms = posMs;
-        });
-        NexusPlayer::getInstance().playAt(songId.c_str(), streamUrl.c_str(), posMs);
-    } else {
-        ESP_LOGE(TAG, "Failed to re-resolve stream for '%s' during handoff (%s)", songId.c_str(), esp_err_to_name(err));
-        EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-            s.media.state = MediaPlaybackState::ERROR_STATE;
-        });
+    if (!onSatellite) return;
+    if (_remote) _remote->stop();
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        _remoteHeldForSession = false;
     }
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.media.output_target = MediaOutputTarget::LOCAL;
+    });
+    if (carry) {
+        ESP_LOGI(TAG, "Handoff to the board: '%s' at %u ms", curr.videoId.c_str(), (unsigned)snap.media.position_ms);
+        // A play during the session waits for its end in NexusPlayer.
+        handoffToLocal(curr.videoId, snap.media.position_ms, paused && !heldForSession);
+    }
+}
+
+void MusicPlaybackService::onAssistantSession(bool active) {
+    bool pauseNow = false, resumeNow = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+        if (active == _sessionActive) return;
+        _sessionActive = active;
+        auto snap = EmbeddedSysDb::getInstance().snapshot();
+        if (!isRemote(snap)) {
+            _remoteHeldForSession = false;
+            return;
+        }
+        if (active) {
+            pauseNow = snap.media.state == MediaPlaybackState::PLAYING ||
+                       snap.media.state == MediaPlaybackState::BUFFERING;
+            _remoteHeldForSession = pauseNow;
+        } else {
+            // Cleared by any pause/stop/play the user asked for meanwhile.
+            resumeNow = _remoteHeldForSession;
+            _remoteHeldForSession = false;
+        }
+    }
+    if (pauseNow) {
+        ESP_LOGI(TAG, "Satellite paused for the assistant session");
+        _remote->pause();
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) { s.media.state = MediaPlaybackState::PAUSED; });
+    } else if (resumeNow) {
+        ESP_LOGI(TAG, "Satellite resumes after the assistant session");
+        _remote->resume();
+        EmbeddedSysDb::getInstance().mutate([](SystemState& s) { s.media.state = MediaPlaybackState::PLAYING; });
+    }
+}
+
+void MusicPlaybackService::handoffToLocal(const std::string& songId, uint32_t posMs, bool paused) {
+    // From the card if it is saved there, else a fresh stream URL.
+    std::string streamUrl;
+    if (!NexusPlayer::getInstance().getStorageManager().fileExists(songId.c_str())) {
+        esp_err_t err = _invidious.resolveWebMOpusStreamUrl(songId, streamUrl);
+        if (err != ESP_OK || streamUrl.empty()) {
+            ESP_LOGE(TAG, "Failed to re-resolve stream for '%s' during handoff (%s)", songId.c_str(), esp_err_to_name(err));
+            EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+                s.media.state = MediaPlaybackState::ERROR_STATE;
+            });
+            return;
+        }
+    }
+    EmbeddedSysDb::getInstance().mutate([&songId, posMs](SystemState& s) {
+        s.media.state = MediaPlaybackState::PLAYING;
+        s.media.output_target = MediaOutputTarget::LOCAL;
+        strncpy(s.media.active_song_id, songId.c_str(), sizeof(s.media.active_song_id) - 1);
+        s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
+        s.media.position_ms = posMs;
+    });
+    NexusPlayer::getInstance().playAt(songId.c_str(), streamUrl.c_str(), posMs);
+    if (paused) NexusPlayer::getInstance().pause();
 }
 

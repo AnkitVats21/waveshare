@@ -29,18 +29,7 @@ void init_sysdb(nb::module_& m) {
 
     nb::enum_<MediaOutputTarget>(m, "MediaOutputTarget")
         .value("LOCAL", MediaOutputTarget::LOCAL)
-        .value("PI_BT", MediaOutputTarget::PI_BT)
-        .export_values();
-
-    nb::enum_<MediaCmdId>(m, "MediaCmdId")
-        .value("NONE", MediaCmdId::NONE)
-        .value("PLAY", MediaCmdId::PLAY)
-        .value("PAUSE", MediaCmdId::PAUSE)
-        .value("RESUME", MediaCmdId::RESUME)
-        .value("STOP", MediaCmdId::STOP)
-        .value("NEXT", MediaCmdId::NEXT)
-        .value("PREVIOUS", MediaCmdId::PREVIOUS)
-        .value("SEEK", MediaCmdId::SEEK)
+        .value("SATELLITE", MediaOutputTarget::SATELLITE)
         .export_values();
 
     // ── Existing Application Enums ──
@@ -137,7 +126,6 @@ void init_sysdb(nb::module_& m) {
     tag_media.attr("autoplay_enabled") = static_cast<uint8_t>(TAG_MEDIA::autoplay_enabled);
     tag_media.attr("cache_downloads") = static_cast<uint8_t>(TAG_MEDIA::cache_downloads);
     tag_media.attr("output_target") = static_cast<uint8_t>(TAG_MEDIA::output_target);
-    tag_media.attr("pending_command") = static_cast<uint8_t>(TAG_MEDIA::pending_command);
 
     auto tag_bt = m.def_submodule("TAG_BLUETOOTH");
     tag_bt.attr("connected") = static_cast<uint8_t>(TAG_BLUETOOTH::connected);

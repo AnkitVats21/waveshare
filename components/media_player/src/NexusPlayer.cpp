@@ -55,7 +55,7 @@ NexusPlayer::NexusPlayer(BufferManager::BufferId playbackId, BufferManager::Buff
           ThreadConfig::StackSize::STACK_PLAYER,
           ThreadConfig::Priority::GEMINI_PROTOCOL,
           ThreadConfig::CORE_NETWORK,
-          COMP::ASSISTANT | COMP::BLUETOOTH
+          COMP::ASSISTANT
       }),
       _playbackId(playbackId),
       _storageId(storageId),
@@ -468,9 +468,12 @@ void NexusPlayer::holdDownloadForSession() {
 
 void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap) {
     if (changed & COMP::ASSISTANT) {
-        PlayerLock lock(_mutex);
-        
         bool new_session_active = (snap.assistant.session_state != AssistantState::Idle);
+        // Music on a satellite pauses and resumes in MusicPlaybackService
+        // (called without our lock: it takes the service's).
+        MusicPlaybackService::getInstance().onAssistantSession(new_session_active);
+
+        PlayerLock lock(_mutex);
         
         if (new_session_active && !_session_active) {
             _session_active = true;
@@ -499,9 +502,6 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
         }
     }
 
-    if ((changed & COMP::BLUETOOTH) && (changed & BIT_BLUETOOTH::CONNECTED)) {
-        MusicPlaybackService::getInstance().onBluetoothConnectionChanged(snap.bluetooth.connected);
-    }
 }
 
 void NexusPlayer::run() {

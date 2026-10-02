@@ -46,6 +46,8 @@ public:
     uint32_t getPositionMs() const;
     
     PlayerState getState() { return _state; }
+    // Paused by the assistant session; resumes when it ends.
+    bool pausedForSession() { return _state == STATE_PAUSED && _should_resume_after_session; }
 
     // ── Alarm ownership (docs/alarm-design.md) ─────────────────────────────
     // While an alarm owns the player, playback events go only to `alarm`,
