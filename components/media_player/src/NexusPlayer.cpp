@@ -484,11 +484,16 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
             if (_alarmOwner) {
                 // beginAlarm() took the deferred play/resume into the resume point.
             } else if (_should_play_after_session && (!_pendingDownloadUrl.empty() || _storageManager.fileExists(_pendingSongId.c_str()))) {
-                play_internal(_pendingSongId.c_str(), _pendingDownloadUrl.c_str(), _pendingStartPosMs);
+                // Copies: play_internal stops what plays, and stop() clears these
+                // (the song id went empty when music was playing).
+                std::string songId = std::move(_pendingSongId);
+                std::string url = std::move(_pendingDownloadUrl);
+                uint32_t startMs = _pendingStartPosMs;
                 _pendingSongId.clear();
                 _pendingDownloadUrl.clear();
                 _pendingStartPosMs = 0;
                 _should_play_after_session = false;
+                play_internal(songId.c_str(), url.c_str(), startMs);
             } else if (_should_resume_after_session && _state == STATE_PAUSED) {
                 // Set by the wake-word pause (onAudioFocusChange) or by a "resume"
                 // request made during the session (resume()). A "pause"/"stop"
