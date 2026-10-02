@@ -72,9 +72,30 @@ bool ControlChannel::begin() {
 
 void ControlChannel::onTranscriptChanged(void* ctx) {
     auto* self = static_cast<ControlChannel*>(ctx);
-    if (!self->m_transcript_subscribed.load()) return;
+    if (!self->m_transcript_subscribed.load() && !self->m_relay_up.load()) return;
     self->m_transcript_dirty = true;
-    if (self->getHandle()) xTaskNotify(self->getHandle(), 0, eSetBits);
+    self->wake();
+}
+
+void ControlChannel::wake() {
+    if (getHandle()) xTaskNotify(getHandle(), 0, eSetBits);
+}
+
+void ControlChannel::setRelayUp(bool up) {
+    m_relay_up = up;
+    if (!up) return;
+    m_relay_resend = true;
+    m_transcript_dirty = true;
+    m_push_now = true;
+    wake();
+}
+
+void ControlChannel::handleRelayCommand(const char* json, size_t len) {
+    if (len > MAX_COMMAND_LEN) {
+        ESP_LOGW(TAG, "Relay command too large (%u bytes)", (unsigned)len);
+        return;
+    }
+    handleCommand(json, len, true);
 }
 
 void ControlChannel::startMdns() {
@@ -114,7 +135,7 @@ esp_err_t ControlChannel::onWsHandshake(httpd_req_t* req) {
     }
     m_transcript_subscribed = false;  // each client opts in
     m_push_now = true;
-    if (getHandle()) xTaskNotify(getHandle(), 0, eSetBits);
+    wake();
     return ESP_OK;
 }
 
@@ -138,7 +159,7 @@ esp_err_t ControlChannel::handleWsRequest(httpd_req_t* req) {
     // Only the current client may issue commands; a taken-over socket may still
     // deliver a frame before its close completes.
     if (frame.type == HTTPD_WS_TYPE_TEXT && httpd_req_to_sockfd(req) == m_client_fd.load()) {
-        handleCommand(buf.data(), buf.size());
+        handleCommand(buf.data(), buf.size(), false);
     }
     return ESP_OK;
 }
@@ -159,7 +180,7 @@ void ControlChannel::onServerStopped() {
 // Commands: {"cmd": "<name>", ...}
 // ─────────────────────────────────────────────────────────────────────────────
 
-void ControlChannel::handleCommand(const char* json, size_t len) {
+void ControlChannel::handleCommand(const char* json, size_t len, bool from_relay) {
     JsonDocument doc;
     if (deserializeJson(doc, json, len)) {
         ESP_LOGW(TAG, "Invalid command JSON");
@@ -263,12 +284,14 @@ void ControlChannel::handleCommand(const char* json, size_t len) {
         }
 
     } else if (strcmp(cmd, "subscribe") == 0) {
+        // The relay always gets the transcript; its browsers subscribe at the hub.
+        if (from_relay) return;
         bool on = doc["transcript"] | false;
         m_transcript_subscribed = on;
         if (on) {
             m_transcript_resend = true;
             m_transcript_dirty = true;
-            if (getHandle()) xTaskNotify(getHandle(), 0, eSetBits);
+            wake();
         }
         return;
 
@@ -279,7 +302,7 @@ void ControlChannel::handleCommand(const char* json, size_t len) {
 
     // Queue edits don't touch SysDb, so push the new state explicitly.
     m_push_now = true;
-    if (getHandle()) xTaskNotify(getHandle(), 0, eSetBits);
+    wake();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,10 +314,16 @@ void ControlChannel::onStateChanged(ComponentMask /*changed*/, const SystemState
 }
 
 void ControlChannel::pushState() {
+    if (!hasListener()) return;
+    std::string out;
+    buildState(out);
     httpd_handle_t server = m_server.load();
     int fd = m_client_fd.load();
-    if (!server || fd < 0) return;
+    if (server && fd >= 0) sendText(server, fd, out);
+    if (m_relay_up.load()) sendRelay(out);
+}
 
+void ControlChannel::buildState(std::string& out) {
     SystemState snap = EmbeddedSysDb::getInstance().snapshot();
     JsonDocument doc;
 
@@ -389,25 +418,38 @@ void ControlChannel::pushState() {
     bt["connected"] = snap.bluetooth.connected;
     bt["device_name"] = snap.bluetooth.device_name;
 
-    std::string out;
     serializeJson(doc, out);
-    sendText(server, fd, out);
+}
+
+bool ControlChannel::buildTranscript(uint32_t& sent_seq, std::string& out) {
+    JsonDocument doc;
+    doc["type"] = "transcript";
+    TranscriptLog::instance().toJson(sent_seq, doc);
+    if (doc["entries"].size() == 0) return false;
+    sent_seq = doc["seq"];
+    out.clear();
+    serializeJson(doc, out);
+    return true;
 }
 
 void ControlChannel::pushTranscript() {
+    std::string out;
     httpd_handle_t server = m_server.load();
     int fd = m_client_fd.load();
-    if (!server || fd < 0) return;
-    if (m_transcript_resend.exchange(false)) m_transcript_sent_seq = 0;
+    if (server && fd >= 0 && m_transcript_subscribed.load()) {
+        if (m_transcript_resend.exchange(false)) m_transcript_sent_seq = 0;
+        if (buildTranscript(m_transcript_sent_seq, out)) sendText(server, fd, out);
+    }
+    if (m_relay_up.load()) {
+        if (m_relay_resend.exchange(false)) m_relay_sent_seq = 0;
+        if (buildTranscript(m_relay_sent_seq, out)) sendRelay(out);
+    }
+}
 
-    JsonDocument doc;
-    doc["type"] = "transcript";
-    TranscriptLog::instance().toJson(m_transcript_sent_seq, doc);
-    if (doc["entries"].size() == 0) return;
-    m_transcript_sent_seq = doc["seq"];
-    std::string out;
-    serializeJson(doc, out);
-    sendText(server, fd, out);
+void ControlChannel::sendRelay(const std::string& text) {
+    if (m_relay_send && !m_relay_send(text, m_relay_ctx)) {
+        ESP_LOGD(TAG, "Relay push failed (%u bytes)", (unsigned)text.size());
+    }
 }
 
 void ControlChannel::sendText(httpd_handle_t server, int fd, std::string& text) {
@@ -435,7 +477,7 @@ void ControlChannel::run() {
         int64_t now = nowMs();
         int64_t since_push = now - last_push_ms;
         uint32_t wait_ms;
-        if (m_client_fd.load() < 0) {
+        if (!hasListener()) {
             wait_ms = portMAX_DELAY;
         } else if (dirty) {
             wait_ms = since_push >= MIN_PUSH_INTERVAL_MS ? 0 : MIN_PUSH_INTERVAL_MS - since_push;
@@ -456,7 +498,7 @@ void ControlChannel::run() {
         }
         if (!m_running) break;
 
-        if (m_client_fd.load() < 0) {
+        if (!hasListener()) {
             dirty = false;
             m_transcript_dirty = false;
             continue;
