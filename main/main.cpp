@@ -32,6 +32,7 @@
 #if CONFIG_WAVESHARE_VOICE_HUB
 #include "services/hub/HubAgent.h"
 #include "services/hub/HubLink.h"
+#include "services/hub/HubMusic.h"
 #endif
 #include "services/http/OrbitChannel.h"
 #include "services/mcp/McpTrackSource.h"
@@ -135,6 +136,10 @@ extern "C" void app_main(void) {
 #if CONFIG_WAVESHARE_VOICE_HUB
     static Services::HubAgent&  hub_agent = Services::HubAgent::getInstance();
     Services::HubAgent::setBackendSetting(Services::loadSettings().voice_backend);
+    // Music: the hub runs it while its link is up, unless music_control is local.
+    Services::HubLink::setMusicControl(Services::loadSettings().music_control);
+    static Services::HubMusic&  hub_music = Services::HubMusic::getInstance();
+    MusicPlaybackService::getInstance().setMusicHub(&hub_music);
 #endif
     VoiceAgent::setSelector([](void*) -> VoiceAgent& {
 #if CONFIG_WAVESHARE_VOICE_HUB
@@ -230,6 +235,7 @@ extern "C" void app_main(void) {
 #endif
 #if CONFIG_WAVESHARE_VOICE_HUB
     hub_agent.start();
+    hub_music.start();
     Services::HubLink::getInstance().start();
 #endif
 

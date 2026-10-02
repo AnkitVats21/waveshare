@@ -153,6 +153,15 @@ void MusicPlaybackService::auxWorkerTask(void* arg) {
 
 bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
     if (!_initialized) return false;
+    if (hubActive() && forwardToHub(type, query)) {
+        if (type != MediaCmdType::QUEUE) NexusPlayer::getInstance().yieldAlarm();
+        return true;
+    }
+    return dispatch(type, query);
+}
+
+bool MusicPlaybackService::dispatch(MediaCmdType type, const char* query) {
+    if (!_initialized) return false;
     // Whoever sends a music command is awake: a ringing or snoozed alarm ends
     // (without bringing back the music it interrupted) before the command runs.
     if (type != MediaCmdType::QUEUE) NexusPlayer::getInstance().yieldAlarm();
@@ -199,9 +208,9 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
     if (type == MediaCmdType::TOGGLE_PLAY_PAUSE) {
         if (remote) {
             if (snap.media.state == MediaPlaybackState::PAUSED) {
-                return postCommand(MediaCmdType::RESUME);
+                return dispatch(MediaCmdType::RESUME);
             } else {
-                return postCommand(MediaCmdType::PAUSE);
+                return dispatch(MediaCmdType::PAUSE);
             }
         } else {
             auto st = NexusPlayer::getInstance().getState();
@@ -220,7 +229,7 @@ bool MusicPlaybackService::postCommand(MediaCmdType type, const char* query) {
             NexusPlayer::getInstance().stop();
         }
         invalidateBackgroundWork();
-        clearQueue();
+        clearQueueLocal();
         {
             std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
             _currentTrack = InvidiousTrack();
@@ -308,6 +317,7 @@ void MusicPlaybackService::workerLoop() {
                 // A track change makes queued commands stale; an output
                 // switch (or a satellite's failover) still applies.
                 if (cmd.type != MediaCmdType::PLAY && cmd.type != MediaCmdType::SWITCH_OUTPUT &&
+                    cmd.type != MediaCmdType::HUB_PLAY &&
                     cmd.generation != _queueGeneration) {
                     ESP_LOGD(TAG, "Discarding stale media command %d (gen %lu != %lu)",
                              static_cast<int>(cmd.type),
@@ -319,7 +329,7 @@ void MusicPlaybackService::workerLoop() {
 
             switch (cmd.type) {
                 case MediaCmdType::PLAY:
-                    clearQueue();
+                    clearQueueLocal();
                     resolveAndPlayImmediate(cmd.query);
                     break;
                 case MediaCmdType::PLAY_NEXT:
@@ -347,6 +357,9 @@ void MusicPlaybackService::workerLoop() {
                 }
                 case MediaCmdType::SWITCH_OUTPUT:
                     switchOutputInternal(cmd.query[0] == '1');
+                    break;
+                case MediaCmdType::HUB_PLAY:
+                    playFromHub();
                     break;
                 case MediaCmdType::SEEK: {
                     uint32_t ms = static_cast<uint32_t>(strtoul(cmd.query, nullptr, 10));
@@ -434,6 +447,11 @@ void MusicPlaybackService::auxWorkerLoop() {
 }
 
 void MusicPlaybackService::setAutoplay(bool enabled) {
+    if (hubActive()) {
+        MusicHub::Action a{"autoplay"};
+        a.on = enabled ? 1 : 0;
+        if (_hub->sendAction(a)) return;   // the hub's music_queue sets it here
+    }
     _autoplayEnabled = enabled;
     EmbeddedSysDb::getInstance().mutate([enabled](SystemState& s) {
         s.media.autoplay_enabled = enabled;
@@ -457,6 +475,12 @@ bool MusicPlaybackService::isCachingEnabled() const {
 }
 
 void MusicPlaybackService::setRepeatMode(RepeatMode mode) {
+    if (hubActive()) {
+        static const char* const MODES[] = {"off", "one", "all"};
+        MusicHub::Action a{"repeat"};
+        a.mode = MODES[static_cast<int>(mode) % 3];
+        if (_hub->sendAction(a)) return;
+    }
     _repeatMode = mode;
     EmbeddedSysDb::getInstance().mutate([mode](SystemState& s) {
         s.media.repeat_mode = static_cast<uint8_t>(mode);
@@ -705,7 +729,7 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
     // 1. Direct stream URL (e.g. http://... or https://...)
     if (strncmp(query, "http://", 7) == 0 || strncmp(query, "https://", 8) == 0) {
         ESP_LOGI(TAG, "resolveAndPlayImmediate: direct stream URL detected, playing immediately");
-        clearQueue();
+        clearQueueLocal();
         InvidiousTrack track;
         track.videoId = "stream";
         track.title = "Direct Stream";
@@ -746,7 +770,7 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
         return false;
     }
 
-    clearQueue();
+    clearQueueLocal();
     ESP_LOGI(TAG, "Search for '%s' resolved to: '%s' by '%s' [%s]",
              query, track.title.c_str(), track.author.c_str(), track.videoId.c_str());
 
@@ -808,6 +832,11 @@ bool MusicPlaybackService::queueInternal(const char* query) {
 }
 
 void MusicPlaybackService::enqueueTrack(const InvidiousTrack& track, bool front) {
+    if (hubActive()) {
+        MusicHub::Action a{front ? "play_next" : "queue"};
+        a.id = track.videoId.c_str();
+        if (_hub->sendAction(a)) return;
+    }
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         if (front) {
@@ -823,6 +852,11 @@ void MusicPlaybackService::enqueueTrack(const InvidiousTrack& track, bool front)
 }
 
 bool MusicPlaybackService::removeFromQueue(size_t index) {
+    if (hubActive()) {
+        MusicHub::Action a{"remove"};
+        a.index = static_cast<int>(index);
+        if (_hub->sendAction(a)) return true;
+    }
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         if (index >= _queue.size()) return false;
@@ -837,6 +871,11 @@ bool MusicPlaybackService::removeFromQueue(size_t index) {
 }
 
 void MusicPlaybackService::clearQueue() {
+    if (hubActive() && _hub->sendAction({"clear"})) return;
+    clearQueueLocal();
+}
+
+void MusicPlaybackService::clearQueueLocal() {
     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
     _queue.clear();
     _prefetchedUrl.clear();
@@ -846,6 +885,7 @@ void MusicPlaybackService::clearQueue() {
 }
 
 void MusicPlaybackService::shuffleQueue() {
+    if (hubActive() && _hub->sendAction({"shuffle"})) return;
     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
     if (_queue.size() <= 1) return;
     std::random_device rd;
@@ -1110,6 +1150,13 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
 bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
     if (!songIdOrPath || songIdOrPath[0] == '\0') return false;
     NexusPlayer::getInstance().yieldAlarm();
+    if (hubActive() && strchr(songIdOrPath, '/') == nullptr) {
+        // A library song: the hub plays it here, from the card.
+        MusicHub::Action a{"play"};
+        a.id = songIdOrPath;
+        a.cached = true;
+        if (_hub->sendAction(a)) return true;
+    }
 
     std::string id = songIdOrPath;
     ndb::music::TrackDoc rec;
@@ -1211,7 +1258,7 @@ bool MusicPlaybackService::deleteSaved(const std::string& id) {
     }
     if (current) {
         NexusPlayer::getInstance().stop();  // closes the file before it is deleted
-        stop();
+        dispatch(MediaCmdType::STOP);
     }
     return CatalogDB::getInstance().removeFiles(id.c_str());
 }
@@ -1390,6 +1437,7 @@ void MusicPlaybackService::stop() {
 void MusicPlaybackService::onTrackStarted(const char* songId) {
     ESP_LOGI(TAG, "Observer event: Track started [%s]", songId ? songId : "");
     if (isFileTrack(songId)) return;
+    if (hubActive()) return;   // the hub fills the queue and fetches ahead
     if (isAutoplayEnabled()) {
         checkAndReplenishQueue();
     }
@@ -1410,9 +1458,20 @@ void MusicPlaybackService::onTrackFinished(const char* songId) {
         mode = _repeatMode;
     }
 
+    if (hubActive()) {
+        // The hub picks what's next.
+        _hub->playerEvent(_hubSeq.load(), songId ? songId : "", "ended");
+        if (!curr.videoId.empty()) {
+            std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
+            _history.push_back(curr);
+            if (_history.size() > 20) _history.erase(_history.begin());
+        }
+        return;
+    }
+
     if (mode == RepeatMode::One && !curr.videoId.empty()) {
         ESP_LOGI(TAG, "Repeating single track: %s", curr.title.c_str());
-        postCommand(MediaCmdType::REPLAY);
+        dispatch(MediaCmdType::REPLAY);
         return;
     }
 
@@ -1426,7 +1485,7 @@ void MusicPlaybackService::onTrackFinished(const char* songId) {
             _history.erase(_history.begin());
         }
     }
-    postCommand(MediaCmdType::NEXT);
+    dispatch(MediaCmdType::NEXT);
 }
 
 void MusicPlaybackService::onPlaybackError(const char* songId, int errorCode) {
@@ -1446,11 +1505,15 @@ void MusicPlaybackService::onPlaybackError(const char* songId, int errorCode) {
     if (errorCode == -1 && songId && curr.videoId == songId) {
         ESP_LOGW(TAG, "Local file error for %s. Deleting corrupted cache and falling back to live stream!", songId);
         NexusPlayer::getInstance().getStorageManager().deleteFile(songId);
-        postCommand(MediaCmdType::REPLAY);
+        dispatch(MediaCmdType::REPLAY);
+        return;
+    }
+    if (hubActive()) {
+        _hub->playerEvent(_hubSeq.load(), songId ? songId : "", "error", "playback");
         return;
     }
     if (hasQueue || isAutoplayEnabled()) {
-        postCommand(MediaCmdType::NEXT);
+        dispatch(MediaCmdType::NEXT);
     } else {
         EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
             s.media.state = MediaPlaybackState::ERROR_STATE;
@@ -1477,7 +1540,7 @@ bool MusicPlaybackService::isRemote(const SystemState& snap) const {
 }
 
 bool MusicPlaybackService::switchOutput(bool satellite) {
-    return postCommand(MediaCmdType::SWITCH_OUTPUT, satellite ? "1" : "0");
+    return dispatch(MediaCmdType::SWITCH_OUTPUT, satellite ? "1" : "0");
 }
 
 void MusicPlaybackService::switchOutputInternal(bool satellite) {
@@ -1572,7 +1635,8 @@ void MusicPlaybackService::onAssistantSession(bool active) {
         if (active == _sessionActive) return;
         _sessionActive = active;
         auto snap = EmbeddedSysDb::getInstance().snapshot();
-        if (!isRemote(snap)) {
+        // In hub mode the hub pauses music on another edge itself.
+        if (!isRemote(snap) || hubActive()) {
             _remoteHeldForSession = false;
             return;
         }

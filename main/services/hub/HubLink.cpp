@@ -85,12 +85,13 @@ bool HubLink::sendBinary(const uint8_t* frame, size_t len, uint32_t timeout_ms) 
                                          pdMS_TO_TICKS(timeout_ms)) == static_cast<int>(len);
 }
 
-// The voice listener hears every change of the link, once.
+// The voice and music listeners hear every change of the link, once.
 void HubLink::reportLink() {
     bool up = m_up.load();
     if (up == m_reported_up) return;
     m_reported_up = up;
     if (m_voice.onLinkChange) m_voice.onLinkChange(up, m_voice.ctx);
+    if (m_music.onLinkChange) m_music.onLinkChange(up, m_music.ctx);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,9 +263,22 @@ void HubLink::sendHello() {
     doc["proto"] = PROTOCOL_VERSION;
     doc["id"] = id;
     doc["name"] = "Nexus";
+    doc["kind"] = "esp32-s3";
     doc["fw"] = app ? app->version : "unknown";
-    doc["http_port"] = CONFIG_WAVESHARE_HTTP_FILE_SERVER_PORT;
     doc["token"] = credentials::hubToken();
+    // Roles (nexus-orbit docs/PROTOCOL.md section 2).
+    JsonObject roles = doc["roles"].to<JsonObject>();
+    JsonObject voice = roles["voice"].to<JsonObject>();
+    voice["up"].to<JsonArray>().add("pcm16");
+    voice["down"].to<JsonArray>().add("pcm24");
+    roles["state"]["http_port"] = CONFIG_WAVESHARE_HTTP_FILE_SERVER_PORT;
+    if (s_music_control.load() != 1) {
+        JsonObject player = roles["player"].to<JsonObject>();
+        player["url"] = true;
+        player["resolves"] = false;
+        player["queue_copy"] = true;
+        roles["controller"] = true;
+    }
     std::string out;
     serializeJson(doc, out);
 
@@ -298,14 +312,18 @@ void HubLink::handleMessage(const std::string& text) {
         bool voice = doc["voice"].is<JsonObjectConst>() && strcmp(doc["voice"]["down"] | "", "pcm") == 0 &&
                      strcmp(doc["voice"]["up"] | "", "pcm") == 0;
         m_hub_voice = voice;
+        m_hub_music = (doc["music"] | false) && s_music_control.load() != 1;
         m_up = true;
         ControlChannel::getInstance().setRelayUp(true);
-        ESP_LOGI(TAG, "Hub link up (%s, voice %s)", doc["hub"] | "?", voice ? "yes" : "no");
+        ESP_LOGI(TAG, "Hub link up (%s, voice %s, music %s)", doc["hub"] | "?", voice ? "yes" : "no",
+                 m_hub_music.load() ? "yes" : "no");
     } else if (strcmp(type, "rejected") == 0) {
         const char* reason = doc["reason"] | "rejected";
         ESP_LOGW(TAG, "The hub refused the board: %s", reason);
         setError(reason);
         m_rejected = true;
+    } else if (strncmp(type, "music_", 6) == 0) {
+        if (m_music.onMessage) m_music.onMessage(text, m_music.ctx);
     } else if (m_voice.onMessage) {
         m_voice.onMessage(text, m_voice.ctx);
     } else {

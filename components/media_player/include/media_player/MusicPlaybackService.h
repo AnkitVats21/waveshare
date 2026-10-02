@@ -6,6 +6,7 @@
 #include "InvidiousClient.h"
 #endif
 #include "RemoteOutput.h"
+#include "MusicHub.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/IPlaybackObserver.h"
 #include "freertos/FreeRTOS.h"
@@ -16,6 +17,7 @@
 #include <deque>
 #include <vector>
 #include <mutex>
+#include <atomic>
 
 enum class RepeatMode {
     Off,
@@ -35,7 +37,8 @@ enum class MediaCmdType : uint8_t {
     TOGGLE_PLAY_PAUSE,
     REPLAY,
     SEEK,
-    SWITCH_OUTPUT  // query "1": to the satellite, "0": to the board
+    SWITCH_OUTPUT, // query "1": to the satellite, "0": to the board
+    HUB_PLAY       // play the song the hub sent (hubPlay)
 };
 
 struct MediaCommand {
@@ -64,8 +67,9 @@ public:
     static MusicPlaybackService& getInstance();
 
     bool begin();
-    
-    // Asynchronous dispatch via persistent command queue
+
+    // A command from the person (keys, dashboard, voice, API). In hub mode it
+    // goes to the hub as an action, else to the media worker (dispatch).
     bool postCommand(MediaCmdType type, const char* query = nullptr);
 
     // Convenience API wrappers for backward compatibility and simplicity
@@ -103,6 +107,26 @@ public:
     // The assistant session started or ended (from NexusPlayer). Music on a
     // satellite pauses for the session, as on the board.
     void onAssistantSession(bool active);
+
+    // Hub mode (MusicHub.h). main sets the hub at startup; while it is
+    // active, the person's actions go to it and the board plays what it
+    // sends. The hub* calls below come from the link (must not block).
+    void setMusicHub(MusicHub* hub) { _hub = hub; }
+    bool hubActive() const { return _hub && _hub->active(); }
+    // Asks the hub to move the music to another speaker (music_output).
+    bool hubOutput(const char* target);
+    void hubPlay(const InvidiousTrack& track, const std::string& url, uint32_t positionMs, bool paused, uint32_t seq);
+    void hubPause();
+    void hubResume();
+    void hubSeek(uint32_t positionMs);
+    void hubStop();
+    // The hub's queue (what plays next), repeat and autoplay.
+    void hubQueue(std::deque<InvidiousTrack> tracks, RepeatMode repeat, bool autoplay);
+    // The music_play the board is on; 0 when it chose the song itself.
+    uint32_t hubSeq() const { return _hubSeq.load(); }
+    // The board told the hub what it plays (music_sync): its song is now its
+    // own (seq 0) for the hub, whatever the hub sent before.
+    void hubSynced() { _hubSeq = 0; }
 
     // Playlist / Queue Management
     // Adds an already-identified track (no search). front = play next.
@@ -150,6 +174,20 @@ public:
     static constexpr int MAX_SKIP_ON_ADVANCE = 6;
 
 private:
+    // The media worker's command queue (postCommand without the hub).
+    bool dispatch(MediaCmdType type, const char* query = nullptr);
+    bool forwardToHub(MediaCmdType type, const char* query);
+    void clearQueueLocal();
+    void playFromHub();
+    MusicHub* _hub = nullptr;
+    std::atomic<uint32_t> _hubSeq{0};
+    std::mutex _hubMutex;               // the pending hub play
+    InvidiousTrack _hubTrack;
+    std::string _hubUrl;
+    uint32_t _hubPos = 0;
+    bool _hubPaused = false;
+    uint32_t _hubPendingSeq = 0;
+
     void endFileTrack();
     bool isRemote(const SystemState& snap) const;
     void switchOutputInternal(bool satellite);

@@ -19,6 +19,7 @@ idf_component_register(
         "src/OggOpusDecoderStrategy.cpp"
         "src/AudioDecoderFactory.cpp"
         "src/MusicPlaybackService.cpp"
+        "src/MusicPlaybackServiceHub.cpp"
         "src/CatalogDB.cpp"
         "generated/MusicDb.generated.cpp"
     INCLUDE_DIRS

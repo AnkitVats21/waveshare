@@ -74,6 +74,7 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_BRIEFING_DUCK) w.u8(21, briefing_duck);
     if (fields & F_HUB_URL) w.str(22, hub_url);
     if (fields & F_VOICE_BACKEND) w.u8(23, voice_backend);
+    if (fields & F_MUSIC_CONTROL) w.u8(24, music_control);
 }
 
 void Settings::decode(std::string_view value) {
@@ -105,6 +106,7 @@ void Settings::decode(std::string_view value) {
             case 21: nexus_db::FieldReader::read(v, len, briefing_duck); break;
             case 22: nexus_db::FieldReader::read(v, len, hub_url); break;
             case 23: nexus_db::FieldReader::read(v, len, voice_backend); break;
+            case 24: nexus_db::FieldReader::read(v, len, music_control); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

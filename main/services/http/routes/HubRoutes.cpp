@@ -13,12 +13,15 @@
 namespace {
 
 const char* const BACKENDS[] = {"direct", "hub", "auto"};   // voice_backend values
+const char* const MUSIC[] = {"auto", "local"};               // music_control values
 
 // GET /api/hub: the link to the hub. "compiled": false in a build without it.
 esp_err_t getHubStatus(httpd_req_t* req) {
     JsonDocument doc;
     uint8_t backend = Services::loadSettings().voice_backend;
     doc["backend"] = backend < 3 ? BACKENDS[backend] : "direct";
+    uint8_t music = Services::loadSettings().music_control;
+    doc["music"] = music < 2 ? MUSIC[music] : "auto";
 #if CONFIG_WAVESHARE_VOICE_HUB
     auto s = Services::HubLink::getInstance().status();
     doc["compiled"] = true;
@@ -30,15 +33,17 @@ esp_err_t getHubStatus(httpd_req_t* req) {
     doc["hub_version"] = s.hub_version;
     doc["last_error"] = s.last_error;
     doc["has_token"] = !credentials::hubToken().empty();
+    doc["music_active"] = Services::HubLink::getInstance().musicAvailable();
 #else
     doc["compiled"] = false;
 #endif
     return Http::sendJson(req, 200, doc);
 }
 
-// POST /api/hub {"url"?, "token"?, "backend"?}: any may be left out; "" clears
-// url or token (url "" = find the hub by mDNS). The token is never sent back.
-// backend ("direct", "hub", "auto") applies from the next session.
+// POST /api/hub {"url"?, "token"?, "backend"?, "music"?}: any may be left
+// out; "" clears url or token (url "" = find the hub by mDNS). The token is
+// never sent back. backend ("direct", "hub", "auto") applies from the next
+// session; music ("auto": the hub runs it when up, "local") reconnects.
 esp_err_t setHubConfig(httpd_req_t* req) {
     std::string body;
     JsonDocument doc;
@@ -62,6 +67,23 @@ esp_err_t setHubConfig(httpd_req_t* req) {
 #endif
     }
     bool link_changed = doc["url"].is<const char*>() || doc["token"].is<const char*>();
+    if (doc["music"].is<const char*>()) {
+        const char* name = doc["music"];
+        int music = -1;
+        for (int i = 0; i < 2; ++i) {
+            if (strcmp(name, MUSIC[i]) == 0) music = i;
+        }
+        if (music < 0) return Http::sendError(req, 400, "music must be auto or local");
+        auto settings = Services::loadSettings();
+        settings.music_control = (uint8_t)music;
+        if (!Services::saveSettings(settings, ndb::system::Settings::F_MUSIC_CONTROL)) {
+            return Http::sendError(req, 500, "Could not save the music setting");
+        }
+#if CONFIG_WAVESHARE_VOICE_HUB
+        Services::HubLink::setMusicControl((uint8_t)music);
+#endif
+        link_changed = true;   // the hello says the roles again
+    }
     if (doc["url"].is<const char*>()) {
         const char* url = doc["url"];
         if (url[0] != '\0' && strncmp(url, "ws://", 5) != 0) {

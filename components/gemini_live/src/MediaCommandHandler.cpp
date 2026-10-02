@@ -72,6 +72,19 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
             auto& music = MusicPlaybackService::getInstance();
             RemoteOutput* remote = music.remoteOutput();
             const std::string& target = skill_call.args.music_output->target;
+            if (music.hubActive()) {
+                // The hub picks the speaker (a direct session over hub music).
+                if (target.empty()) {
+                    response_doc["status"] = "error";
+                    response_doc["message"] = "name the speaker to move the music to";
+                    return true;
+                }
+                bool sent = music.hubOutput(target == "board" ? "here" : target.c_str());
+                LOGI_SYSTEM("Music output -> %s (asked the hub)", target.c_str());
+                response_doc["status"] = sent ? "success" : "error";
+                if (!sent) response_doc["message"] = "the hub did not get it";
+                return true;
+            }
             if (!remote) {
                 response_doc["status"] = "error";
                 response_doc["message"] = "this device has no satellite support";
