@@ -38,6 +38,12 @@ access point for the board (a laptop hotspot measured 1.2 MB/s), or a relay
 on the LAN that re-sends the traffic unmarked (1.4 MB/s); reconnecting
 Wi-Fi clears the stuck state. Reported to Espressif: esp-idf issue #19168.
 
+### A rejected stream still shows as playing
+When googlevideo refuses a stream (HTTP 403, also after the URL is resolved
+again), the player gives up but the status stays `STREAMING` at position 0
+until the next command. **Cause:** the stream task's failure isn't passed
+back to the player state. **Workaround:** skip to the next song.
+
 ### Seeking a song while it is being saved stops the saving
 The song keeps playing from the new position but isn't saved this time;
 it is saved the next time it plays from the start. **Cause:** the card
