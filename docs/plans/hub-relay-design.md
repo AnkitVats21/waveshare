@@ -250,6 +250,31 @@ Measured in direct mode first (phase 0) and again in hub mode:
 - Hub CPU and memory on the PC and on the Pi.
 - Failover times: hub killed before a wake, during a session, during a song.
 
+### Baseline, direct mode (phase 0, 2026-10-02)
+
+Firmware 54b21f9 on the home Wi-Fi, five sessions from `tools/voice_test`,
+no music playing.
+
+| Measure | Value |
+|---|---|
+| Internal RAM free, idle, no connection | 61.2 KB (largest block 43 KB) |
+| Same, connection parked after a session | 45.0 KB (the TLS connection holds ~16 KB) |
+| Lowest seen during a session / since boot | 37.3 KB / 34.7 KB |
+| Wake to listening, cold (connect + TLS + setup) | 2.0 s; setupComplete at 2.8 s |
+| Wake to listening, warm (parked connection) | 27-32 ms |
+| Reply delivery rate | 0.74-0.86× real time, largest gap between frames 356-787 ms, board queue blocked 0 ms |
+| Underruns per reply | 4-29 (20-28% of the reply time starved) |
+
+The slow delivery is the router issue in `docs/known-issues.md`: the Nokia
+access point sends ISP-marked flows at 1 Mbps, and Gemini's is one of them.
+The board is not the limit (its queue never blocks). Over the LAN the same
+board receives 1.4+ MB/s, so a hub on the LAN should remove these underruns.
+This is the main number for phase 2 to beat.
+
+Not measured yet: a session over music (the music output was a satellite),
+and wake to the first reply audio (no log line marks the first frame; to
+add with phase 1).
+
 ## 8. Phases
 
 Each phase ends with a working build in both modes and is committed
