@@ -1,6 +1,6 @@
 # Plan: Hub mode (voice relay and music control on a LAN hub)
 
-Status: **phase 1 built** (link and dashboard); phase 2 (voice) next
+Status: **phase 2 built** (voice through the hub, PCM both ways); phase 3 (music control) next
 Last updated: 2026-10-02
 
 ---
@@ -336,7 +336,64 @@ separately, with what was measured.
     later.
   - REST calls through the hub take 35-100 ms, the same as direct.
 
-## 11. Settled after review (2026-10-02)
+## 11. Phase 2 as built (2026-10-02)
+
+Changes from section 4:
+
+- **PCM both ways.** Reply audio comes down as 24 kHz PCM, not Opus: the LAN
+  carries 48 KB/s easily and isn't marked by the ISP, and an Opus decoder on
+  the board would need an internal-RAM stack. The welcome says
+  `voice: {"up": "pcm", "down": "pcm", "down_rate": 24000}`, or `false` when
+  the hub has no Gemini key. Binary frames: byte 0 channel, byte 1 flags,
+  then raw 16-bit little-endian samples (one packet per frame; Opus, if
+  added, would use the length-prefixed packets).
+- **The board sends its whole setup.** `session_start` carries
+  `{setup, web_search, keepalive_s, resume_min, text?}`; `setup` is what
+  `GeminiProtocol::buildSessionSetup` builds for a direct session (settings,
+  prompt, memory file, VAD, the board's skill declarations), ~13 KB. No
+  skills hash or `skills` message. The hub adds Google Search (2.5 models,
+  with the same prompt line and without `get_weather`), the MCP tools and the
+  resumption handle.
+- **Messages.** Hub to board: `session_ready {resumed}`, `transcription
+  {role, text}`, `tool_call {id, name, args}`, `reply_owed` (an MCP tool is
+  running), `turn_complete` and `interrupted` (in order after the audio),
+  `session_error {reason}`. Board to hub: `session_start`, `text_turn`,
+  `tool_response {id, result}`, `interrupt`, `session_end`. The board keeps
+  its own "reply owed" logic, fed by transcriptions, tool calls and
+  `reply_owed`.
+- **Pacing.** The hub sends 60 ms frames at most 1.5 s ahead of the board's
+  playback (`VOICE_RX_BUF` holds ~5 s), so the link never blocks behind
+  audio. Audio is written into `VOICE_RX_BUF` on the link's client task.
+- **Backend choice.** Made at the wake (`AudioService::onWakeWord`), which
+  asks for the connection in the same step; `ws_state` is reset when the
+  backend changes. `hub` with the hub away fails at Connecting with the
+  error chime.
+- **On the hub:** resumption, goAway handoff at a turn end (mic held up to
+  4 s meanwhile), the search quota fallback, the kept connection after a
+  session, MCP tools (`--mcp-url`, token file; same filters and limits as
+  the board). An interrupt drops the queued reply and the rest of it; the
+  hub reads Gemini at full speed, so no reconnect is needed.
+
+Measured on the board, hub on the PC, gemini-3.1-flash-live, 8 turns:
+
+| Measure | Direct (phase 0) | Hub |
+|---|---|---|
+| Underruns per reply | 4-29 | 0 |
+| Delivery to the board | 0.66-0.86x real time, gaps up to 888 ms | 1.3-3.7x (paced), largest gap 71-212 ms |
+| Gemini to the sender | (the board) | 4-7x real time |
+| Wake to listening, cold / kept connection | 2.0 s / 27-32 ms | 1.0-1.5 s / 61 ms |
+| Internal RAM idle / lowest | 61.2 KB, 45.0 KB with a kept connection / 34.7 KB | 54.3 KB / 38.5 KB |
+
+Failover tested: hub away with `auto` goes direct; the hub back while a
+direct connection is still kept goes to the hub; the hub killed mid-session
+ends it with the error chime; `hub` with the hub away gives the error chime.
+
+Not done yet: a session over music, MCP tools through the hub (the hub's
+token file must hold the deployed server's token), barge-in through the
+hub, a goAway handoff on the device, and the one link drop in
+`docs/known-issues.md`.
+
+## 12. Settled after review (2026-10-02)
 
 - **Repository:** the hub is a second program in nexus-orbit, not a new
   repository; the shared protocol package keeps the satellite and board

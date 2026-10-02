@@ -37,6 +37,17 @@ counts and the BA window made no difference. **Workarounds:** another
 access point for the board (a laptop hotspot measured 1.2 MB/s), or a relay
 on the LAN that re-sends the traffic unmarked (1.4 MB/s); reconnecting
 Wi-Fi clears the stuck state. Reported to Espressif: esp-idf issue #19168.
+Voice through a hub on the LAN (`voice_backend` hub or auto,
+`docs/plans/hub-relay-design.md`) avoids it for Gemini: no underruns in the
+first sessions measured.
+
+### The hub link dropped once on a mic write
+In the first hub voice tests the board's link to the hub dropped once, 2 s
+into a session: a mic write waited over a second (`transport_poll_write(0)`)
+and esp_websocket_client closes the connection on a write timeout. The
+session ended with the error chime and the link came back 5 s later. It did
+not happen again in the next ten sessions. The hub now logs slow reads of
+the board and slow writes to Gemini, so a repeat shows which side stalled.
 
 ### A rejected stream still shows as playing
 When googlevideo refuses a stream (HTTP 403, also after the URL is resolved
