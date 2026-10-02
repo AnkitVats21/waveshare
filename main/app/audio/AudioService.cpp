@@ -7,7 +7,7 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
-#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/VoiceAgent.h"
 #include "hal/Board.h"
 #include "hal/audio/AudioHal.h"
 #include "services/BufferManager.h"
@@ -180,7 +180,7 @@ bool AudioService::mayEndOnSilence() {
     }
     // Gemini heard a question (or a reminder's text turn, or a tool result)
     // and its reply hasn't started; over music it can take several seconds.
-    if (GeminiProtocol::getInstance().awaitingReply()) {
+    if (VoiceAgent::active().awaitingReply()) {
         LOGI_AUDIO("VAD timeout held (waiting for the reply).");
         return false;
     }
@@ -201,7 +201,7 @@ void AudioService::onVadTimeout() {
 }
 
 void AudioService::onUserSpeechDetected() {
-    GeminiProtocol::getInstance().interruptReply();
+    VoiceAgent::active().interruptReply();
 }
 
 void AudioService::onSpeechDetected() {
@@ -230,7 +230,7 @@ void AudioService::applyPipelineModeSwitch(PipelineMode mode) {
             WakeWordEngine::getInstance().resumeHardware();
             break;
         case PipelineMode::GEMINI_LIVE:
-            // GeminiAudioPump handles its own uplink
+            // VoiceUplinkPump handles its own uplink
             break;
     }
 }
@@ -247,7 +247,7 @@ void AudioService::enterAssistantPlaybackModeNow() {
 void AudioService::setVoiceOptions(bool echo_measure, bool barge_in) {
     WakeWordEngine::getInstance().setEchoMeasure(echo_measure);
     WakeWordEngine::getInstance().setBargeIn(barge_in);
-    GeminiProtocol::getInstance().setBargeIn(barge_in);
+    VoiceAgent::active().setBargeIn(barge_in);
 }
 
 void AudioService::returnToWakeMode() {

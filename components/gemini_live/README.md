@@ -1,22 +1,32 @@
 # gemini_live
 
-The voice assistant: a direct, bidirectional WebSocket connection to
-Google's Gemini Live API, plus the tool/function-calling router that lets
-Gemini actually control the device.
+The voice assistant: the session state machine, the voice backend it talks
+to (today Gemini Live, directly), and the tool router that lets the model
+control the device.
 
 ## What's here
 
-- **`GeminiProtocol`** — the WebSocket client (`esp_websocket_client` via
+- **`VoiceAgent`** — the voice backend as the rest of the firmware sees it:
+  mic audio and text turns up, tool responses, "ready", "reply owed",
+  interrupt, barge-in, end of session. Everything reaches the backend through
+  `VoiceAgent::active()`, which `main` sets once; a second backend (a hub
+  relay) would be another implementation chosen there. It also routes the
+  model's tool calls (board skills or remote MCP tools, error otherwise), so
+  every backend shares one tool path. A backend reacts to
+  `assistant.session_state`, reports `assistant.ws_state`, and writes the
+  reply audio (24 kHz PCM) to `VOICE_RX_BUF`.
+- **`GeminiProtocol`** — the direct backend: the WebSocket client (`esp_websocket_client` via
   the `WssClient` RAII wrapper) talking directly to
   `wss://generativelanguage.googleapis.com`, no proxy. The API key comes
   from NVS (`credentials::geminiApiKey()`), with the `GEMINI_API_KEY`
   Kconfig value as a fallback. Model, voice, system prompt and transcript
   options come from the settings in system.ndb (set from the dashboard),
   read at each session start.
-- **`GeminiAudioPump`** — Core 1 task pumping `MicCapture` (16kHz PCM)
-  uplink audio into the WS connection and Gemini's 24kHz downlink audio
-  out to the speaker path (resampled to 32kHz by `audio_core`'s
-  `Resampler`).
+  Gemini-only extras (session settings, the goAway test hook, the search
+  refusal) stay on `GeminiProtocol`. Reply audio goes to the speaker path at
+  24 kHz and is resampled to 32 kHz by `audio_core`.
+- **`VoiceUplinkPump`** — Core 0 task sending the session's mic audio
+  (16 kHz PCM from `MIC_TX_BUF`) to the backend.
 - **`AssistantService`** — the assistant state machine (idle / listening /
   speaking / tool-executing), triggered by `WakeWordEngine` detections
   from `audio_core`.
@@ -27,12 +37,6 @@ Gemini actually control the device.
 - **`TranscriptLog`** — the last few turns of the conversation as text
   (from Gemini's input and output transcriptions), for
   `/api/assistant/transcript` and the dashboard.
-- **`IVoiceTransport`** — an abstraction the header comments describe as
-  supporting both a "Direct Mode" (`GeminiProtocol`) and a "Relayed Mode"
-  (`RelayVoiceClient`, via a local hub). **Only `GeminiProtocol` actually
-  exists in this codebase** — there is no `RelayVoiceClient` anywhere.
-  Treat the relayed mode as aspirational/undocumented-future-work, not a
-  real option.
 
 ## Tool-calling surface
 
@@ -67,7 +71,7 @@ The alarm, timer and reminder handlers live in
 
 ### Remote MCP Tools
 
-In addition to the 15 built-in tools, `GeminiProtocol` supports dynamically
+In addition to the built-in tools, the voice backend supports dynamically
 registering remote tools discovered from an external Model Context Protocol
 (MCP) server (e.g. `nexus-mcp`). Discovered tools are converted to Gemini
 function declarations (`parametersJsonSchema`) and appended to the setup
@@ -77,9 +81,10 @@ worker task that calls the remote MCP server via HTTP and returns the response.
 
 ## Known limits
 
-- Gemini 3.x Live models reject the `googleSearch` tool with our key and
-  end the session; Live 2.5 native-audio accepts it. Search is therefore
-  not declared.
+- Gemini 3.x Live models reject the `googleSearch` tool with our key (no
+  quota) and end the setup; Live 2.5 native-audio accepts it. The board
+  reconnects without search on such a model for the rest of the boot, and
+  the MCP `web_search` tool is offered instead.
 
 ## Depends on
 

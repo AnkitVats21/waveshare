@@ -2,7 +2,7 @@
 #include "services/weather/WeatherText.h"
 #include "services/storage/SystemDatabase.h"
 #include "common/thread_config.h"
-#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/VoiceAgent.h"
 #include "media_player/TlsConfig.h"
 
 #include <ArduinoJson.h>
@@ -178,7 +178,7 @@ void worker(void* arg) {
         serializeJson(out, result);
         ESP_LOGI(TAG, "get_weather in %lld ms (stack left %u B): %.200s", (esp_timer_get_time() - t0) / 1000,
                  (unsigned)uxTaskGetStackHighWaterMark(nullptr), result.c_str());
-        GeminiProtocol::getInstance().transmitToolResponse(job->call_id, result.c_str());
+        VoiceAgent::active().sendToolResponse(job->call_id, result.c_str());
         delete job;
     }
     vTaskDeleteWithCaps(nullptr);

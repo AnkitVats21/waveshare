@@ -6,7 +6,7 @@
 #include "app/media_player/NexusPlayer.h"
 #include "media_player/CatalogDB.h"
 #include "app/wake_word/WakeWordEngine.h"
-#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/VoiceAgent.h"
 #include "gemini_live/AssistantService.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
@@ -760,10 +760,10 @@ uint32_t AlarmService::tickBriefingMusic() {
     const AssistantState state = EmbeddedSysDb::getInstance().snapshot().assistant.session_state;
     const bool session = state != AssistantState::Idle;
     auto& orch = AudioOrchestrator::getInstance();
-    auto& gemini = GeminiProtocol::getInstance();
+    auto& agent = VoiceAgent::active();
     // The briefing's turn is over and its voice has played out.
     if (m_music == Music::UnderVoice && !m_briefing_spoken &&
-        gemini.turnsCompleted() != m_sched_turn.load() && !orch.isVoiceActive()) {
+        agent.turnsCompleted() != m_sched_turn.load() && !orch.isVoiceActive()) {
         m_briefing_spoken = true;
         m_music_until_ms = now + BRIEFING_FOLLOWUP_MS;   // the follow-up window
     }
@@ -772,7 +772,7 @@ uint32_t AlarmService::tickBriefingMusic() {
         // Up: Gemini's setupComplete arrived (a session listens before that,
         // and a refused setup reconnects: a second handshake). Not coming:
         // the delivery gave up (offline). Or waited long enough.
-        if ((session && gemini.setupComplete()) ||
+        if ((session && agent.ready()) ||
             (m_delivery == Delivery::None && !m_briefing_due) || now >= m_music_until_ms) {
             playBriefingMusic();
         }
@@ -795,7 +795,7 @@ uint32_t AlarmService::tickBriefingMusic() {
     case Music::UnderVoice:
         // After it, a new reply (or, with transcripts on, one owed) means
         // the user said something.
-        if (m_briefing_spoken && (orch.isVoiceActive() || gemini.awaitingReply())) {
+        if (m_briefing_spoken && (orch.isVoiceActive() || agent.awaitingReply())) {
             stopBriefingMusicSoon("the user replied");
         } else if (m_briefing_spoken && session && now >= m_music_until_ms) {
             // No reply in the window. The mic's voice detection counts the
@@ -974,7 +974,7 @@ void AlarmService::deliverReminders() {
 }
 
 bool AlarmService::inScheduledTurn() const {
-    return nowMs() < m_sched_until_ms && GeminiProtocol::getInstance().turnsCompleted() == m_sched_turn;
+    return nowMs() < m_sched_until_ms && VoiceAgent::active().turnsCompleted() == m_sched_turn;
 }
 
 void AlarmService::startOfflineChimes() {
@@ -1017,9 +1017,9 @@ uint32_t AlarmService::tickDelivery() {
             startOfflineChimes();
             break;
         }
-        m_sched_turn = GeminiProtocol::getInstance().turnsCompleted();
+        m_sched_turn = VoiceAgent::active().turnsCompleted();
         m_sched_until_ms = now + SPEAK_TIMEOUT_MS + SCHEDULED_TURN_MS;
-        GeminiProtocol::getInstance().sendTextTurn(m_delivery_prompt);
+        VoiceAgent::active().sendTextTurn(m_delivery_prompt);
         m_delivery = Delivery::Speaking;
         m_delivery_next_ms = now + SPEAK_TIMEOUT_MS;
         break;

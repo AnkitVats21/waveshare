@@ -1,5 +1,5 @@
-#include "GeminiAudioPump.h"
-#include "GeminiProtocol.h"
+#include "VoiceUplinkPump.h"
+#include "VoiceAgent.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
@@ -7,37 +7,32 @@
 #include "app/audio/MicCapture.h"
 #include "app/audio/SpeakerPlayback.h"
 #include "app/wake_word/WakeWordEngine.h"
-#include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstring>
 
 static auto &sysdb = EmbeddedSysDb::getInstance();
 
-GeminiAudioPump::GeminiAudioPump(const Config& cfg)
+VoiceUplinkPump::VoiceUplinkPump(const Config& cfg)
     : TaskBase(cfg)
 {
-    // Allocate 2KB persistent external PSRAM arena for base64 transcoding
-    m_static_b64_arena = static_cast<char*>(
-        heap_caps_malloc(2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-    );
-    assert(m_static_b64_arena != nullptr);
 }
 
-GeminiAudioPump& GeminiAudioPump::getInstance() {
+VoiceUplinkPump& VoiceUplinkPump::getInstance() {
     static Config default_config = {
-        .name = "GeminiAudioPump",
+        .name = "VoiceUplinkPump",
         .stack_size = ThreadConfig::StackSize::STACK_NORMAL,
         .priority = ThreadConfig::Priority::AUDIO_PUMP,
-        // Core 0: each chunk is base64 + JSON + a synchronous TLS WebSocket send,
-        // i.e. network work; keep it off Core 1, which carries the AFE feed (AEC+BSS).
+        // Core 0: each chunk is a synchronous send on the backend's
+        // connection (for Gemini base64 + JSON + TLS), i.e. network work;
+        // keep it off Core 1, which carries the AFE feed (AEC+BSS).
         .core_id = ThreadConfig::CORE_NETWORK
     };
-    static GeminiAudioPump instance(default_config);
+    static VoiceUplinkPump instance(default_config);
     return instance;
 }
 
-bool GeminiAudioPump::start() {
+bool VoiceUplinkPump::start() {
     if (!TaskBase::start() || m_task_handle == nullptr) {
         return false;
     }
@@ -45,8 +40,8 @@ bool GeminiAudioPump::start() {
     return true;
 }
 
-void GeminiAudioPump::run() {
-    LOGI_AUDIO("GeminiAudioPump running on Core %d", xPortGetCoreID());
+void VoiceUplinkPump::run() {
+    LOGI_AUDIO("VoiceUplinkPump running on Core %d", xPortGetCoreID());
 
     // Initialize cache
     m_cached_ws_state = sysdb.wsState();
@@ -60,7 +55,7 @@ void GeminiAudioPump::run() {
     }
 }
 
-bool GeminiAudioPump::processUplink() {
+bool VoiceUplinkPump::processUplink() {
     auto& bm = BufferManager::getInstance();
     size_t chunk_size = 0;
 
@@ -75,7 +70,7 @@ bool GeminiAudioPump::processUplink() {
     if (m_cached_pipeline_mode == PipelineMode::GEMINI_LIVE &&
         WakeWordEngine::getInstance().isStreamingActive() &&
         (m_cached_ws_state == WsState::CONNECTING || m_cached_ws_state == WsState::CONNECTED) &&
-        !GeminiProtocol::getInstance().setupComplete()) {
+        !VoiceAgent::active().ready()) {
         return false;
     }
 
@@ -97,14 +92,7 @@ bool GeminiAudioPump::processUplink() {
 
         // Transmit only in GEMINI_LIVE mode, when streaming is active, and WebSocket is connected
         if (live_mode && streaming && ws_connected) {
-            size_t written = 0;
-            if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(m_static_b64_arena),
-                                      2048, &written, pcm_data, chunk_size) == 0) {
-                m_static_b64_arena[written] = '\0';
-                GeminiProtocol::getInstance().transmitAudioUplink(m_static_b64_arena);
-            } else {
-                LOGE_AUDIO("Base64 encoding failed.");
-            }
+            VoiceAgent::active().sendMicAudio(pcm_data, chunk_size);
         }
 
         // Always return the item

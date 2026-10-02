@@ -63,7 +63,7 @@ The gap is smaller than expected:
 | `freertos/event_groups.h` | `AudioEngine` | S |
 | `esp_rom_crc.h` (`esp_rom_crc32_le`) | `CatalogDB` | XS — any crc32 |
 | `esp_crt_bundle.h` | HTTP/WS TLS setup | XS — empty stub |
-| `mbedtls/base64.h` | `GeminiProtocol`, `GeminiAudioPump` | XS — system mbedtls or ~40 LOC |
+| `mbedtls/base64.h` | `GeminiProtocol` | XS — system mbedtls or ~40 LOC |
 | ArduinoJson include path | skills parsing, Invidious | XS — header-only, builds on desktop as-is |
 | libopus + micro-opus include path | `WebMOpusDecoder`, `OggOpusDecoderStrategy` | S — link system `libopus` |
 
@@ -202,7 +202,7 @@ work is:
 - Estimated 4–6 weeks.
 
 Existing seams to build on if that day comes: `IStorageService`,
-`IPlaybackObserver`, `IDeviceCommandDelegate`, `IVoiceTransport`, and
+`IPlaybackObserver`, `IDeviceCommandDelegate`, `VoiceAgent`, and
 `ui_view`'s deliberately ESP-free `UiSnapshot`.
 
 ---

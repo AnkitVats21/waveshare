@@ -2,6 +2,7 @@
 #include "http_server/HttpUtil.h"
 #include "audio_core/WakeWordEngine.h"
 #include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/VoiceAgent.h"
 #include "gemini_live/TranscriptLog.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "services/http/StateNames.h"
@@ -22,7 +23,7 @@ esp_err_t manualWake(httpd_req_t* req, uint32_t silence_timeout_ms,
                                                      : "Wake word is suppressed (alarm or recording)";
         return Http::sendError(req, 409, why);
     }
-    if (!text.empty()) GeminiProtocol::getInstance().sendTextTurn(text);
+    if (!text.empty()) VoiceAgent::active().sendTextTurn(text);
     return Http::sendOk(req, "Wake requested");
 }
 

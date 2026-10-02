@@ -1,7 +1,7 @@
 #include "services/weather/Weather.h"
 #include "AppController.h"
 #include "app/audio/AudioService.h"
-#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/VoiceAgent.h"
 #include "gemini_live/gemini_skills_generated.h"
 #include "app/led/LedService.h"
 #include "gemini_live/AssistantService.h"
@@ -43,8 +43,8 @@ bool AppController::begin() {
     // Register platform delegate for local device commands
     DeviceCommandHandler::setDelegate(this);
 
-    // Register tool-call handler callback with GeminiProtocol
-    GeminiProtocol::getInstance().setToolCallHandler(handleGeminiToolCall, this);
+    // The board's own tools, for whichever voice backend is in use
+    VoiceAgent::active().setToolCallHandler(handleGeminiToolCall, this);
 
     m_wifi_connected = EmbeddedSysDb::getInstance().snapshot().system.wifi_connected;
 
@@ -118,7 +118,7 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
     serializeJson(response_doc, feedback_string);
 
     LOGI_SYSTEM("Uplinking tool response: %s", feedback_string.c_str());
-    GeminiProtocol::getInstance().transmitToolResponse(skill_call.call_id, feedback_string.c_str());
+    VoiceAgent::active().sendToolResponse(skill_call.call_id, feedback_string.c_str());
 
     // If it was a media command, set the media_pending_idle flag to trigger immediate session termination once speaking finishes
     if (is_media_command) {

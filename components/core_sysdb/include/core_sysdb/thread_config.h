@@ -25,7 +25,7 @@ namespace ThreadConfig {
         ASSISTANT        = 6,   ///< AssistantService state machine
         LED              = 6,   ///< LedService animation loop
         GEMINI_PROTOCOL  = 7,   ///< GeminiProtocol WebSocket handler (Core 0)
-        AUDIO_PUMP       = 8,   ///< GeminiAudioPump uplink (Core 0)
+        AUDIO_PUMP       = 8,   ///< VoiceUplinkPump uplink (Core 0)
         WAKE_WORD_FEED   = 9,   ///< WakeWordEngine feed task (AFE feed: AEC + BSS, Core 1)
         AUDIO_SERVICE    = 10,  ///< AudioService reactor loop
         AUDIO_ALERT      = 11,  ///< AlertPlayer chime/notification generator (Core 1)

@@ -15,7 +15,7 @@ Core 1 (`CORE_AUDIO`).
 - **`SpeakerPlayback`** — the I2S DMA writer task. Mixes whatever the
   orchestrator currently has active and writes it out with jitter control.
 - **`MicCapture`** — the I2S DMA reader task feeding both the wake-word
-  engine and the Gemini Live uplink (`GeminiAudioPump`, in `gemini_live`).
+  engine and the voice uplink (`VoiceUplinkPump`, in `gemini_live`).
 - **`WakeWordEngine`** — wraps ESP-SR WakeNet + AFE (AEC/BSS/NS/VAD).
   Gated by `CONFIG_WAVESHARE_WAKEWORD_ENABLE` (off in `Kconfig`, on in the
   device's config); on detection it notifies `AssistantService` (in

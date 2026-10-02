@@ -7,7 +7,7 @@
 #include "gemini_live/AssistantService.h"
 #include "app/input/KeyService.h"
 #include "gemini_live/GeminiProtocol.h"
-#include "gemini_live/GeminiAudioPump.h"
+#include "gemini_live/VoiceUplinkPump.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/MusicPlaybackService.h"
 #include "common/AppLogger.h"
@@ -124,7 +124,9 @@ extern "C" void app_main(void) {
     static AudioService         audio_svc(audio_hal, handles);
     static LedService           led_svc(led_strip);
     static AssistantService     assistant_svc;
+    // The voice backend: Gemini Live, direct.
     static GeminiProtocol&      gemini_proto = GeminiProtocol::getInstance();
+    VoiceAgent::setActive(gemini_proto);
     gemini_proto.setSettingsSource([]() {
         ndb::system::Settings s = Services::loadSettings();
         return GeminiProtocol::SessionSettings{s.gemini_model, s.gemini_voice, s.gemini_system_prompt,
@@ -132,7 +134,8 @@ extern "C" void app_main(void) {
                                                s.keepalive_s, s.web_search, s.vad_start,
                                                s.vad_end, s.vad_prefix_ms, s.vad_silence_ms};
     });
-    gemini_proto.setRemoteToolCallHandler([](const char* call_id, const char* name, JsonObjectConst args, void* ctx) -> bool {
+    VoiceAgent& voice_agent = VoiceAgent::active();
+    voice_agent.setRemoteToolCallHandler([](const char* call_id, const char* name, JsonObjectConst args, void* ctx) -> bool {
         std::string args_json;
         if (!args.isNull() && args.size() > 0) {
             serializeJson(args, args_json);
@@ -141,13 +144,13 @@ extern "C" void app_main(void) {
         }
         return Mcp::McpService::instance().executeToolAsync(call_id, name, args_json);
     }, nullptr);
-    gemini_proto.setRemoteToolsDeclarationsSource([](JsonArray& functionDeclarations, bool builtin_search, void* ctx) {
+    voice_agent.setRemoteToolsDeclarationsSource([](JsonArray& functionDeclarations, bool builtin_search, void* ctx) {
         // With Google Search in the setup, the MCP search would be a second
         // tool for the same thing.
         Mcp::McpService::instance().populateGeminiDeclarations(functionDeclarations,
                                                               builtin_search ? "web_search" : nullptr);
     }, nullptr);
-    static GeminiAudioPump&     gemini_pump = GeminiAudioPump::getInstance();
+    static VoiceUplinkPump&     uplink_pump = VoiceUplinkPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
@@ -173,7 +176,7 @@ extern "C" void app_main(void) {
     static Mcp::McpTrackSource track_source(MusicPlaybackService::getInstance().fallbackTrackSource());
     MusicPlaybackService::getInstance().setTrackSource(&track_source);
     MusicPlaybackService::getInstance().begin();
-    gemini_pump.start();
+    uplink_pump.start();
     app_ctrl.begin();
     Services::TimeSyncHelper::instance().begin();
     Services::openRecordingsDbAsync();  // after the timezone: file times are local

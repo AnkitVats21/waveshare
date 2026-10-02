@@ -48,7 +48,7 @@ enum class AssistantVisualState : int {
 // ── Audio pipeline mode selector ─────────────────────────────────────────────
 enum class PipelineMode : uint8_t {
     WAKE_IDLE,    ///< WakeNet armed, no network streaming (boot default)
-    GEMINI_LIVE,  ///< WebSocket uplink via GeminiAudioPump
+    GEMINI_LIVE,  ///< mic audio to the voice backend via VoiceUplinkPump
 };
 
 // ── WebSocket Connection State ───────────────────────────────────────────────

@@ -1,7 +1,7 @@
 #include "AssistantService.h"
 #include "audio_core/AlertPlayer.h"
 #include "app/audio/AudioOrchestrator.h"
-#include "GeminiProtocol.h"
+#include "VoiceAgent.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
@@ -313,7 +313,7 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             sessionActive = false;
             micEnabled = false;
             connectRequested = false;
-            GeminiProtocol::getInstance().endSession();
+            VoiceAgent::active().endSession();
             // Voice that started without a turnComplete to end it (reply audio
             // racing the close) would leave the orchestrator "speaking": the mic
             // stays muted in every later session and paused music stays paused.

@@ -2,7 +2,7 @@
 #include "services/storage/SystemDatabase.h"
 #include "credentials/Credentials.h"
 #include "common/thread_config.h"
-#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/VoiceAgent.h"
 #include "gemini_live/PsramAllocator.h"
 
 #include <esp_heap_caps.h>
@@ -47,7 +47,7 @@ void mcpToolWorker(void* arg) {
                  job->name.c_str(), (esp_timer_get_time() - t0) / 1000,
                  (unsigned)uxTaskGetStackHighWaterMark(nullptr), gemini_formatted.c_str());
 
-        GeminiProtocol::getInstance().transmitToolResponse(job->call_id, gemini_formatted.c_str());
+        VoiceAgent::active().sendToolResponse(job->call_id, gemini_formatted.c_str());
         delete job;
     }
     vTaskDeleteWithCaps(nullptr);

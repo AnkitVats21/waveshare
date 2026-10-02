@@ -5,7 +5,7 @@
 #include "freertos/task.h"
 #include "sd_storage/Fs.h"
 #include "sd_storage/File.h"
-#include "gemini_live/GeminiProtocol.h"
+#include "gemini_live/VoiceAgent.h"
 #include <algorithm>
 #include <cstring>
 #include <ctime>
@@ -148,7 +148,7 @@ void deleteNotes(const std::vector<std::string>& names, bool confirmed, JsonDocu
     // Sorted and unique, so the confirmed call may list them in any order.
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
-    uint32_t turn = GeminiProtocol::getInstance().turnsCompleted();
+    uint32_t turn = VoiceAgent::active().turnsCompleted();
     if (!confirmed || paths != s_pending_delete.paths || turn == s_pending_delete.turn) {
         s_pending_delete = {paths, turn};
         JsonArray notes = response_doc["notes"].to<JsonArray>();

@@ -1,5 +1,4 @@
 #include "GeminiProtocol.h"
-#include "GeminiAudioPump.h"
 #include "gemini_skills_generated.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
@@ -56,7 +55,7 @@ GeminiProtocol::GeminiProtocol()
     assert(m_static_pcm_scratch_arena != nullptr);
 
     m_static_payload_arena = static_cast<char*>(
-        heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        heap_caps_malloc(PAYLOAD_ARENA_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
     );
     assert(m_static_payload_arena != nullptr);
 
@@ -492,9 +491,9 @@ void GeminiProtocol::transmitSetupHandshake() {
         setup["tools"].add<JsonObject>()["googleSearch"].to<JsonObject>();
     }
 
-    if (m_remote_decls_source) {
+    {
         JsonArray decls = setup["tools"][0]["functionDeclarations"];
-        m_remote_decls_source(decls, search, m_remote_decls_ctx);
+        addRemoteToolDeclarations(decls, search);
     }
 
     std::string payload;
@@ -509,7 +508,7 @@ void GeminiProtocol::transmitSetupHandshake() {
     m_client.sendLargeText(payload.c_str(), payload.length(), pdMS_TO_TICKS(2000));
 }
 
-void GeminiProtocol::transmitToolResponse(const char* call_id, const char* json_result) {
+void GeminiProtocol::sendToolResponse(const char* call_id, const char* json_result) {
     if (!m_client.isConnected() || !call_id) return;
     
     JsonDocument doc;
@@ -548,28 +547,31 @@ void GeminiProtocol::transmitToolResponse(const char* call_id, const char* json_
     LOGE_NET("Tool response %s could not be sent; the reply will not come", call_id);
 }
 
-void GeminiProtocol::transmitAudioUplink(const char* base64_pcm) {
-    if (!m_client || !m_client.isConnected() || !base64_pcm) return;
+void GeminiProtocol::sendMicAudio(const uint8_t* pcm, size_t len) {
+    if (!m_client || !m_client.isConnected() || !pcm || len == 0) return;
     
     // Half-duplex: no uplink while the assistant speaks, unless barge-in.
     if (!m_barge_in && sysdb.assistantSpeaking()) {
         return;
     }
     
-    int payload_len = snprintf(m_static_payload_arena, 4096, 
-                               "{\"realtimeInput\":{\"audio\":{\"mimeType\":\"audio/pcm;rate=16000\",\"data\":\"%s\"}}}", 
-                               base64_pcm);
-    if (payload_len > 0 && payload_len < 4096) {
-        int ret = m_client.sendText(m_static_payload_arena, payload_len, pdMS_TO_TICKS(2000));
-        if (ret < 0) {
-            LOGW_NET("Failed to send audio uplink chunk, err=%d", ret);
-        }
+    // The base64 goes straight into the payload, between its two halves.
+    static constexpr char HEAD[] = "{\"realtimeInput\":{\"audio\":{\"mimeType\":\"audio/pcm;rate=16000\",\"data\":\"";
+    static constexpr char TAIL[] = "\"}}}";
+    char* out = m_static_payload_arena;
+    size_t head_len = sizeof(HEAD) - 1;
+    size_t room = PAYLOAD_ARENA_SIZE - head_len - (sizeof(TAIL) - 1);
+    size_t b64_len = 0;
+    memcpy(out, HEAD, head_len);
+    if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(out + head_len), room, &b64_len, pcm, len) != 0) {
+        LOGE_NET("Mic chunk of %u bytes is too large to send", (unsigned)len);
+        return;
     }
-}
-
-void GeminiProtocol::sendTextDirect(const char* text) {
-    if (isConnected() && text) {
-        m_client.sendText(text, strlen(text), pdMS_TO_TICKS(1000));
+    memcpy(out + head_len + b64_len, TAIL, sizeof(TAIL) - 1);
+    int payload_len = (int)(head_len + b64_len + sizeof(TAIL) - 1);
+    int ret = m_client.sendText(out, payload_len, pdMS_TO_TICKS(2000));
+    if (ret < 0) {
+        LOGW_NET("Failed to send audio uplink chunk, err=%d", ret);
     }
 }
 
@@ -1011,36 +1013,9 @@ void GeminiProtocol::handleToolCall(JsonObjectConst toolCall) {
             continue;
         }
 
-        // Every call must get a toolResponse, or the model waits on it.
-        auto& slot = m_static_skill_event_slot;
-        slot.reset();
-        if (!GeminiSkills::decode_incoming_arguments(name, argsObj, slot)) {
-            if (m_remote_tool_handler && m_remote_tool_handler(id, name, argsObj, m_remote_tool_ctx)) {
-                LOGI_NET("Remote MCP tool dispatched: %s", name);
-                expectReply();
-                slot.reset();
-                continue;
-            }
-            LOGW_NET("Rejected tool call '%s': %s", name, slot.error);
-            JsonDocument err;
-            err["status"] = "error";
-            err["message"] = slot.error;
-            std::string out;
-            serializeJson(err, out);
-            transmitToolResponse(id, out.c_str());
-            slot.reset();
-            continue;
+        if (dispatchToolCall(id, name, argsObj)) {
+            expectReply();   // the model answers after our toolResponse
         }
-        std::strncpy(slot.call_id, id, sizeof(slot.call_id) - 1);
-
-        LOGI_NET("Tool request: %s", name);
-        expectReply();   // the model answers after our toolResponse
-        if (m_tool_handler) {
-            m_tool_handler(slot, m_tool_ctx);
-        } else {
-            transmitToolResponse(id, "{\"status\":\"error\",\"message\":\"No tool handler\"}");
-        }
-        slot.reset();
     }
 }
 

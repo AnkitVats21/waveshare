@@ -2,6 +2,7 @@
 
 #include "common/ReactorTask.h"
 #include "WssClient.h"
+#include "VoiceAgent.h"
 #include "gemini_skills_generated.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -12,32 +13,10 @@
 #include <mutex>
 #include <string>
 
-class GeminiProtocol : public ReactorTask {
+// The direct backend: one WebSocket to Gemini Live (VoiceAgent).
+class GeminiProtocol : public ReactorTask, public VoiceAgent {
 public:
     static GeminiProtocol& getInstance();
-
-    typedef void (*ToolCallHandlerFn)(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx);
-
-    void setToolCallHandler(ToolCallHandlerFn handler, void* ctx) {
-        m_tool_handler = handler;
-        m_tool_ctx = ctx;
-    }
-
-    // Remote tool call handler (e.g. MCP tools). Returns true if the call was accepted/dispatched.
-    typedef bool (*RemoteToolCallHandlerFn)(const char* call_id, const char* name, JsonObjectConst args, void* ctx);
-    void setRemoteToolCallHandler(RemoteToolCallHandlerFn handler, void* ctx) {
-        m_remote_tool_handler = handler;
-        m_remote_tool_ctx = ctx;
-    }
-
-    // Remote function declarations hook (e.g. MCP tools to add to Gemini setup handshake).
-    // builtin_search: Google Search is in this setup, so a remote search tool
-    // would duplicate it.
-    typedef void (*RemoteToolsDeclarationsFn)(JsonArray& functionDeclarations, bool builtin_search, void* ctx);
-    void setRemoteToolsDeclarationsSource(RemoteToolsDeclarationsFn source, void* ctx) {
-        m_remote_decls_source = source;
-        m_remote_decls_ctx = ctx;
-    }
 
     // Model, voice, system prompt and transcripts for the next session. Empty
     // strings mean the firmware defaults. The source is set by the app
@@ -61,54 +40,44 @@ public:
     typedef SessionSettings (*SettingsSourceFn)();
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
 
-    void transmitToolResponse(const char* call_id, const char* json_result);
-    void transmitAudioUplink(const char* base64_pcm);
-    
-    bool isConnected() { return m_client.isConnected(); }
-    void connect();
-    void closeConnection();
-    // The session is over. Keeps a healthy, quiet connection open for
-    // keepalive_s (mic off, reply audio dropped) so a wake inside that window
-    // skips the connect and setup; otherwise closes it.
-    void endSession();
-    void forceReconnect() { connect(); }
-    void sendTextDirect(const char* text);
-
-    // Sends `text` as a user turn (realtimeInput text) once the session is set
-    // up: now if it already is, else when setupComplete arrives. Dropped if the
-    // connection closes first. Used by reminders to have Gemini speak.
-    void sendTextTurn(const std::string& text);
-    // A reply is owed and hasn't started: a text turn was sent (or queued),
-    // the person's speech was transcribed, or a tool call was answered. The
-    // VAD silence timeout must not end the session meanwhile (the reply can
-    // take several seconds over music). Gives up after REPLY_WAIT_US.
-    bool awaitingReply();
+    // VoiceAgent
+    // Mic audio goes up as realtimeInput (base64 in JSON).
+    void sendMicAudio(const uint8_t* pcm, size_t len) override;
+    // A realtimeInput text turn.
+    void sendTextTurn(const std::string& text) override;
+    void sendToolResponse(const char* call_id, const char* json_result) override;
     // The connection is up and Gemini has acknowledged the setup.
-    bool setupComplete() {
+    bool ready() override {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         return m_setup_complete && isConnected();
     }
+    // Gives up after REPLY_WAIT_US (the reply can take several seconds over
+    // music).
+    bool awaitingReply() override;
+    // If the reply is still arriving, its remaining audio (and anything
+    // Gemini says after it) is queued on the connection, so the session moves
+    // to a new connection that resumes the conversation.
+    void interruptReply() override;
+    void setBargeIn(bool on) override { m_barge_in = on; }
+    uint32_t turnsCompleted() const override { return m_turns_completed; }
+    // Keeps a healthy, quiet connection open for keepalive_s (mic off, reply
+    // audio dropped) so a wake inside that window skips the connect and
+    // setup; otherwise closes it.
+    void endSession() override;
+
+    bool isConnected() { return m_client.isConnected(); }
+    void connect();
+    void closeConnection();
 
     // Test hook (POST /api/assistant/handoff): act as if Gemini had sent
     // goAway. False without a live session.
     bool simulateGoAway();
 
-    // Barge-in: mic audio goes up while a reply plays, and an "interrupted"
-    // from Gemini drops the rest of the reply.
-    void setBargeIn(bool on) { m_barge_in = on; }
-    // Model turns finished since boot; a tool can tell whether the model
-    // spoke (and the user could answer) between two of its calls.
-    uint32_t turnsCompleted() const { return m_turns_completed; }
     // The model that refused Google Search this boot ("models/..."), or "".
     std::string searchRefusedModel() {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         return m_search_refused_model;
     }
-    // Stops the reply now (the person talked over it). If the reply is
-    // still arriving, its remaining audio (and anything Gemini says after
-    // it) is queued on the connection, so the session moves to a new
-    // connection that resumes the conversation.
-    void interruptReply();
     static constexpr int64_t REPLY_WAIT_US = 15LL * 1000 * 1000;
     // A tool response is retried this many times, waiting this long for the
     // client each time.
@@ -204,18 +173,11 @@ private:
     SettingsSourceFn m_settings_source = nullptr;
     std::string m_ws_uri;
 
-    ToolCallHandlerFn m_tool_handler = nullptr;
-    void* m_tool_ctx = nullptr;
-    RemoteToolCallHandlerFn m_remote_tool_handler = nullptr;
-    void* m_remote_tool_ctx = nullptr;
-    RemoteToolsDeclarationsFn m_remote_decls_source = nullptr;
-    void* m_remote_decls_ctx = nullptr;
-
     // Persistent Zero-Allocation Arenas for Audio & Skill Tool execution
     uint8_t* m_static_pcm_scratch_arena = nullptr;
-    char* m_static_payload_arena = nullptr;
+    char* m_static_payload_arena = nullptr;   // mic audio frames
+    static constexpr size_t PAYLOAD_ARENA_SIZE = 4096;
     // static constexpr size_t STATIC_PCM_ARENA_MAX_SIZE = 65536; // 64KB max decoded output ceiling
-    GeminiSkills::DecodedSkillCall m_static_skill_event_slot;
 
     // Fixed-size memory management variables in PSRAM
     static constexpr size_t PSRAM_RB_SIZE = 512 * 1024;      // 512KB static ring buffer pool
