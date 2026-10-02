@@ -1,6 +1,7 @@
 # Plan: Hub mode (voice relay and music control on a LAN hub)
 
-Status: **phase 2 built** (voice through the hub, PCM both ways); phase 3 (music control) next
+Status: **phase 2 built** (voice through the hub, PCM both ways); phase 3
+(music control, edges and roles, section 13) in progress
 Last updated: 2026-10-02
 
 ---
@@ -22,6 +23,10 @@ microphone, the speaker, the wake word, the music player and the clock.
 | Alarms, timers, reminders | Board | Board |
 | Dashboard | Served by the board, one client | Served by the hub, many clients |
 | Orbit satellites | Connect to the board | Connect to the hub |
+
+Since phase 3 the hub is not only the board's hub: the board is one *edge*
+among others (Orbit on a PC or Pi, a phone later), all speaking one protocol
+(section 13). The board keeps its full standalone mode.
 
 Both modes stay. Hub support is a build option, and the mode is a setting that
 can change at run time; in `auto`, the board uses the hub when it is up and
@@ -288,7 +293,7 @@ separately, with what was measured.
 | 0. Baseline | Nothing new: record the numbers from section 7 in direct mode | | Numbers written down |
 | 1. Link and dashboard | `HubLink`, hello, heartbeat, state push; settings and token | Board endpoint, dashboard served with the `/api/*` proxy and state fan-out | The dashboard works through the hub with two browsers open |
 | 2. Voice | `HubAgent` (PCM up, Opus down), backend choice per session, `auto` failover | Gemini session manager, Opus encode, tools, MCP | Sessions through the hub on the PC; failover to direct tested |
-| 3. Music control | Control mode in `MusicPlaybackService`, queue copy, `music_*` messages | Music controller (new: queue, recommendations, outputs), satellite endpoint moves to the hub | Play, skip, seek, voice "play X", hub dropped mid-song |
+| 3. Music control | Roles in the hello; `MusicPlaybackService` as player + controller with a queue copy (section 13) | Music controller and music tools, edges with roles, Orbit on the hub, music cache | Play, skip, seek, voice "play X" through either voice path, Orbit as an output, hub dropped mid-song |
 | 4. Opus uplink | Opus encoder, format negotiation, uplink settings | Opus decode | CPU measured; `auto` picks sensibly |
 | 5. Pi | | Built and run on the Pi Zero 2W | Section 7 measured on the Pi |
 
@@ -404,3 +409,53 @@ hub, a goAway handoff on the device, and the one link drop in
 - **Several boards:** one Gemini session per board (rooms are separate
   conversations). `hello` carries the device id from the start; the first
   version assumes one board.
+
+## 13. Edges and roles (phase 3 plan, 2026-10-02)
+
+The hub is the brain; every device is an edge. An edge does audio in and out
+(wake word, mic, speaker), plays music and sends what the person does on it.
+The ESP board is one edge; Orbit on Linux, Windows or a Pi is another; an
+Android app could be a third. They speak the same protocol and differ only in
+how they implement it. Logic that more than one kind of edge would need goes
+in the hub.
+
+The ESP board keeps everything it does today in direct mode (Gemini, its
+skills, MCP, the queue, the card cache, alarms, satellites on `/api/orbit/ws`).
+Hub support stays a build option and a setting, and the board carries on
+alone when the hub goes away. Other edges need no standalone mode.
+
+The protocol is written down as its own document, `docs/PROTOCOL.md` in the
+nexus-orbit repository, from which any new client is built. It replaces
+sections 4.1 and 4.3 here. In short:
+
+- **Roles in the hello:** `voice`, `player`, `controller`, `state` (the
+  board's state push and HTTP API, board only). A hello without roles is
+  read as a phase 2 board.
+- **The hub owns the music tools.** In a hub session, `play`, `playback`
+  and `music_output` run in the hub's music controller; the board's
+  declarations with those names are dropped from the setup it sends. Any
+  voice edge gets music without implementing it. (This was section 5; it
+  is now in the protocol.) In direct mode the board's own skills run as
+  today, and act on the hub's queue through the controller role.
+- **One player protocol** for the board and Orbit (`music_play`, pause,
+  resume, seek, stop, `music_queue`, `music_url`; `music_report`,
+  `music_event`, `music_renew`). Picking the output is picking a player.
+- **Queue copy:** a player that declares `queue_copy` (the board) gets the
+  queue and carries on without the hub; when the link returns, `music_sync`
+  makes its state the hub's.
+- **A voice session pauses music wherever it plays:** the edge pauses its
+  own music, and the hub pauses another edge's for the session (it learns of
+  direct sessions from `voice_activity`).
+
+Steps, each committed and tested on its own:
+
+| Step | Where | What |
+|---|---|---|
+| 3.1 | hub | `docs/PROTOCOL.md`; edges with roles (several at once, by id); music controller: queue, search and stream URLs through nexus-mcp `music_track` (invidious-daemon as fallback), next track's URL fetched ahead, repeat, autoplay from recommendations; the music tools. Tested against fake edges |
+| 3.2 | board | Hello with roles; setting `music_control` (`auto`: the hub when its welcome says `music`, else `local`). In hub mode `MusicPlaybackService` sends keys, dashboard, voice and queue edits as `music_action`, plays what the hub sends, mirrors `music_queue` into its own queue (so the dashboard needs no change), reports position and track ends; local again when the link drops, `music_sync` when it returns. Recordings and alarms stay on the board |
+| 3.3 | Orbit | Orbit connects to the hub as a player (and controller for its media keys) with the new messages; its board protocol stays for direct mode |
+| 3.4 | hub | Music cache: the hub keeps the songs it has played (size limit, least recently used out) and serves them to players over the LAN; fetches the next song ahead. The board keeps its card cache |
+| 3.5 | all | Measure: play, skip and seek delay, gap between songs, hub killed mid-song and on the last song, hub restart; RAM on the board. Write "Phase 3 as built" |
+
+Not in phase 3: a hub-side default setup (prompt, voice) for edges that send
+none, and a dashboard that reads `music_state` from the hub directly.
