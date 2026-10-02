@@ -43,8 +43,8 @@ bool AppController::begin() {
     // Register platform delegate for local device commands
     DeviceCommandHandler::setDelegate(this);
 
-    // The board's own tools, for whichever voice backend is in use
-    VoiceAgent::active().setToolCallHandler(handleGeminiToolCall, this);
+    // The board's own tools, for every voice backend
+    VoiceAgent::setToolCallHandler(handleGeminiToolCall, this);
 
     m_wifi_connected = EmbeddedSysDb::getInstance().snapshot().system.wifi_connected;
 

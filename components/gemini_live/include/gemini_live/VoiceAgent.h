@@ -21,15 +21,28 @@
  * - hands each tool call to dispatchToolCall(), and sends the answer when
  *   sendToolResponse() is called (from any task).
  *
- * The rest of the firmware reaches the backend through active() only.
+ * The rest of the firmware reaches the backend through active() only. The
+ * backend is chosen when a session starts (selectForSession()); a backend
+ * that isn't active() leaves the session alone.
  */
 class VoiceAgent {
 public:
     virtual ~VoiceAgent() = default;
 
-    // The backend in use. Set once by main before the services start.
+    // The backend in use. Set by main before the services start, then by
+    // selectForSession().
     static VoiceAgent& active();
     static void setActive(VoiceAgent& agent);
+    bool isActive() const;
+    // Picks the backend for a session (main: the voice_backend setting and
+    // whether the hub is up). AssistantService calls selectForSession() as a
+    // session starts, before it asks for a connection, so the choice never
+    // changes during a session.
+    typedef VoiceAgent& (*SelectorFn)(void* ctx);
+    static void setSelector(SelectorFn selector, void* ctx);
+    static void selectForSession();
+    // Short name for logs ("direct", "hub").
+    virtual const char* name() const = 0;
 
     // Mic audio, 16-bit mono PCM at 16 kHz, while a session streams. Dropped
     // when the backend can't take it (not ready; the reply is playing and
@@ -61,7 +74,8 @@ public:
 
     // Tools. The board's own skills (gemini_skills_schema.json) go to the
     // tool handler; any other name to the remote handler (MCP), whose
-    // declarations come from the declarations source.
+    // declarations come from the declarations source. Shared by every
+    // backend.
     typedef void (*ToolCallHandlerFn)(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx);
     // True if the call was accepted (it answers through sendToolResponse).
     typedef bool (*RemoteToolCallHandlerFn)(const char* call_id, const char* name, JsonObjectConst args, void* ctx);
@@ -69,17 +83,17 @@ public:
     // tool would duplicate it.
     typedef void (*RemoteToolsDeclarationsFn)(JsonArray& functionDeclarations, bool builtin_search, void* ctx);
 
-    void setToolCallHandler(ToolCallHandlerFn handler, void* ctx) {
-        m_tool_handler = handler;
-        m_tool_ctx = ctx;
+    static void setToolCallHandler(ToolCallHandlerFn handler, void* ctx) {
+        s_tool_handler = handler;
+        s_tool_ctx = ctx;
     }
-    void setRemoteToolCallHandler(RemoteToolCallHandlerFn handler, void* ctx) {
-        m_remote_tool_handler = handler;
-        m_remote_tool_ctx = ctx;
+    static void setRemoteToolCallHandler(RemoteToolCallHandlerFn handler, void* ctx) {
+        s_remote_tool_handler = handler;
+        s_remote_tool_ctx = ctx;
     }
-    void setRemoteToolsDeclarationsSource(RemoteToolsDeclarationsFn source, void* ctx) {
-        m_remote_decls_source = source;
-        m_remote_decls_ctx = ctx;
+    static void setRemoteToolsDeclarationsSource(RemoteToolsDeclarationsFn source, void* ctx) {
+        s_remote_decls_source = source;
+        s_remote_decls_ctx = ctx;
     }
 
 protected:
@@ -90,15 +104,15 @@ protected:
     bool dispatchToolCall(const char* call_id, const char* name, JsonObjectConst args);
     // The remote (MCP) tools' declarations, for the backend's setup.
     void addRemoteToolDeclarations(JsonArray& functionDeclarations, bool builtin_search) {
-        if (m_remote_decls_source) m_remote_decls_source(functionDeclarations, builtin_search, m_remote_decls_ctx);
+        if (s_remote_decls_source) s_remote_decls_source(functionDeclarations, builtin_search, s_remote_decls_ctx);
     }
 
 private:
-    ToolCallHandlerFn m_tool_handler = nullptr;
-    void* m_tool_ctx = nullptr;
-    RemoteToolCallHandlerFn m_remote_tool_handler = nullptr;
-    void* m_remote_tool_ctx = nullptr;
-    RemoteToolsDeclarationsFn m_remote_decls_source = nullptr;
-    void* m_remote_decls_ctx = nullptr;
+    static inline ToolCallHandlerFn s_tool_handler = nullptr;
+    static inline void* s_tool_ctx = nullptr;
+    static inline RemoteToolCallHandlerFn s_remote_tool_handler = nullptr;
+    static inline void* s_remote_tool_ctx = nullptr;
+    static inline RemoteToolsDeclarationsFn s_remote_decls_source = nullptr;
+    static inline void* s_remote_decls_ctx = nullptr;
     GeminiSkills::DecodedSkillCall m_skill_slot;   // the call being dispatched
 };

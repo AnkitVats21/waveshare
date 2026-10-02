@@ -41,6 +41,7 @@ public:
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
 
     // VoiceAgent
+    const char* name() const override { return "direct"; }
     // Mic audio goes up as realtimeInput (base64 in JSON).
     void sendMicAudio(const uint8_t* pcm, size_t len) override;
     // A realtimeInput text turn.
@@ -67,7 +68,8 @@ public:
 
     bool isConnected() { return m_client.isConnected(); }
     void connect();
-    void closeConnection();
+    // report_state false: another backend owns ws_state now.
+    void closeConnection(bool report_state = true);
 
     // Test hook (POST /api/assistant/handoff): act as if Gemini had sent
     // goAway. False without a live session.

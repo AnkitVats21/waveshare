@@ -43,6 +43,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field briefing_music:       string         tag=20  // file in /sdcard/media/alarm played under the briefing; "" = none
         field briefing_duck:        u8 = 20        tag=21  // music level (%) while the briefing speaks, 10-50
         field hub_url:              string         tag=22  // hub link (HubLink) "ws://host:port/hub/board"; "" = find the hub by mDNS (_nexus-hub._tcp)
+        field voice_backend:        u8             tag=23  // 0 direct (Gemini from the board), 1 hub, 2 auto (the hub when its link is up, else direct)
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",

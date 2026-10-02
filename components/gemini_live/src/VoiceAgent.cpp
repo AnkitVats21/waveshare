@@ -1,25 +1,47 @@
 #include "gemini_live/VoiceAgent.h"
 #include "common/AppLogger.h"
+#include <atomic>
 #include <cassert>
 #include <cstring>
 #include <string>
 
-static VoiceAgent* s_active = nullptr;
+static std::atomic<VoiceAgent*> s_active{nullptr};
+static VoiceAgent::SelectorFn s_selector = nullptr;
+static void* s_selector_ctx = nullptr;
 
 VoiceAgent& VoiceAgent::active() {
-    assert(s_active != nullptr);
-    return *s_active;
+    VoiceAgent* agent = s_active.load();
+    assert(agent != nullptr);
+    return *agent;
 }
 
 void VoiceAgent::setActive(VoiceAgent& agent) {
     s_active = &agent;
 }
 
+bool VoiceAgent::isActive() const {
+    return s_active.load() == this;
+}
+
+void VoiceAgent::setSelector(SelectorFn selector, void* ctx) {
+    s_selector = selector;
+    s_selector_ctx = ctx;
+}
+
+void VoiceAgent::selectForSession() {
+    if (!s_selector) return;
+    VoiceAgent& chosen = s_selector(s_selector_ctx);
+    VoiceAgent* previous = s_active.exchange(&chosen);
+    if (previous != &chosen) {
+        LOGI_NET("Voice backend: %s (was %s)", chosen.name(), previous ? previous->name() : "none");
+    }
+}
+
 bool VoiceAgent::dispatchToolCall(const char* call_id, const char* name, JsonObjectConst args) {
     auto& slot = m_skill_slot;
     slot.reset();
     if (!GeminiSkills::decode_incoming_arguments(name, args, slot)) {
-        if (m_remote_tool_handler && m_remote_tool_handler(call_id, name, args, m_remote_tool_ctx)) {
+        if (s_remote_tool_handler && s_remote_tool_handler(call_id, name, args, s_remote_tool_ctx)) {
             LOGI_NET("Remote MCP tool dispatched: %s", name);
             slot.reset();
             return true;
@@ -37,9 +59,9 @@ bool VoiceAgent::dispatchToolCall(const char* call_id, const char* name, JsonObj
     std::strncpy(slot.call_id, call_id, sizeof(slot.call_id) - 1);
 
     LOGI_NET("Tool request: %s", name);
-    bool taken = m_tool_handler != nullptr;
+    bool taken = s_tool_handler != nullptr;
     if (taken) {
-        m_tool_handler(slot, m_tool_ctx);
+        s_tool_handler(slot, s_tool_ctx);
     } else {
         sendToolResponse(call_id, "{\"status\":\"error\",\"message\":\"No tool handler\"}");
     }

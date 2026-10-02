@@ -103,6 +103,12 @@ GeminiProtocol& GeminiProtocol::getInstance() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& snap) {
+    // Another backend has the session: drop a kept connection and leave
+    // ws_state to that backend.
+    if (!isActive()) {
+        if (m_parked || m_client) closeConnection(false);
+        return;
+    }
     maybeHandOff(snap);
     bool requested = snap.assistant.connect_requested;
     bool wifi_ok = snap.system.wifi_connected;
@@ -333,7 +339,7 @@ void GeminiProtocol::endSession() {
     LOGI_NET("Keeping the connection open for %d s.", (int)cfg.keepalive_s);
 }
 
-void GeminiProtocol::closeConnection() {
+void GeminiProtocol::closeConnection(bool report_state) {
     // Check the client, not ws_state: a failed connect reports DISCONNECTED
     // while the client lives on and reconnects every reconnect_timeout_ms,
     // keeping its task and a TLS session (and a Gemini session) while idle.
@@ -362,6 +368,7 @@ void GeminiProtocol::closeConnection() {
             m_client.destroy();
         }
     }
+    if (!report_state) return;
     sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::DISCONNECTED;
         s.audio.assistant_speaking = false;
@@ -740,8 +747,8 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                      (unsigned)self->m_rx_frames, (unsigned)self->m_rx_dropped_frames, (unsigned)self->m_rx_audio_bytes);
             // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
             // AssistantService will safely invoke closeConnection() outside this task context.
-            if (self->m_restarting) {
-                break;   // the old connection of a restart
+            if (self->m_restarting || !self->isActive()) {
+                break;   // the old connection of a restart, or of another backend's session
             }
             if (self->m_accept_audio) {
                 // Closed before setupComplete while resuming: the handle was
@@ -788,6 +795,7 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
             
         case WEBSOCKET_EVENT_ERROR:
             LOGE_NET("WebSocket socket error.");
+            if (!self->isActive()) break;
             // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::ERROR_STATE;
@@ -1045,7 +1053,7 @@ void GeminiProtocol::run() {
 
             if ((changed_bits & NOTIFY_PARK_EXPIRED_BIT) && m_parked) {
                 LOGI_NET("Keep-alive window over.");
-                closeConnection();
+                closeConnection(isActive());
             }
             if (changed_bits & NOTIFY_RESTART_BIT) {
                 if (m_restart_requested.exchange(false)) {

@@ -11,9 +11,13 @@
 
 namespace {
 
+const char* const BACKENDS[] = {"direct", "hub", "auto"};   // voice_backend values
+
 // GET /api/hub: the link to the hub. "compiled": false in a build without it.
 esp_err_t getHubStatus(httpd_req_t* req) {
     JsonDocument doc;
+    uint8_t backend = Services::loadSettings().voice_backend;
+    doc["backend"] = backend < 3 ? BACKENDS[backend] : "direct";
 #if CONFIG_WAVESHARE_VOICE_HUB
     auto s = Services::HubLink::getInstance().status();
     doc["compiled"] = true;
@@ -31,14 +35,29 @@ esp_err_t getHubStatus(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
-// POST /api/hub {"url"?, "token"?}: either may be left out; "" clears it
-// (url "" = find the hub by mDNS). The token is never sent back.
+// POST /api/hub {"url"?, "token"?, "backend"?}: any may be left out; "" clears
+// url or token (url "" = find the hub by mDNS). The token is never sent back.
+// backend ("direct", "hub", "auto") applies from the next session.
 esp_err_t setHubConfig(httpd_req_t* req) {
     std::string body;
     JsonDocument doc;
     if (req->content_len == 0 || !Http::readBody(req, body, 1024) || deserializeJson(doc, body)) {
         return Http::sendError(req, 400, "Invalid JSON body");
     }
+    if (doc["backend"].is<const char*>()) {
+        const char* name = doc["backend"];
+        int backend = -1;
+        for (int i = 0; i < 3; ++i) {
+            if (strcmp(name, BACKENDS[i]) == 0) backend = i;
+        }
+        if (backend < 0) return Http::sendError(req, 400, "backend must be direct, hub or auto");
+        auto settings = Services::loadSettings();
+        settings.voice_backend = (uint8_t)backend;
+        if (!Services::saveSettings(settings, ndb::system::Settings::F_VOICE_BACKEND)) {
+            return Http::sendError(req, 500, "Could not save the backend");
+        }
+    }
+    bool link_changed = doc["url"].is<const char*>() || doc["token"].is<const char*>();
     if (doc["url"].is<const char*>()) {
         const char* url = doc["url"];
         if (url[0] != '\0' && strncmp(url, "ws://", 5) != 0) {
@@ -54,7 +73,9 @@ esp_err_t setHubConfig(httpd_req_t* req) {
         return Http::sendError(req, 500, "Could not save the token");
     }
 #if CONFIG_WAVESHARE_VOICE_HUB
-    Services::HubLink::getInstance().reconfigure();
+    if (link_changed) Services::HubLink::getInstance().reconfigure();
+#else
+    (void)link_changed;
 #endif
     return Http::sendOk(req, "Hub configuration updated");
 }
