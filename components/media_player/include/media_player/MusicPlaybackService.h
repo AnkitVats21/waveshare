@@ -1,6 +1,10 @@
 #pragma once
 
+#include "TrackSource.h"
+#include "sdkconfig.h"
+#if CONFIG_WAVESHARE_INVIDIOUS_FALLBACK
 #include "InvidiousClient.h"
+#endif
 #include "RemoteOutput.h"
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/IPlaybackObserver.h"
@@ -127,7 +131,12 @@ public:
         return _history;
     }
 
-    InvidiousClient& getInvidiousClient() { return _invidious; }
+    // Where songs are looked up. main sets the MCP source at startup;
+    // until then (or without it) the Invidious fallback, if built.
+    void setTrackSource(TrackSource* source) { _source = source; }
+    TrackSource& trackSource() { return *_source; }
+    // The board's own Invidious client, or nullptr when not built.
+    TrackSource* fallbackTrackSource();
     void populateRecommendations(const std::vector<InvidiousTrack>& recs, const std::string& title);
 
     // IPlaybackObserver implementation
@@ -148,7 +157,10 @@ private:
     MusicPlaybackService();
     ~MusicPlaybackService() override = default;
 
+#if CONFIG_WAVESHARE_INVIDIOUS_FALLBACK
     InvidiousClient _invidious;
+#endif
+    TrackSource* _source;
     RemoteOutput* _remote = nullptr;
     // Guarded by _serviceMutex: the assistant session is on, and music on the
     // satellite was paused for it (or asked to start during it), so it

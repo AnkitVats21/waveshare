@@ -47,7 +47,7 @@ bool isVideoId(const std::string& id) {
 // Returns an error, or nullptr once the file is in the library.
 const char* download(const std::string& id, const std::string& title, const std::string& artist) {
     std::string url;
-    if (MusicPlaybackService::getInstance().getInvidiousClient().resolveWebMOpusStreamUrl(id, url) != ESP_OK ||
+    if (MusicPlaybackService::getInstance().trackSource().resolveStream(id, url) != ESP_OK ||
         url.empty()) {
         return "could not resolve the audio stream";
     }

@@ -176,6 +176,15 @@ config WAVESHARE_USB_NET
         TinyUSB's buffers take ~11.7 KB of internal RAM even while the port
         is in serial mode, so it is off unless needed.
 
+config WAVESHARE_INVIDIOUS_FALLBACK
+    bool "Look songs up on Invidious directly when the MCP server fails"
+    default y
+    help
+        Songs are looked up through the MCP server's device-only music tools
+        (main/services/mcp/McpTrackSource.h). With this on, the board also
+        carries its own Invidious client and uses it when the MCP server is
+        not configured or cannot be reached.
+
 config WAVESHARE_SDCARD_ENABLE
     bool "Enable SD card runtime"
     default y

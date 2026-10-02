@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TrackSource.h"
 #include <string>
 #include <vector>
 #include "esp_err.h"
@@ -7,34 +8,26 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-struct InvidiousTrack {
-    std::string videoId;
-    std::string title;
-    std::string author;
-    int durationSeconds = 0;
-};
-
-class InvidiousClient {
+// Looks songs up on an Invidious instance directly from the board: the
+// fallback TrackSource when the MCP server can't be reached
+// (CONFIG_WAVESHARE_INVIDIOUS_FALLBACK).
+class InvidiousClient : public TrackSource {
 public:
     InvidiousClient();
     explicit InvidiousClient(const std::string& forcedHost);
     ~InvidiousClient();
 
-    esp_err_t search(const std::string& query, InvidiousTrack& outTrack);
-    esp_err_t searchList(const std::string& query, std::vector<InvidiousTrack>& outTracks, size_t limit = 10);
-    // Resolves the direct WebM container audio stream (containing Opus codec frames) from Invidious/YouTube
-    esp_err_t resolveWebMOpusStreamUrl(const std::string& videoId, std::string& outUrl);
-    // Backward-compatible alias for resolveWebMOpusStreamUrl
-    esp_err_t resolveOpusUrl(const std::string& videoId, std::string& outUrl) {
-        return resolveWebMOpusStreamUrl(videoId, outUrl);
-    }
-    esp_err_t resolveWithRecommendations(const std::string& videoId, 
-                                         std::string& outUrl, 
+    esp_err_t search(const std::string& query, InvidiousTrack& outTrack) override;
+    esp_err_t searchList(const std::string& query, std::vector<InvidiousTrack>& outTracks, size_t limit = 10) override;
+    // The direct WebM container audio stream (Opus frames).
+    esp_err_t resolveStream(const std::string& videoId, std::string& outUrl) override;
+    esp_err_t resolveWithRecommendations(const std::string& videoId,
+                                         std::string& outUrl,
                                          std::vector<InvidiousTrack>& outRecommendations,
-                                         size_t recLimit = 8);
-    esp_err_t getRecommendedTracks(const std::string& currentVideoId, 
-                                   std::vector<InvidiousTrack>& outTracks, 
-                                   size_t limit = 8);
+                                         size_t recLimit = 8) override;
+    esp_err_t recommendations(const std::string& currentVideoId,
+                              std::vector<InvidiousTrack>& outTracks,
+                              size_t limit = 8) override;
 
 private:
     std::string _forcedHost;

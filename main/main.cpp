@@ -30,6 +30,7 @@
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
 #include "services/http/OrbitChannel.h"
+#include "services/mcp/McpTrackSource.h"
 #include "services/mcp/McpService.h"
 #include "services/BufferManager.h"
 #if CONFIG_DISPLAY_ENABLE
@@ -167,6 +168,10 @@ extern "C" void app_main(void) {
     Mcp::McpService::instance().start();
     assistant_svc.begin();
     NexusPlayer::getInstance().begin();
+    // Songs are looked up through the MCP server, with the board's own
+    // Invidious client (if built) as the fallback.
+    static Mcp::McpTrackSource track_source(MusicPlaybackService::getInstance().fallbackTrackSource());
+    MusicPlaybackService::getInstance().setTrackSource(&track_source);
     MusicPlaybackService::getInstance().begin();
     gemini_pump.start();
     app_ctrl.begin();

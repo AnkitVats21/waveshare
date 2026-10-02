@@ -320,12 +320,12 @@ esp_err_t InvidiousClient::resolveWithRecommendations(
     return ESP_OK;
 }
 
-esp_err_t InvidiousClient::resolveWebMOpusStreamUrl(const std::string& videoId, std::string& outUrl) {
+esp_err_t InvidiousClient::resolveStream(const std::string& videoId, std::string& outUrl) {
     std::vector<InvidiousTrack> dummy;
     return resolveWithRecommendations(videoId, outUrl, dummy, 0);
 }
 
-esp_err_t InvidiousClient::getRecommendedTracks(
+esp_err_t InvidiousClient::recommendations(
     const std::string& currentVideoId, 
     std::vector<InvidiousTrack>& outTracks, 
     size_t limit

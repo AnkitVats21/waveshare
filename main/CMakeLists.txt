@@ -72,6 +72,7 @@ set(srcs
             "services/mcp/McpUtil.cpp"
             "services/mcp/McpClient.cpp"
             "services/mcp/McpService.cpp"
+            "services/mcp/McpTrackSource.cpp"
 )
 
 # The USB port as a network adapter; off by default (Kconfig WAVESHARE_USB_NET).

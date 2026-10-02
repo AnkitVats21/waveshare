@@ -1,12 +1,18 @@
+# The board's own Invidious client: the fallback when the MCP server fails
+# (main Kconfig WAVESHARE_INVIDIOUS_FALLBACK).
+set(invidious_srcs)
+if(CONFIG_WAVESHARE_INVIDIOUS_FALLBACK)
+    set(invidious_srcs "src/InvidiousClient.cpp" "src/InvidiousInstanceResolver.cpp")
+endif()
+
 idf_component_register(
     SRCS
+        ${invidious_srcs}
         "src/NexusPlayer.cpp"
         "src/AudioEngine.cpp"
         "src/StorageManager.cpp"
         "src/StreamManager.cpp"
         "src/HttpClientStream.cpp"
-        "src/InvidiousClient.cpp"
-        "src/InvidiousInstanceResolver.cpp"
         "src/WebMOpusDecoder.cpp"
         "src/WebmSeek.cpp"
         "src/OggSeek.cpp"

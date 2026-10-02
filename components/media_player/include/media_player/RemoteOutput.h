@@ -1,5 +1,5 @@
 #pragma once
-#include "InvidiousClient.h"
+#include "TrackSource.h"
 #include <cstdint>
 #include <string>
 #include <vector>

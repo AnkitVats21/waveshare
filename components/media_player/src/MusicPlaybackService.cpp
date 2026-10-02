@@ -30,7 +30,32 @@ MusicPlaybackService& MusicPlaybackService::getInstance() {
     return instance;
 }
 
-MusicPlaybackService::MusicPlaybackService() {}
+namespace {
+// The source while none is set and no fallback is built: every lookup fails.
+class NoTrackSource : public TrackSource {
+public:
+    esp_err_t search(const std::string&, InvidiousTrack&) override { return ESP_ERR_NOT_SUPPORTED; }
+    esp_err_t searchList(const std::string&, std::vector<InvidiousTrack>&, size_t) override { return ESP_ERR_NOT_SUPPORTED; }
+    esp_err_t resolveStream(const std::string&, std::string&) override { return ESP_ERR_NOT_SUPPORTED; }
+    esp_err_t resolveWithRecommendations(const std::string&, std::string&, std::vector<InvidiousTrack>&, size_t) override {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    esp_err_t recommendations(const std::string&, std::vector<InvidiousTrack>&, size_t) override { return ESP_ERR_NOT_SUPPORTED; }
+};
+NoTrackSource s_noSource;
+}  // namespace
+
+MusicPlaybackService::MusicPlaybackService() : _source(fallbackTrackSource()) {
+    if (!_source) _source = &s_noSource;
+}
+
+TrackSource* MusicPlaybackService::fallbackTrackSource() {
+#if CONFIG_WAVESHARE_INVIDIOUS_FALLBACK
+    return &_invidious;
+#else
+    return nullptr;
+#endif
+}
 
 bool MusicPlaybackService::begin() {
     if (_initialized) return true;
@@ -579,11 +604,11 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
         ESP_LOGI(TAG, "Resolving WebM/Opus stream for '%s' [%s]...", track.title.c_str(), track.videoId.c_str());
 
         // Resolve stream URL and piggyback recommendation fetch in a single HTTP roundtrip
-        esp_err_t err = _invidious.resolveWithRecommendations(track.videoId, streamUrl, recommendations, 8);
+        esp_err_t err = _source->resolveWithRecommendations(track.videoId, streamUrl, recommendations, 8);
         if ((err != ESP_OK && err != ESP_ERR_NOT_FOUND) || (err == ESP_OK && streamUrl.empty())) {
             ESP_LOGW(TAG, "resolveWithRecommendations failed for '%s' (%s), attempting standalone WebM/Opus resolve...",
                      track.title.c_str(), esp_err_to_name(err));
-            err = _invidious.resolveWebMOpusStreamUrl(track.videoId, streamUrl);
+            err = _source->resolveStream(track.videoId, streamUrl);
         }
         if (err != ESP_OK || streamUrl.empty()) {
             bool gone = (err == ESP_ERR_NOT_FOUND);
@@ -640,7 +665,7 @@ bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
     }
 
     std::string streamUrl;
-    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(track.videoId, streamUrl);
+    esp_err_t err = _source->resolveStream(track.videoId, streamUrl);
     if (err != ESP_OK || streamUrl.empty()) {
         ESP_LOGE(TAG, "Fallback failed to resolve Opus stream for '%s'", track.title.c_str());
         return false;
@@ -710,7 +735,7 @@ bool MusicPlaybackService::resolveAndPlayImmediate(const char* query) {
         track.durationSeconds = 0;
         err = ESP_OK;
     } else {
-        err = _invidious.search(query, track);
+        err = _source->search(query, track);
     }
 
     if (err != ESP_OK || track.videoId.empty()) {
@@ -732,7 +757,7 @@ bool MusicPlaybackService::playNextInternal(const char* query) {
     if (!query || query[0] == '\0') return false;
 
     InvidiousTrack track;
-    esp_err_t err = _invidious.search(query, track);
+    esp_err_t err = _source->search(query, track);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Search failed for play_next '%s'", query);
         return false;
@@ -757,7 +782,7 @@ bool MusicPlaybackService::queueInternal(const char* query) {
     if (!query || query[0] == '\0') return false;
 
     InvidiousTrack track;
-    esp_err_t err = _invidious.search(query, track);
+    esp_err_t err = _source->search(query, track);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Search failed for queue '%s'", query);
         return false;
@@ -882,7 +907,7 @@ void MusicPlaybackService::handlePrefetch(const char* targetId, uint32_t generat
     }
 
     std::string url;
-    esp_err_t err = _invidious.resolveWebMOpusStreamUrl(targetId, url);
+    esp_err_t err = _source->resolveStream(targetId, url);
     if (err == ESP_OK && !url.empty()) {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
         if (generation == _queueGeneration) {
@@ -938,7 +963,7 @@ void MusicPlaybackService::handleRenewUrl(const char* videoId, uint32_t seq) {
         if (seq != _renewSeq) return;   // the stream gave up waiting
     }
     std::string url;
-    const esp_err_t err = _invidious.resolveWebMOpusStreamUrl(videoId, url);
+    const esp_err_t err = _source->resolveStream(videoId, url);
     std::lock_guard<std::mutex> lock(_renewMutex);
     if (seq != _renewSeq) return;
     _renewOk = err == ESP_OK && !url.empty();
@@ -987,15 +1012,15 @@ void MusicPlaybackService::handleReplenish(const char* baseId, const char* baseA
     };
 
     std::vector<InvidiousTrack> recs;
-    esp_err_t err = _invidious.getRecommendedTracks(baseId, recs, 8);
+    esp_err_t err = _source->recommendations(baseId, recs, 8);
     if ((err != ESP_OK || recs.empty()) && baseAuthor && baseAuthor[0] != '\0' && !stale()) {
         ESP_LOGI(TAG, "Recommended videos not returned for %s (%s). Falling back to search for artist '%s'...",
                  baseId, esp_err_to_name(err), baseAuthor);
-        err = _invidious.searchList(baseAuthor, recs, 8);
+        err = _source->searchList(baseAuthor, recs, 8);
     }
     if ((err != ESP_OK || recs.empty()) && baseTitle && baseTitle[0] != '\0' && !stale()) {
         ESP_LOGI(TAG, "Falling back to search for title '%s'...", baseTitle);
-        err = _invidious.searchList(baseTitle, recs, 8);
+        err = _source->searchList(baseTitle, recs, 8);
     }
 
     bool needPrefetch = false;
@@ -1272,7 +1297,7 @@ bool MusicPlaybackService::advanceToNextPlayable() {
         if (!currentId.empty()) {
             ESP_LOGI(TAG, "Queue empty; attempting emergency autoplay recommendations for %s", currentId.c_str());
             std::vector<InvidiousTrack> recTracks;
-            esp_err_t err = _invidious.getRecommendedTracks(currentId, recTracks, 8);
+            esp_err_t err = _source->recommendations(currentId, recTracks, 8);
             if (err == ESP_OK && !recTracks.empty()) {
                 {
                     std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
@@ -1576,7 +1601,7 @@ void MusicPlaybackService::handoffToLocal(const std::string& songId, uint32_t po
     // From the card if it is saved there, else a fresh stream URL.
     std::string streamUrl;
     if (!NexusPlayer::getInstance().getStorageManager().fileExists(songId.c_str())) {
-        esp_err_t err = _invidious.resolveWebMOpusStreamUrl(songId, streamUrl);
+        esp_err_t err = _source->resolveStream(songId, streamUrl);
         if (err != ESP_OK || streamUrl.empty()) {
             ESP_LOGE(TAG, "Failed to re-resolve stream for '%s' during handoff (%s)", songId.c_str(), esp_err_to_name(err));
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
