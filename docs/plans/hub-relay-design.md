@@ -35,8 +35,9 @@ Decisions taken (2026-10-02):
 - Mic uplink format is negotiated and can be set (PCM or Opus).
 - The board keeps a copy of the next few queue entries, so music carries on
   when the hub drops.
-- The hub is written in Go, grown from nexus-orbit (its coordinator and the
-  Orbit messages already exist).
+- The hub is written in Go, as a second program in the nexus-orbit repository
+  (`cmd/nexus-hub` beside `cmd/orbit`), sharing its message definitions
+  (`pkg/protocol`) and connection code (`pkg/transport`).
 
 ## 2. Why
 
@@ -194,7 +195,12 @@ check in the player).
 
 ## 5. Hub side
 
-A Go service (grown from nexus-orbit), one process:
+A Go program in the nexus-orbit repository (`cmd/nexus-hub`), one process.
+Shared with the satellite (`cmd/orbit`): `pkg/protocol` (so the satellite and
+board music messages are defined once) and `pkg/transport`. A Pi with a
+speaker can run both. nexus-orbit's `coordinator` is the satellite's player
+logic, not a queue owner: the hub's music controller is new code, a port of
+what `MusicPlaybackService` does on the board.
 
 - **Board endpoint.** Accepts board connections, checks the token, keeps one
   session object per board.
@@ -209,7 +215,8 @@ A Go service (grown from nexus-orbit), one process:
 - **Music controller.** Queue, search, recommendations through nexus-mcp,
   outputs (the board or an Orbit satellite). Voice `play`, `playback` and
   `music_output` are handled here.
-- **Orbit satellites.** The existing coordinator, now on the hub.
+- **Orbit satellites.** The satellite endpoint (today `OrbitChannel` on the
+  board), on the hub.
 - **Dashboard.** Serves the bundle, proxies `/api/*` to the board, fans out
   the board's state to browsers over its own socket.
 - **Config.** Gemini key, MCP URL and token, board tokens: files on the hub,
@@ -227,7 +234,7 @@ is a few percent of a core. To be measured in phase 5.
 | Hub drops during a session | The session ends with the error chime; the next wake picks again. No switch in the middle of a conversation. |
 | Hub drops during a song | The song keeps playing (its bytes come from YouTube or the card). At its end the board plays the queue copy it holds. |
 | Hub comes back | The board reports its state and position; the hub takes control again from there (the board's current track wins). |
-| Hub drops with satellites playing | Satellites stop; music is not moved back to the board automatically in the first version. |
+| Hub drops with satellites playing | Satellites stop. The music is not moved back to the board: without the hub nobody knows the satellite's position or queue. The board keeps a queue copy only while it is the output itself, and is in local mode, so a new "play" works at once. |
 
 ## 7. Measurements
 
@@ -253,7 +260,7 @@ separately, with what was measured.
 | 0. Baseline | Nothing new: record the numbers from section 7 in direct mode | | Numbers written down |
 | 1. Link and dashboard | `HubLink`, hello, heartbeat, state push; settings and token | Board endpoint, dashboard served with the `/api/*` proxy and state fan-out | The dashboard works through the hub with two browsers open |
 | 2. Voice | `HubAgent` (PCM up, Opus down), backend choice per session, `auto` failover | Gemini session manager, Opus encode, tools, MCP | Sessions through the hub on the PC; failover to direct tested |
-| 3. Music control | Control mode in `MusicPlaybackService`, queue copy, `music_*` messages | Music controller, satellites move to the hub | Play, skip, seek, voice "play X", hub dropped mid-song |
+| 3. Music control | Control mode in `MusicPlaybackService`, queue copy, `music_*` messages | Music controller (new: queue, recommendations, outputs), satellite endpoint moves to the hub | Play, skip, seek, voice "play X", hub dropped mid-song |
 | 4. Opus uplink | Opus encoder, format negotiation, uplink settings | Opus decode | CPU measured; `auto` picks sensibly |
 | 5. Pi | | Built and run on the Pi Zero 2W | Section 7 measured on the Pi |
 
@@ -273,10 +280,14 @@ separately, with what was measured.
   deciding (a key press during `music_play`) need a clear owner: the hub
   decides, the board only reports.
 
-## 10. Open questions
+## 10. Settled after review (2026-10-02)
 
-- Repository: grow nexus-orbit into the hub, or start `nexus-hub` and move
-  the coordinator into it?
-- Should a satellite's music move back to the board when the hub drops?
-- Several boards (rooms): one Gemini session per board, or shared? Not
-  needed for the first version.
+- **Repository:** the hub is a second program in nexus-orbit, not a new
+  repository; the shared protocol package keeps the satellite and board
+  messages from drifting apart. The repository has no remote yet, so a rename
+  later costs nothing.
+- **Satellite music when the hub drops:** it stops; it does not move to the
+  board (section 6).
+- **Several boards:** one Gemini session per board (rooms are separate
+  conversations). `hello` carries the device id from the start; the first
+  version assumes one board.
