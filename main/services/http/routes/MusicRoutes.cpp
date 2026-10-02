@@ -7,6 +7,7 @@
 #include "media_player/NexusPlayer.h"
 #include "sd_storage/Fs.h"
 #include "services/alarm/AlarmSchedule.h"
+#include "services/http/OrbitChannel.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -233,13 +234,29 @@ void MusicStatus::fill(JsonObject out) {
 
     auto& music = MusicPlaybackService::getInstance();
     InvidiousTrack cur = music.getCurrentTrack();
+    const auto snap = EmbeddedSysDb::getInstance().snapshot();
     // The player fills in a length the track didn't come with.
-    const uint32_t duration_ms = EmbeddedSysDb::getInstance().snapshot().media.duration_ms;
+    const uint32_t duration_ms = snap.media.duration_ms;
+    bool seekable = (state == STATE_LOCAL_PLAYBACK || state == STATE_STREAMING_AND_CACHING || state == STATE_PAUSED);
+
+    // On a satellite (nexus-orbit) the board's player is idle; the state is
+    // what the satellite reports.
+    const bool satellite = snap.media.output_target == MediaOutputTarget::SATELLITE;
+    if (satellite) {
+        switch (snap.media.state) {
+            case MediaPlaybackState::PLAYING:
+            case MediaPlaybackState::BUFFERING: state_str = "SATELLITE"; break;
+            case MediaPlaybackState::PAUSED:    state_str = "PAUSED"; break;
+            default:                            state_str = "IDLE"; break;
+        }
+        seekable = snap.media.active_song_id[0] != '\0';
+    }
 
     out["state"] = state_str;
+    out["output"] = satellite ? "satellite" : "local";
     out["position_ms"] = music.getPositionMs();
     out["duration_ms"] = duration_ms;
-    out["seekable"] = (state == STATE_LOCAL_PLAYBACK || state == STATE_STREAMING_AND_CACHING || state == STATE_PAUSED);
+    out["seekable"] = seekable;
     JsonObject t = out["current_track"].to<JsonObject>();
     t["id"] = cur.videoId;
     t["title"] = cur.title;
@@ -250,7 +267,37 @@ void MusicStatus::fill(JsonObject out) {
     out["caching"] = music.isCachingEnabled();
 }
 
+namespace {
+
+// GET /api/orbit: the music output and the connected satellites.
+esp_err_t orbitStatusHandler(httpd_req_t* req) {
+    JsonDocument doc;
+    Services::OrbitChannel::getInstance().toJson(doc.to<JsonObject>());
+    return Http::sendJson(req, 200, doc);
+}
+
+// POST /api/orbit/target {"target": "local" | satellite id or name}
+esp_err_t orbitTargetHandler(httpd_req_t* req) {
+    std::string body;
+    JsonDocument doc;
+    if (!Http::readBody(req, body, 512) || deserializeJson(doc, body)) {
+        return Http::sendError(req, 400, "Invalid JSON payload");
+    }
+    std::string chosen;
+    if (!Services::OrbitChannel::getInstance().select(doc["target"] | "", chosen)) {
+        return Http::sendError(req, 404, "No such satellite");
+    }
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["target"] = chosen;
+    return Http::sendJson(req, 200, resp);
+}
+
+} // namespace
+
 void Routes::registerMusic(Http::Server& server) {
+    server.on("/api/orbit", HTTP_GET, orbitStatusHandler);
+    server.on("/api/orbit/target", HTTP_POST, orbitTargetHandler);
     server.on("/api/music/play", HTTP_POST, playHandler);
     server.on("/api/music/play_local", HTTP_POST, playLocalHandler);
     server.on("/api/music/control", HTTP_POST, controlHandler);

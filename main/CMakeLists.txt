@@ -38,6 +38,7 @@ set(srcs
             "services/network/CaptiveDnsServer.cpp"
             "services/http/HttpService.cpp"
             "services/http/ControlChannel.cpp"
+            "services/http/OrbitChannel.cpp"
             "services/http/SystemInfo.cpp"
             "services/http/FlashUpload.cpp"
             "services/http/routes/WebRoutes.cpp"

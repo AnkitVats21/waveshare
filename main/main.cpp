@@ -28,6 +28,7 @@
 #include "services/network/UsbNet.h"
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
+#include "services/http/OrbitChannel.h"
 #include "services/mcp/McpService.h"
 #include "services/BufferManager.h"
 #if CONFIG_DISPLAY_ENABLE
@@ -171,6 +172,7 @@ extern "C" void app_main(void) {
     sync_reactor.begin();
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
     Services::ControlChannel::getInstance().begin();
+    Services::OrbitChannel::getInstance().begin();
     http_server.begin();
 #endif
 

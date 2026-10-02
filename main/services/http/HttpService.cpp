@@ -1,5 +1,6 @@
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
+#include "services/http/OrbitChannel.h"
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "http_server/WebBundle.h"
@@ -79,7 +80,7 @@ bool HttpService::startServer() {
     config.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // keep internal SRAM for audio/Wi-Fi
     config.stack_size = 12288;
     config.core_id = ThreadConfig::CORE_NETWORK;
-    config.max_uri_handlers = 112;  // 94 registered (2026-10-02); a pointer each
+    config.max_uri_handlers = 112;  // 97 registered (2026-10-02); a pointer each
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_open_sockets = 12;
     config.recv_wait_timeout = 10;
@@ -87,6 +88,7 @@ bool HttpService::startServer() {
     config.lru_purge_enable = true;
     config.close_fn = [](httpd_handle_t, int sockfd) {
         ControlChannel::getInstance().onSocketClosed(sockfd);
+        OrbitChannel::getInstance().onSocketClosed(sockfd);
         close(sockfd);
     };
 
@@ -96,6 +98,9 @@ bool HttpService::startServer() {
     m_server.onWebSocket("/api/ws",
         [](httpd_req_t* req) { return ControlChannel::getInstance().handleWsRequest(req); },
         [](httpd_req_t* req) { return ControlChannel::getInstance().onWsHandshake(req); });
+    m_server.onWebSocket(OrbitChannel::WS_PATH,
+        [](httpd_req_t* req) { return OrbitChannel::getInstance().handleWsRequest(req); },
+        [](httpd_req_t* req) { return OrbitChannel::getInstance().onWsHandshake(req); });
     Routes::registerWifi(m_server);
     Routes::registerFiles(m_server);
     Routes::registerAudio(m_server);
@@ -124,6 +129,7 @@ void HttpService::stopServer() {
     ESP_LOGI(TAG, "Stopping HTTP server...");
     m_server.stop();
     ControlChannel::getInstance().onServerStopped();
+    OrbitChannel::getInstance().onServerStopped();
 }
 
 } // namespace Services

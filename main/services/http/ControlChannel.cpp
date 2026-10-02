@@ -1,6 +1,7 @@
 #include "services/http/ControlChannel.h"
 #include "services/http/SystemInfo.h"
 #include "services/http/StateNames.h"
+#include "services/http/OrbitChannel.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/NexusPlayer.h"
@@ -254,6 +255,13 @@ void ControlChannel::handleCommand(const char* json, size_t len) {
             ESP_LOGW(TAG, "Unknown action '%s'", action);
         }
 
+    } else if (strcmp(cmd, "orbit_set_target") == 0) {
+        // {"target": "local" | satellite id}: moves the music there.
+        std::string chosen;
+        if (!OrbitChannel::getInstance().select(doc["target"] | "", chosen)) {
+            ESP_LOGW(TAG, "orbit_set_target: no satellite '%s'", doc["target"] | "");
+        }
+
     } else if (strcmp(cmd, "subscribe") == 0) {
         bool on = doc["transcript"] | false;
         m_transcript_subscribed = on;
@@ -339,6 +347,7 @@ void ControlChannel::pushState() {
     music["repeat_mode"] = snap.media.repeat_mode;
     music["autoplay"] = snap.media.autoplay_enabled;
     music["caching"] = snap.media.cache_downloads;
+    music["output"] = snap.media.output_target == MediaOutputTarget::SATELLITE ? "satellite" : "local";
     if (snap.media.active_song_id[0] != '\0') {
         // What the card holds of the current song: none, saving (bytes so far) or saved.
         const auto cs = NexusPlayer::getInstance().getStorageManager().cacheStatus();
@@ -373,6 +382,8 @@ void ControlChannel::pushState() {
                    : snap.alarm.state == AlarmRingState::SNOOZED ? "snoozed" : "idle";
     alarm["builtin_tone"] = snap.alarm.using_builtin;
     if (snap.alarm.state == AlarmRingState::SNOOZED) alarm["snooze_until"] = snap.alarm.snooze_until;
+
+    OrbitChannel::getInstance().toJson(doc["orbit"].to<JsonObject>());
 
     JsonObject bt = doc["bluetooth"].to<JsonObject>();
     bt["connected"] = snap.bluetooth.connected;
