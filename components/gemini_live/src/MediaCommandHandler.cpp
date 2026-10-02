@@ -68,6 +68,40 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
             return true;
         }
 
+        case GeminiSkills::SkillType::MUSIC_OUTPUT: {
+            auto& music = MusicPlaybackService::getInstance();
+            RemoteOutput* remote = music.remoteOutput();
+            const std::string& target = skill_call.args.music_output->target;
+            if (!remote) {
+                response_doc["status"] = "error";
+                response_doc["message"] = "this device has no satellite support";
+                return true;
+            }
+            std::string chosen;
+            if (!target.empty() && remote->select(target, chosen)) {
+                LOGI_SYSTEM("Music output -> %s", chosen.c_str());
+                response_doc["status"] = "success";
+                response_doc["now_playing_on"] = chosen == "local" ? "board" : chosen;
+                return true;
+            }
+            // No target, or no satellite by that name: say what there is.
+            const auto sats = remote->satellites();
+            const bool onSatellite = EmbeddedSysDb::getInstance().snapshot().media.output_target ==
+                                     MediaOutputTarget::SATELLITE;
+            std::string current = "board";
+            JsonArray names = response_doc["satellites"].to<JsonArray>();
+            for (const auto& s : sats) {
+                names.add(s.name);
+                if (s.active && onSatellite) current = s.name;
+            }
+            response_doc["status"] = target.empty() ? "success" : "error";
+            if (!target.empty()) {
+                response_doc["message"] = sats.empty() ? "no satellite is connected" : "no satellite by that name";
+            }
+            response_doc["now_playing_on"] = current;
+            return true;
+        }
+
         default:
             break;
     }

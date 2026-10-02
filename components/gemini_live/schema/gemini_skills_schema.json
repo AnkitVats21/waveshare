@@ -88,6 +88,19 @@
     }
   },
   {
+    "name": "music_output",
+    "description": "Moves the music to another speaker, carrying on the current song from where it is: the device itself ('board'), or a satellite (a PC or Raspberry Pi running Nexus Orbit, named after that computer). Use for 'play it on my PC' or 'bring the music back here'. Without a target it lists the satellites and says where the music plays now. When only one satellite is connected, any name picks it.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "target": {
+          "type": "STRING",
+          "description": "'board', or a satellite's name; omit to list them."
+        }
+      }
+    }
+  },
+  {
     "name": "notes",
     "description": "The user's text notes on the device. list: names, sizes, dates. read/write (replaces)/append (adds a line): one note by name. delete: two steps - call without confirmed (nothing is deleted; it says which exist), read the names to the user, and only after they agree call again with the same names and confirmed=true.",
     "parameters": {
