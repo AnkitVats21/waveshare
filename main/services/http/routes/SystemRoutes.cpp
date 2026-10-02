@@ -13,6 +13,7 @@
 #include "services/network/UsbNet.h"
 #include "services/network/NetStats.h"
 #include "services/network/WifiService.h"
+#include "services/network/WifiSniff.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -27,6 +28,7 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <esp_private/wifi.h>
 #include <lwip/stats.h>
 #include <algorithm>
 #include <cstdlib>
@@ -288,6 +290,74 @@ esp_err_t wifiMacSetHandler(httpd_req_t* req) {
     doc["random"] = in["random"].as<bool>();
     putMac(doc, mac);
     doc["rebooting"] = true;
+    return Http::sendJson(req, 200, doc);
+}
+
+// {"level": 0-5} (none, error, warning, info, debug, verbose): the Wi-Fi
+// driver's log level, at once and until reboot. Debug shows Block Ack
+// (aggregation) setup and teardown per traffic class; lines go to /api/logs.
+esp_err_t wifiLogSetHandler(httpd_req_t* req) {
+    std::string body;
+    if (req->content_len == 0 || req->content_len > 64 || !Http::readBody(req, body, 64)) {
+        return Http::sendError(req, 400, "Missing JSON payload");
+    }
+    JsonDocument in;
+    const int level = deserializeJson(in, body) ? -1 : (in["level"] | -1);
+    if (level < 0 || level > 5) return Http::sendError(req, 400, "level must be 0-5");
+    esp_log_level_set("wifi", static_cast<esp_log_level_t>(level));
+    esp_err_t err = esp_wifi_internal_set_log_level(static_cast<wifi_log_level_t>(level));
+    if (err == ESP_OK) err = esp_wifi_internal_set_log_mod(WIFI_LOG_MODULE_ALL, WIFI_LOG_SUBMODULE_ALL, true);
+    if (err != ESP_OK) return Http::sendError(req, 500, esp_err_to_name(err));
+    JsonDocument doc;
+    doc["level"] = level;
+    return Http::sendJson(req, 200, doc);
+}
+
+// {"seconds": 1-30}: starts a radio capture of the frames the AP sends
+// the board (WifiSniff); GET reads the counters once it has ended.
+esp_err_t wifiSniffSetHandler(httpd_req_t* req) {
+    std::string body;
+    if (req->content_len == 0 || req->content_len > 64 || !Http::readBody(req, body, 64)) {
+        return Http::sendError(req, 400, "Missing JSON payload");
+    }
+    JsonDocument in;
+    const int seconds = deserializeJson(in, body) ? 0 : (in["seconds"] | 0);
+    if (seconds < 1 || seconds > 30) return Http::sendError(req, 400, "seconds must be 1-30");
+    if (!WifiSniff::start(seconds)) return Http::sendError(req, 409, "Capture running or refused");
+    JsonDocument doc;
+    doc["started"] = true;
+    doc["seconds"] = seconds;
+    return Http::sendJson(req, 200, doc);
+}
+
+esp_err_t wifiSniffGetHandler(httpd_req_t* req) {
+    const WifiSniff::Stats s = WifiSniff::stats();
+    JsonDocument doc;
+    doc["running"] = s.running;
+    doc["seconds"] = s.seconds;
+    doc["frames"] = s.frames;
+    doc["non_qos"] = s.non_qos;
+    doc["rx_errors"] = s.rx_errors;
+    if (s.frames) doc["rssi_avg"] = s.rssi_sum / int32_t(s.frames);
+    JsonObject tids = doc["tid"].to<JsonObject>();
+    for (int i = 0; i < 8; ++i) {
+        if (!s.tid[i].frames) continue;
+        JsonObject t = tids[std::to_string(i)].to<JsonObject>();
+        t["frames"] = s.tid[i].frames;
+        t["bytes"] = s.tid[i].bytes;
+        t["retries"] = s.tid[i].retries;
+        t["aggregated"] = s.tid[i].aggregated;
+    }
+    JsonObject mcs = doc["ht_mcs"].to<JsonObject>();
+    for (int i = 0; i < 16; ++i) if (s.ht_mcs[i]) mcs[std::to_string(i)] = s.ht_mcs[i];
+    JsonObject legacy = doc["legacy_rate"].to<JsonObject>();
+    for (int i = 0; i < 32; ++i) if (s.legacy[i]) legacy[std::to_string(i)] = s.legacy[i];
+    JsonObject addba = doc["addba_req"].to<JsonObject>();
+    JsonObject delba = doc["delba"].to<JsonObject>();
+    for (int i = 0; i < 8; ++i) {
+        if (s.addba_req[i]) addba[std::to_string(i)] = s.addba_req[i];
+        if (s.delba[i]) delba[std::to_string(i)] = s.delba[i];
+    }
     return Http::sendJson(req, 200, doc);
 }
 
@@ -749,6 +819,9 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/wifi-mac", HTTP_POST, wifiMacSetHandler);
     server.on("/api/system/wifi-rx", HTTP_GET, wifiRxGetHandler);
     server.on("/api/system/wifi-rx", HTTP_POST, wifiRxSetHandler);
+    server.on("/api/system/wifi-log", HTTP_POST, wifiLogSetHandler);
+    server.on("/api/system/wifi-sniff", HTTP_GET, wifiSniffGetHandler);
+    server.on("/api/system/wifi-sniff", HTTP_POST, wifiSniffSetHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/system/nettest", HTTP_GET, netTestHandler);
