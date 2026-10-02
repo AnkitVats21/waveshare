@@ -23,6 +23,7 @@
 #include "services/storage/SysDbSyncReactor.h"
 #include "services/alerts/AlertLibrary.h"
 #include "hal/input/ExpanderKeyInput.h"
+#include "services/storage/TuningFile.h"
 #include "services/network/WifiService.h"
 #include "services/network/UsbNet.h"
 #include "services/http/HttpService.h"
@@ -77,6 +78,7 @@ extern "C" void app_main(void) {
             // Moves any secrets on the card into NVS before Wi-Fi reads them,
             // and before system.ndb imports (and deletes) gemini_config.json.
             credentials::importFromSdCard();
+            Services::loadTuningFile();  // before the services that read the flags
             if (Services::openSystemDb()) Services::SysDbSyncReactor::getInstance().loadPersistentState();
         }
 #endif

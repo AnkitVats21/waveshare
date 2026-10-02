@@ -14,6 +14,8 @@
 #include "services/network/NetStats.h"
 #include "services/network/WifiService.h"
 #include "services/network/WifiSniff.h"
+#include "services/storage/TuningFile.h"
+#include "core_sysdb/Tuning.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -357,6 +359,24 @@ esp_err_t wifiSniffGetHandler(httpd_req_t* req) {
     for (int i = 0; i < 8; ++i) {
         if (s.addba_req[i]) addba[std::to_string(i)] = s.addba_req[i];
         if (s.delba[i]) delba[std::to_string(i)] = s.delba[i];
+    }
+    return Http::sendJson(req, 200, doc);
+}
+
+// Performance-experiment flags (core_sysdb/Tuning.h): each flag the firmware
+// read, its value, and whether /sdcard/tuning.json set it. A file key no
+// code read shows "read": false (a typo, or a flag this build lacks).
+esp_err_t tuningGetHandler(httpd_req_t* req) {
+    Tuning::Flag flags[Tuning::kMaxFlags];
+    const size_t n = Tuning::list(flags, Tuning::kMaxFlags);
+    JsonDocument doc;
+    doc["file"] = Services::TUNING_FILE;
+    JsonObject out = doc["flags"].to<JsonObject>();
+    for (size_t i = 0; i < n; ++i) {
+        JsonObject f = out[flags[i].key].to<JsonObject>();
+        f["value"] = flags[i].value;
+        f["from_file"] = flags[i].from_file;
+        f["read"] = flags[i].read;
     }
     return Http::sendJson(req, 200, doc);
 }
@@ -820,6 +840,7 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/wifi-rx", HTTP_GET, wifiRxGetHandler);
     server.on("/api/system/wifi-rx", HTTP_POST, wifiRxSetHandler);
     server.on("/api/system/wifi-log", HTTP_POST, wifiLogSetHandler);
+    server.on("/api/system/tuning", HTTP_GET, tuningGetHandler);
     server.on("/api/system/wifi-sniff", HTTP_GET, wifiSniffGetHandler);
     server.on("/api/system/wifi-sniff", HTTP_POST, wifiSniffSetHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);

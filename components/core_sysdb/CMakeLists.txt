@@ -6,6 +6,7 @@ idf_component_register(
         "src/BufferManager.cpp"
         "src/LogRouter.cpp"
         "src/AsyncNetLogger.cpp"
+        "src/Tuning.cpp"
     INCLUDE_DIRS
         "include"
     REQUIRES

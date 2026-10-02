@@ -1,4 +1,5 @@
 #include "audio_core/WakeWordEngine.h"
+#include "core_sysdb/Tuning.h"
 
 #include <cmath>
 #include <cstring>
@@ -174,8 +175,15 @@ bool WakeWordEngine::begin() {
     // with feed on Core 0 it starved IDLE0 next to Wi-Fi/lwIP/Opus. So the heavy feed
     // gets the audio core (Core 1: otherwise just the speaker mixer and audio pump) and
     // detect goes to Core 0, where at prio 12 it outranks the media/network tasks.
+    // Tuning flags ww_detect_core (0, 1, or -1 for either) and ww_detect_prio
+    // override both, to measure its effect on network throughput.
+    int det_core = Tuning::get("ww_detect_core", ThreadConfig::CORE_NETWORK);
+    if (det_core < -1 || det_core > 1) det_core = ThreadConfig::CORE_NETWORK;
+    int det_prio = Tuning::get("ww_detect_prio", ThreadConfig::Priority::WAKE_WORD_DETECT);
+    if (det_prio < 1 || det_prio > 20) det_prio = ThreadConfig::Priority::WAKE_WORD_DETECT;
     xTaskCreatePinnedToCore(detectTaskBridge, "ww_detect", ThreadConfig::StackSize::STACK_WW_DET,
-                            afe_data, ThreadConfig::Priority::WAKE_WORD_DETECT, nullptr, ThreadConfig::CORE_NETWORK);
+                            afe_data, det_prio, nullptr,
+                            det_core < 0 ? tskNO_AFFINITY : static_cast<BaseType_t>(det_core));
     xTaskCreatePinnedToCore(feedTaskBridge,   "ww_feed",   ThreadConfig::StackSize::STACK_WW_FEED,
                             afe_data, ThreadConfig::Priority::WAKE_WORD_FEED, nullptr, ThreadConfig::CORE_AUDIO);
 
