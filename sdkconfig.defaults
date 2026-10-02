@@ -86,6 +86,14 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
 CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
 
+# TCP receive window 32 KB (22 segments) and a receive mailbox to match.
+# The 5.7 KB default (4 segments) caps a connection at ~96 KB/s at 60 ms
+# RTT. Every measurement on 2026-10-02 (LAN 1.6-2.2 MB/s, HTTPS 422-468
+# KB/s with audio running) used this window; the buffered segments are
+# lwIP buffers in PSRAM (L2_TO_L3_COPY below).
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+
 # Copy each received frame out of the Wi-Fi driver's buffer into an lwIP
 # buffer (PSRAM, SPIRAM_TRY_ALLOCATE_WIFI_LWIP) instead of handing the
 # driver buffer up. Without it, data waiting unread in any socket keeps
