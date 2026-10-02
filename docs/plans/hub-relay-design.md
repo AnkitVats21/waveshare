@@ -1,8 +1,8 @@
 # Plan: Hub mode (voice relay and music control on a LAN hub)
 
-Status: **phase 2 built** (voice through the hub, PCM both ways); phase 3
-(music control, edges and roles, section 13) in progress
-Last updated: 2026-10-02
+Status: **phase 3 built** (edges and roles, music on the hub, section 14);
+phases 4 (Opus uplink) and 5 (the Pi) next
+Last updated: 2026-10-03
 
 ---
 
@@ -459,3 +459,68 @@ Steps, each committed and tested on its own:
 
 Not in phase 3: a hub-side default setup (prompt, voice) for edges that send
 none, and a dashboard that reads `music_state` from the hub directly.
+
+## 14. Phase 3 as built (2026-10-03)
+
+Built as planned in section 13; the protocol is nexus-orbit
+`docs/PROTOCOL.md` (proto 2). Changes and additions:
+
+- **Board:** `HubMusic` (`main/services/hub/`) is the player and controller
+  side; `MusicPlaybackService::postCommand` is the person's entry point and
+  goes to the hub while it runs the music, while the media worker's own
+  steps (`dispatch`) stay local. Setting `music_control`: `auto` (default)
+  or `local`, in `POST /api/hub {"music"}`. The board's queue is the hub's
+  copy, so the dashboard shows it unchanged; music on another edge shows as
+  a satellite's in the board's media state.
+- **Hub:** a lookup goes through nexus-mcp `music_track`, then
+  invidious-daemon (`--invidious-url`). The next song's URL is fetched
+  ahead. The music cache (`--cache-dir`, `--cache-max-mb`) serves saved songs
+  to every player over the LAN.
+- **Orbit:** `--hub ws://<hub>:8380/hub/edge` joins as a player; without it
+  Orbit talks to the board's `/api/orbit/ws` as before (direct mode).
+- **Sessions and music:** the hub remembers that music was playing when a
+  session began and resumes it afterwards wherever it plays by then (moved
+  to Orbit during the session, it starts there when the session ends).
+- **Fixed along the way:**
+  - A play deferred until a session ended lost its song id when music was
+    playing. This also hit the direct path for a song saved on the card.
+  - The silence timeout counted the connection time; a cold direct
+    session (2.3 s) left under a second to speak.
+  - The mic write to the hub waits up to 3 s. A 1 s stall during a song
+    download had dropped the link.
+
+Measured on the board (hub on the PC, home Wi-Fi):
+
+| Measure | Value |
+|---|---|
+| Key, dashboard or voice action to the hub | 10-20 ms on the board |
+| "Play X" by search | 11-13 s, all in the lookup (invidious-daemon: search 4.6 s, first extraction ~7 s; the same lookup as direct mode) |
+| Library song (saved on the card) | 0.5 s |
+| Next (URL fetched ahead) | 150 ms |
+| A song's end to the next song | 330 ms |
+| Seek | 40 ms |
+| Voice "next" in a direct session, through the hub | 360 ms |
+| A song saved by the hub (3.2 MB) | 228 ms |
+| The board streaming a saved song from the hub | opened 0.5 s after `music_play` (plain HTTP, 206) |
+| Internal RAM idle / streaming from YouTube (lowest) | 53.8 KB / 22.4 KB |
+| A hub session over music | no new low |
+| A cold direct session over music | low 12.9 KB (`docs/known-issues.md`) |
+
+Failover tested on the device:
+- **Hub killed mid-song:** the song carries on. At its end the board plays
+  the next from its copy; the lookup for it now starts when the link drops.
+- **Hub back:** `music_sync` makes the board's song and queue the hub's.
+  The next song end, reported as seq 0, advances through the hub.
+- **`music_control` set to local, then auto:** the board's own queue, then
+  sync.
+- **Satellite closed:** the hub stops the music and the board shows idle.
+- **Hub killed with Orbit playing:** Orbit stops.
+- **By voice through the hub:** music moves from the board to Orbit and
+  back, at its position.
+
+Not done:
+- The dashboard reads the hub's `music_state` (it shows the board's copy).
+- A default setup on the hub for edges that send none.
+- Orbit's media keys as controller actions.
+- The board's dashboard picker (`/api/orbit/target`) acts on the board's
+  own satellites, not the hub's.

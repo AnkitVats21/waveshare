@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-What doesn't work, or works with a catch, as of 2026-10-02. Each entry
+What doesn't work, or works with a catch, as of 2026-10-03. Each entry
 gives the symptom, the cause if known, and a workaround if there is one.
 Fix something here, or find something new: update this file in the same
 commit.
@@ -41,13 +41,26 @@ Voice through a hub on the LAN (`voice_backend` hub or auto,
 `docs/plans/hub-relay-design.md`) avoids it for Gemini: no underruns in the
 first sessions measured.
 
-### The hub link dropped once on a mic write
-In the first hub voice tests the board's link to the hub dropped once, 2 s
-into a session: a mic write waited over a second (`transport_poll_write(0)`)
-and esp_websocket_client closes the connection on a write timeout. The
-session ended with the error chime and the link came back 5 s later. It did
-not happen again in the next ten sessions. The hub now logs slow reads of
-the board and slow writes to Gemini, so a repeat shows which side stalled.
+### The hub link dropped on a mic write
+The board's link to the hub dropped twice in the hub voice tests: a mic
+write waited over a second (`transport_poll_write(0)`) and
+esp_websocket_client closes the connection on a write timeout, ending the
+session (the link comes back 5 s later). The second time was during a
+session over a song download (2026-10-03). The mic write now waits up to
+3 s, and writes over 300 ms are logged (`Slow mic write to the hub`); in
+four sessions started during fresh song downloads none was slow. If it
+comes back, the log line gives the stall's length.
+
+### Low internal RAM after a direct session over music
+A cold direct Gemini session (`voice_backend` direct) over music took the
+lowest free internal RAM since boot from 22 KB to 12-13 KB, twice. Free RAM
+dropped ~13 KB when the TLS connection opened and stayed there; the low
+came at the session's end, while the connection was kept open
+(`keepalive_s`, ~16 KB of TLS) and the board reopened the mic's DMA and
+resumed the music. A session through the hub (no TLS on the board) over
+the same music left the low at 22 KB. Likely the same as the 7.5 KB low
+seen once on 2026-10-02. **Options:** close the kept connection when music
+resumes, or use the hub.
 
 ### A rejected stream still shows as playing
 When googlevideo refuses a stream (HTTP 403, also after the URL is resolved
@@ -82,11 +95,11 @@ renews the URL if it has expired (403). Tested on the device by dropping
 the connection on purpose and with a rejected URL; a real pause of several
 minutes (and one past the URL's ~6 h expiry) hasn't been run since.
 
-### Resuming mid-track is untested on the device
-Starting a song or stream part-way (after an alarm rings over music, or a
-play deferred until an assistant session ends) uses code paths that were
-tested on the PC and with a temporary hook, but not end to end on the
-device.
+### Resuming mid-track is untested after an alarm
+Starting a song part-way after an alarm rang over music was tested on the
+PC and with a temporary hook, not end to end on the device. Starting part
+way when the hub moves the music (and a play deferred until a session
+ends) was tested on the device on 2026-10-03.
 
 ### Recordings renamed through the file API
 A recording renamed or deleted with the generic `/api/files` routes (not
