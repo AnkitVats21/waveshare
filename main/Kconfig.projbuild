@@ -176,6 +176,17 @@ config WAVESHARE_USB_NET
         TinyUSB's buffers take ~11.7 KB of internal RAM even while the port
         is in serial mode, so it is off unless needed.
 
+config WAVESHARE_VOICE_HUB
+    bool "Hub mode: link to a hub on the LAN"
+    depends on WAVESHARE_HTTP_FILE_SERVER_ENABLE
+    default n
+    help
+        Connects the board to a hub on the home network (nexus-hub, see
+        docs/plans/hub-relay-design.md): the hub serves the dashboard to
+        many browsers and relays its commands. The hub is the hub_url
+        setting, or found by mDNS (_nexus-hub._tcp). Costs one more
+        WebSocket client task (3.5 KB internal stack).
+
 config WAVESHARE_INVIDIOUS_FALLBACK
     bool "Look songs up on Invidious directly when the MCP server fails"
     default y

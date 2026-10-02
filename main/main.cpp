@@ -29,6 +29,9 @@
 #endif
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
+#if CONFIG_WAVESHARE_VOICE_HUB
+#include "services/hub/HubLink.h"
+#endif
 #include "services/http/OrbitChannel.h"
 #include "services/mcp/McpTrackSource.h"
 #include "services/mcp/McpService.h"
@@ -207,6 +210,9 @@ extern "C" void app_main(void) {
 #if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
     Services::ControlChannel::getInstance().start();
     http_server.start();
+#endif
+#if CONFIG_WAVESHARE_VOICE_HUB
+    Services::HubLink::getInstance().start();
 #endif
 
     // 7. Confirm healthy boot for OTA rollback protection

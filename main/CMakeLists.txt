@@ -54,6 +54,7 @@ set(srcs
             "services/http/routes/DbRoutes.cpp"
             "services/http/routes/RecordingRoutes.cpp"
             "services/http/routes/McpRoutes.cpp"
+            "services/http/routes/HubRoutes.cpp"
             "services/storage/SysDbSyncReactor.cpp"
             "services/storage/SystemDatabase.cpp"
             "services/storage/generated/SystemDb.generated.cpp"
@@ -78,6 +79,11 @@ set(srcs
 # The USB port as a network adapter; off by default (Kconfig WAVESHARE_USB_NET).
 if(CONFIG_WAVESHARE_USB_NET)
     list(APPEND srcs "services/network/UsbNet.cpp")
+endif()
+
+# The link to a LAN hub; off by default (Kconfig WAVESHARE_VOICE_HUB).
+if(CONFIG_WAVESHARE_VOICE_HUB)
+    list(APPEND srcs "services/hub/HubLink.cpp")
 endif()
 
 if(CONFIG_DISPLAY_ENABLE)

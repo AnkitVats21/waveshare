@@ -4,6 +4,8 @@
 
 // Secrets kept in NVS, never in files on the SD card.
 //   creds/gemini_api_key          Gemini API key
+//   creds/mcp_token               MCP server bearer token
+//   creds/hub_token               shared secret for the hub link (HubLink)
 //   wifi_store/ssid, /password    station credentials
 // Values are never logged.
 namespace credentials {
@@ -14,7 +16,10 @@ bool setGeminiApiKey(const std::string& key);
 
 std::string mcpToken();  // empty if none is stored
 bool hasMcpToken();
-bool setMcpToken(const std::string& token);
+bool setMcpToken(const std::string& token);  // "" erases it
+
+std::string hubToken();  // empty if none is stored
+bool setHubToken(const std::string& token);  // "" erases it
 
 struct Wifi {
     std::string ssid;

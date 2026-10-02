@@ -15,6 +15,7 @@ const char* const TAG = "Credentials";
 constexpr const char* CREDS_NS = "creds";
 constexpr const char* GEMINI_KEY = "gemini_api_key";
 constexpr const char* MCP_TOKEN_KEY = "mcp_token";
+constexpr const char* HUB_TOKEN_KEY = "hub_token";
 constexpr const char* WIFI_NS = "wifi_store";
 
 constexpr const char* WIFI_FILE = "/sdcard/wifi_config.json";
@@ -155,16 +156,29 @@ bool hasMcpToken() {
     return !mcpToken().empty();
 }
 
-bool setMcpToken(const std::string& token) {
+// Stores a token, or erases it when empty.
+static bool setOrErase(const char* key, const std::string& token) {
     if (token.empty()) {
         nvs_handle_t h;
         if (nvs_open(CREDS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
-        nvs_erase_key(h, MCP_TOKEN_KEY);
+        nvs_erase_key(h, key);
         nvs_commit(h);
         nvs_close(h);
         return true;
     }
-    return writeStrings(CREDS_NS, {{MCP_TOKEN_KEY, &token}});
+    return writeStrings(CREDS_NS, {{key, &token}});
+}
+
+bool setMcpToken(const std::string& token) {
+    return setOrErase(MCP_TOKEN_KEY, token);
+}
+
+std::string hubToken() {
+    return readString(CREDS_NS, HUB_TOKEN_KEY);
+}
+
+bool setHubToken(const std::string& token) {
+    return setOrErase(HUB_TOKEN_KEY, token);
 }
 
 bool loadWifi(Wifi& out) {

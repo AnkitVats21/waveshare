@@ -8,7 +8,7 @@ server itself (`Http::Server`, JSON helpers, the bundle from flash) is the
 | File | What |
 |---|---|
 | `HttpService` | Starts the server (112 URI handler slots, 89 used), registers the route groups |
-| `ControlChannel` | `/api/ws`: one client at a time (a new one takes over); full state on connect, then on every relevant sysdb change (coalesced) and periodically; commands as `{"cmd": ...}`; opt-in transcript stream. Advertises `nexus.local` over mDNS |
+| `ControlChannel` | `/api/ws`: one client at a time (a new one takes over); full state on connect, then on every relevant sysdb change (coalesced) and periodically; commands as `{"cmd": ...}`; opt-in transcript stream. Advertises `nexus.local` over mDNS. Also feeds the hub link (`HubLink`, `main/services/hub/`): the same pushes and transcript, and the hub's browsers' commands |
 | `OrbitChannel` | `/api/orbit/ws`: satellites (nexus-orbit on a PC or Pi, up to 3) that can play the music instead of the board. The board keeps the queue and sends the active satellite `orbit_play` (video id + start position) / `orbit_pause` / `orbit_resume` / `orbit_seek` / `orbit_stop`; the satellite resolves the track itself and sends `orbit_report` every second (position, state) and `orbit_event` (`track_ended`, `error`). One silent for 5 s is dropped and the song continues on the board |
 | `routes/*Routes.cpp` | One file per area, registered from `Routes.h` |
 | `FlashUpload` | OTA and bundle writes on an internal-RAM stack (the httpd task's stack is in PSRAM, and flash writes freeze the cache) |
@@ -34,6 +34,7 @@ matching HTTP status.
 | Databases | `GET /api/db/<name>` (`system`, `recordings`, `music`): the raw `.ndb` file |
 | Config | `GET/POST /api/config/gemini` (model, voice, prompt, transcript and session options, web_search, weather_location, vad_*; the key is write-only), `GET /api/config/gemini/models` (voice models this key can use, from Google, with whether search works on each), `GET/POST /api/config/settings` (timezone, …) |
 | MCP | `GET /api/mcp` (status, tools list, last error), `POST /api/mcp` (`url`, `token`, `max_tools`), `POST /api/mcp/refresh` (trigger background tools refresh) |
+| Hub | `GET /api/hub` (link status: `up`, `url`, `from_mdns`, `hub_version`, `last_error`, `has_token`; `compiled: false` without `CONFIG_WAVESHARE_VOICE_HUB`), `POST /api/hub` (`url`: `ws://...`, "" = mDNS; `token`: write-only, kept in NVS) |
 | Time | `GET/POST /api/time`, `POST /api/time/sync` |
 | Wi-Fi | `GET /api/wifi/status`, `GET /api/wifi/scan`, `POST /api/wifi/configure` |
 | System | `GET /api/system/metrics`, `/init`, `/delta` (for the built-in page), `GET /api/system/tasks` (each task's stack: size, least free, internal or PSRAM), `GET /api/system/flash` (partitions: size and what is in use, e.g. firmware length and version), `GET /api/storage/info`, `GET /api/logs?since=<seq>` (~80 lines), `POST /api/led/set`, `POST /api/system/reboot`, `GET/POST /api/system/usb-mode` (`{"mode":"serial"|"ethernet"}`: the USB port as serial with Wi-Fi, or as a USB network adapter with Wi-Fi off; saving reboots; only built with `CONFIG_WAVESHARE_USB_NET`, off by default), `GET /api/system/nettest?url=&max=[&quiet=1]` (download speed from the board), `POST /api/system/nettest[?quiet=1]` (upload speed to the board; both report receive pauses and lwIP drops) |

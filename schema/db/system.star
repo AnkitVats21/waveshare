@@ -42,6 +42,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field mcp_max_tools:        u8 = 32        tag=19  // maximum tools to import from MCP server
         field briefing_music:       string         tag=20  // file in /sdcard/media/alarm played under the briefing; "" = none
         field briefing_duck:        u8 = 20        tag=21  // music level (%) while the briefing speaks, 10-50
+        field hub_url:              string         tag=22  // hub link (HubLink) "ws://host:port/hub/board"; "" = find the hub by mDNS (_nexus-hub._tcp)
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",
