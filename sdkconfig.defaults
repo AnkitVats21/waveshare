@@ -86,6 +86,16 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
 CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
 
+# Copy each received frame out of the Wi-Fi driver's buffer into an lwIP
+# buffer (PSRAM, SPIRAM_TRY_ALLOCATE_WIFI_LWIP) instead of handing the
+# driver buffer up. Without it, data waiting unread in any socket keeps
+# driver RX buffers (16 dynamic) busy, and once they run out the radio drops
+# every incoming frame, for every connection. Measured 2026-10-02: LAN upload
+# with the audio front end running 143-480 KB/s with 9-39 pauses >= 100 ms
+# -> 1.6-2.2 MB/s with none; an HTTPS download with audio running ~85 ->
+# 422-468 KB/s; a held download no longer silences a Gemini session.
+CONFIG_LWIP_L2_TO_L3_COPY=y
+
 # lwIP's link/IP/TCP counters, reported by /api/system/nettest (drops,
 # memory errors) to tell loss inside the board from a slow link.
 CONFIG_LWIP_STATS=y
