@@ -224,6 +224,13 @@ bool WifiService::connectWithCredentials(const std::string& ssid, const std::str
     });
 
     LOGI_WIFI("Reconnecting with new Wi-Fi credentials: SSID '%s'", ssid.c_str());
+    // Drop the current link first: connecting while already connected (the
+    // same network sent again) fails without a GOT_IP event, which left
+    // wifi_connected false and the HTTP server stopped on a working link.
+    // The disconnect event's handler reconnects, so connect here only when
+    // there was no link to drop.
+    wifi_ap_record_t current;
+    if (esp_wifi_sta_get_ap_info(&current) == ESP_OK) return esp_wifi_disconnect() == ESP_OK;
     return esp_wifi_connect() == ESP_OK;
 }
 
