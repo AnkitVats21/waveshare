@@ -1,4 +1,5 @@
 #include "core_sysdb/AudioRates.h"
+#include "core_sysdb/Tuning.h"
 #include "NexusPlayer.h"
 #include "media_player/CatalogDB.h"
 #include "media_player/MusicPlaybackService.h"
@@ -127,6 +128,7 @@ void NexusPlayer::onAudioFocusChange(AudioTrack track, FocusEvent event) {
                 ESP_LOGI(TAG, "Audio focus lost (pause) — pausing media playback");
                 _should_resume_after_session = true;
                 pause_internal();
+                holdDownloadForSession();
             }
         } else if (event == FocusEvent::GAIN) {
             // During an assistant session the resume waits for the session to end
@@ -445,6 +447,18 @@ void NexusPlayer::stopActivePipelines() {
     bm.flush(Buffers::MEDIA_RX_BUF);
 }
 
+// A song still downloading would share the link (and the CPU's decryption)
+// with the assistant session: hold it until the session ends. Only while the
+// session has the music paused: music kept playing under the voice needs
+// its data. The wake's pause and the session start come in either order, so
+// both call this; the caller holds _mutex.
+void NexusPlayer::holdDownloadForSession() {
+    if (!_session_active || _state == STATE_STREAMING_AND_CACHING) return;
+    if (!Tuning::get("hold_download_in_session", 1)) return;
+    _streamManager.hold(true);
+    if (_streamManager.isStreaming()) ESP_LOGI(TAG, "Download held for the assistant session");
+}
+
 void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap) {
     if (changed & COMP::ASSISTANT) {
         PlayerLock lock(_mutex);
@@ -453,10 +467,12 @@ void NexusPlayer::onStateChanged(ComponentMask changed, const SystemState& snap)
         
         if (new_session_active && !_session_active) {
             _session_active = true;
+            holdDownloadForSession();
         } 
         else if (!new_session_active && _session_active) {
             ESP_LOGI(TAG, "Assistant session ended. Handling deferred playback actions.");
             _session_active = false;
+            _streamManager.hold(false);
             if (_alarmOwner) {
                 // beginAlarm() took the deferred play/resume into the resume point.
             } else if (_should_play_after_session && (!_pendingDownloadUrl.empty() || _storageManager.fileExists(_pendingSongId.c_str()))) {

@@ -89,6 +89,7 @@ private:
     BufferManager::BufferId _storageId;
     
     StorageManager   _storageManager;
+    void holdDownloadForSession();
     StreamManager    _streamManager;
     AudioEngine      _audioEngine;
     

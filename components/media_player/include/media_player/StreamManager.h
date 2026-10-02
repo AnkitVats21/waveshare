@@ -22,6 +22,13 @@ public:
     void stopStreaming();
     bool isStreaming() const { return _isStreaming; }
 
+    // While held, the network task stops reading: TCP stops the server, so
+    // the download uses no bandwidth or decryption (an assistant session
+    // gets the link to itself). Released, it reads on from where it was; if
+    // the server dropped the idle connection meanwhile, the reconnect path
+    // resumes at the same byte. Stays set across tracks until released.
+    void hold(bool on) { _held = on; }
+
     // Numeric query parameter of a stream URL (googlevideo carries
     // dur=<seconds> and clen=<bytes>); 0 when absent.
     static double urlNumberParam(const char* url, const char* key);
@@ -44,6 +51,7 @@ private:
     uint32_t _startByteOffset = 0;
     TaskHandle_t _networkTaskHandle = nullptr;
     volatile bool _isStreaming = false;
+    volatile bool _held = false;
     bool _taskCreatedWithCaps = false;
     
     bool _startAtTime = false;   // beginStreamingAt: resolve _targetMs to an offset

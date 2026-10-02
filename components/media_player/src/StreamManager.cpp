@@ -174,6 +174,10 @@ void StreamManager::runStreamLoop() {
     int reconnects = 0;
 
     while (_isStreaming) {
+        if (_held) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
         int bytes_read = _http.isConnected() ? _http.read(payload, readSize) : -1;
         if (bytes_read > 0) {
             nextByte += bytes_read;
