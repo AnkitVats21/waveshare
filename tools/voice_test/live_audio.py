@@ -25,7 +25,11 @@ SAY = ("You are a speech synthesizer, not an assistant. Every message contains a
 def _connect():
     import websockets
     key = KEY_FILE.read_text().strip()
-    return websockets.connect(URL, max_size=None, additional_headers={"x-goog-api-key": key})
+    headers = {"x-goog-api-key": key}
+    # websockets 14+ names it additional_headers; older versions extra_headers.
+    if int(websockets.__version__.split(".")[0]) >= 14:
+        return websockets.connect(URL, max_size=None, additional_headers=headers)
+    return websockets.connect(URL, max_size=None, extra_headers=headers)
 
 
 def _words(s):
