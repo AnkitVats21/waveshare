@@ -229,8 +229,13 @@ bool WifiService::connectWithCredentials(const std::string& ssid, const std::str
     // wifi_connected false and the HTTP server stopped on a working link.
     // The disconnect event's handler reconnects, so connect here only when
     // there was no link to drop.
+    // The short wait lets the HTTP reply to /api/wifi/configure go out
+    // before the disconnect stops the server.
     wifi_ap_record_t current;
-    if (esp_wifi_sta_get_ap_info(&current) == ESP_OK) return esp_wifi_disconnect() == ESP_OK;
+    if (esp_wifi_sta_get_ap_info(&current) == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(300));
+        return esp_wifi_disconnect() == ESP_OK;
+    }
     return esp_wifi_connect() == ESP_OK;
 }
 
