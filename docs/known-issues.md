@@ -36,7 +36,7 @@ arrives unmarked runs at 0.4-0.8 MB/s. Disabling 802.11b rates, RX buffer
 counts and the BA window made no difference. **Workarounds:** another
 access point for the board (a laptop hotspot measured 1.2 MB/s), or a relay
 on the LAN that re-sends the traffic unmarked (1.4 MB/s); reconnecting
-Wi-Fi clears the stuck state. Not yet reported to Espressif.
+Wi-Fi clears the stuck state. Reported to Espressif: esp-idf issue #19168.
 
 ### Seeking a song while it is being saved stops the saving
 The song keeps playing from the new position but isn't saved this time;
