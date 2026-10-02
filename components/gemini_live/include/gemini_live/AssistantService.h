@@ -19,6 +19,9 @@ public:
     // chime (a scheduled action opening the session). Any task.
     static void requestQuietWake() { s_quiet_wake_us = esp_timer_get_time(); }
     static void cancelQuietWake() { s_quiet_wake_us = 0; }
+    // When the current session started listening after connecting (0 = not
+    // yet): the silence timeout counts from there, not from the wake.
+    static int64_t listeningSinceUs() { return s_listening_us.load(); }
 
 protected:
 
@@ -47,6 +50,7 @@ private:
     bool m_quiet_session = false;   // this session started quiet (requestQuietWake)
     static constexpr int64_t QUIET_WAKE_US = 3 * 1000 * 1000;
     static inline std::atomic<int64_t> s_quiet_wake_us{0};
+    static inline std::atomic<int64_t> s_listening_us{0};
 
     volatile bool m_connect_timeout_pending   = false;
     volatile bool m_idle_timeout_pending      = false;

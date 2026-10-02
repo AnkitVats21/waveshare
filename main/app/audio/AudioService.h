@@ -62,4 +62,7 @@ private:
     std::unique_ptr<SpeakerPlaybackTask> m_speaker_task;
 
     static constexpr const char* TAG = "AudioSvc";
+    // After the ready chime, silence ends the session only once this has
+    // passed (mayEndOnSilence).
+    static constexpr int64_t LISTEN_GRACE_US = 2500 * 1000;
 };

@@ -418,6 +418,7 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
     switch (newState) {
         case AssistantState::StartingSession: {
             m_wake_us = esp_timer_get_time();
+            s_listening_us = 0;
             const int64_t quiet_us = s_quiet_wake_us.exchange(0);
             m_quiet_session = quiet_us && m_wake_us - quiet_us < QUIET_WAKE_US;
             AudioOrchestrator::getInstance().notifyWakeWordDetected();
@@ -425,6 +426,7 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             break;
         }
         case AssistantState::StreamingUserAudio:
+            if (oldState == AssistantState::Connecting) s_listening_us = esp_timer_get_time();
             if (oldState == AssistantState::Connecting && m_wake_us) {
                 LOGI_SYSTEM("Listening %d ms after the wake.",
                             (int)((esp_timer_get_time() - m_wake_us) / 1000));

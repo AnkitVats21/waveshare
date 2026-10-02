@@ -7,7 +7,9 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
+#include "gemini_live/AssistantService.h"
 #include "gemini_live/VoiceAgent.h"
+#include "esp_timer.h"
 #include "hal/Board.h"
 #include "hal/audio/AudioHal.h"
 #include "services/BufferManager.h"
@@ -175,6 +177,19 @@ void AudioService::onWakeWord(uint8_t channel) {
 
 bool AudioService::mayEndOnSilence() {
     auto snap = sysdb.snapshot();
+    // The silence counted from the wake; a cold connection can take 2 s of
+    // it. Hold until the person has had a moment to speak after the ready
+    // chime (the count then starts again).
+    if (snap.assistant.session_state == AssistantState::StartingSession ||
+        snap.assistant.session_state == AssistantState::Connecting) {
+        LOGI_AUDIO("VAD timeout held (still connecting).");
+        return false;
+    }
+    const int64_t listening_us = AssistantService::listeningSinceUs();
+    if (listening_us && esp_timer_get_time() - listening_us < LISTEN_GRACE_US) {
+        LOGI_AUDIO("VAD timeout held (listening for %d ms).", (int)((esp_timer_get_time() - listening_us) / 1000));
+        return false;
+    }
     if (snap.assistant.media_pending_idle || snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
         LOGI_AUDIO("VAD timeout held (media_pending=%d, speaking=%d, turn_pending=%d).",
                    (int)snap.assistant.media_pending_idle, (int)snap.audio.assistant_speaking, (int)snap.audio.turn_complete_pending);
