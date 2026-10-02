@@ -108,6 +108,7 @@ private:
     static constexpr int RX_QUEUE_LEN = 16;
     static constexpr int64_t REPLY_WAIT_US = 15LL * 1000 * 1000;
     static constexpr uint32_t VOICE_SEND_WAIT_MS = 20;
+    static constexpr uint32_t MIC_SEND_TIMEOUT_MS = 3000;
     static constexpr uint8_t CHANNEL_MIC = 1;
     static constexpr uint8_t CHANNEL_VOICE = 2;
     static constexpr const char* TAG = "HubAgent";

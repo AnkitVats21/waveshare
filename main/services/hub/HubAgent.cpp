@@ -159,8 +159,16 @@ void HubAgent::sendMicAudio(const uint8_t* pcm, size_t len) {
     m_mic_frame[0] = CHANNEL_MIC;
     m_mic_frame[1] = 0;
     std::memcpy(m_mic_frame + 2, pcm, len);
-    if (!HubLink::getInstance().sendBinary(m_mic_frame, len + 2, 1000)) {
-        LOGW_NET("Mic chunk not sent to the hub");
+    // esp_websocket_client drops the link when a write times out, so wait
+    // rather than give up: a late chunk costs less than the session. Over a
+    // music download a write once stalled past 1 s (docs/known-issues.md).
+    const int64_t t0 = esp_timer_get_time();
+    const bool sent = HubLink::getInstance().sendBinary(m_mic_frame, len + 2, MIC_SEND_TIMEOUT_MS);
+    const int64_t took_ms = (esp_timer_get_time() - t0) / 1000;
+    if (!sent) {
+        LOGW_NET("Mic chunk not sent to the hub (%d ms)", (int)took_ms);
+    } else if (took_ms > 300) {
+        LOGW_NET("Slow mic write to the hub: %d ms", (int)took_ms);
     }
 }
 
