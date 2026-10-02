@@ -120,6 +120,13 @@ void MusicPlaybackService::playFromHub() {
     if (paused) NexusPlayer::getInstance().pause();
 }
 
+void MusicPlaybackService::hubLost() {
+    if (getCurrentTrack().videoId.empty()) return;
+    ESP_LOGI(TAG, "The hub is away: this board carries on with its queue");
+    if (isAutoplayEnabled()) checkAndReplenishQueue();
+    prefetchNextTrack();
+}
+
 void MusicPlaybackService::hubPause() {
     NexusPlayer::getInstance().pause();
 }

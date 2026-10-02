@@ -242,6 +242,7 @@ void HubMusic::linkChanged() {
     // here, and nothing shown of another edge's music.
     if (m_mirroring) unmirror();
     m_session = false;
+    MusicPlaybackService::getInstance().hubLost();
 }
 
 void HubMusic::sendSync(const SystemState& snap) {

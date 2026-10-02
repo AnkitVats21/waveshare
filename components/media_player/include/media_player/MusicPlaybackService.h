@@ -127,6 +127,9 @@ public:
     // The board told the hub what it plays (music_sync): its song is now its
     // own (seq 0) for the hub, whatever the hub sent before.
     void hubSynced() { _hubSeq = 0; }
+    // The hub stopped running the music (link down, or music_control local):
+    // fetch ahead and refill from here on, as without a hub.
+    void hubLost();
 
     // Playlist / Queue Management
     // Adds an already-identified track (no search). front = play next.
