@@ -65,9 +65,14 @@ MEDIA_RX_BUF → speaker mixer (audio_core)
   continues if it is the same file. Stream URLs are kept in RAM only.
 - **`TlsConfig.h`** — `Tls::secure()`: CA bundle and hostname check for
   every HTTPS client here (stream, thumbnails, Invidious).
-- **`InvidiousClient` / `InvidiousInstanceResolver`** — search and stream
-  resolution against Invidious instances, with health checks and failover;
-  `setCustomInstance()` pins one.
+- **`TrackSource.h`** — where songs are looked up (search, stream URL,
+  related songs). main sets `Mcp::McpTrackSource`: the MCP server's
+  device-only `music_search` / `music_track` tools, hidden from Gemini.
+- **`InvidiousClient` / `InvidiousInstanceResolver`** — the fallback
+  `TrackSource` when MCP is not configured or fails (then MCP is skipped for a
+  minute): search and stream resolution against Invidious instances, with
+  health checks and failover. Built only with
+  `CONFIG_WAVESHARE_INVIDIOUS_FALLBACK` (default on).
 - **`AudioEngine`** + **`AudioDecoderFactory`** — the decode task. The
   format is sniffed from the first bytes (EBML → WebM, `OggS` → Ogg). The
   decoded audio is downmixed to mono and resampled to the mixer rate.

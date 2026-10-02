@@ -26,7 +26,7 @@ built into a bundle and uploaded to the device.
 | `main/hal/` | Board bring-up: codec, I2C, IO expander, keys, LEDs, LCD |
 | `components/audio_core/` | Mic capture, speaker mixer, wake word + AFE, alert mixer, `AudioOrchestrator` (who owns the speaker) |
 | `components/core_sysdb/` | `EmbeddedSysDb`: in-RAM system state with change bits, generated from `schema/sysdb.star`; `BufferManager` ring buffers; task priorities (`thread_config.h`) |
-| `components/media_player/` | `MusicPlaybackService` (queue, commands), `NexusPlayer` (playback), decoders, WebM/Ogg seeking, Invidious client, `CatalogDB` (library) |
+| `components/media_player/` | `MusicPlaybackService` (queue, commands), `NexusPlayer` (playback), decoders, WebM/Ogg seeking, `TrackSource` (song lookup: over MCP, Invidious client as the optional fallback), `RemoteOutput` (Orbit satellites), `CatalogDB` (library) |
 | `components/gemini_live/` | `AssistantService` (session state machine), Gemini Live protocol, audio pump, tool handlers (generated from `schema/gemini_skills_schema.json`) |
 | `components/nexus_db/` | Append-only document database on the SD card |
 | `components/sd_storage/` | SD mount, `File`/`Fs` wrappers, path policy (what the file API may touch) |
