@@ -29,6 +29,15 @@ void init_mcp(nb::module_& m) {
         return std::make_tuple(tools, res.skipped, res.total_declaration_bytes);
     });
 
+    m.def("mcp_parse_device_tool_result", [](const std::string& json_rpc) {
+        JsonDocument out;
+        std::string err;
+        bool ok = Mcp::parseDeviceToolResult(json_rpc, out, &err);
+        std::string json;
+        if (ok) serializeJson(out, json);
+        return std::make_tuple(ok, json, err);
+    });
+
     m.def("mcp_format_tool_response", [](const std::string& json_rpc) {
         return Mcp::formatToolResponseForGemini(json_rpc);
     });

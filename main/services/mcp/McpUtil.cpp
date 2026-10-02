@@ -278,6 +278,10 @@ ConvertToolsResult convertToolsListToDeclarations(
             continue;
         }
 
+        // Tools the device calls itself (music lookup, ...): not offered to
+        // the model, and not counted against its limits.
+        if (tool["_meta"]["nexus/device_only"] | false) continue;
+
         // 2. Check collisions with built-in tools
         if (built_in_tools.find(name) != built_in_tools.end()) {
             result.skipped.push_back("collides with built-in tool '" + name + "'");
@@ -386,6 +390,29 @@ std::string formatToolResponseForGemini(std::string_view json_rpc_result) {
     std::string out;
     serializeJson(outDoc, out);
     return out;
+}
+
+bool parseDeviceToolResult(std::string_view json_rpc_result, JsonDocument& out, std::string* error) {
+    JsonDocument doc;
+    if (deserializeJson(doc, json_rpc_result)) {
+        if (error) *error = "invalid JSON-RPC response";
+        return false;
+    }
+    JsonVariantConst result = doc["result"];
+    if (result.isNull()) {
+        if (error) *error = doc["error"]["message"] | "no result";
+        return false;
+    }
+    if (result["isError"] | false) {
+        if (error) *error = result["content"][0]["text"] | "tool error";
+        return false;
+    }
+    if (!result["structuredContent"].is<JsonObjectConst>()) {
+        if (error) *error = "no structuredContent";
+        return false;
+    }
+    out.set(result["structuredContent"]);
+    return true;
 }
 
 } // namespace Mcp

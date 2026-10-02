@@ -81,7 +81,8 @@ bool McpClient::hasToken() const {
     return !m_token.empty();
 }
 
-int McpClient::postJsonRpc(const std::string& payload, std::string& response_body, int expected_id, std::string* error_out) {
+int McpClient::postJsonRpc(const std::string& payload, std::string& response_body, int expected_id, std::string* error_out,
+                           int timeout_ms) {
     if (m_url.empty()) {
         if (error_out) *error_out = "MCP URL not configured";
         return -1;
@@ -98,7 +99,7 @@ int McpClient::postJsonRpc(const std::string& payload, std::string& response_bod
     esp_http_client_config_t config = {};
     config.url = m_url.c_str();
     config.method = HTTP_METHOD_POST;
-    config.timeout_ms = 8000;
+    config.timeout_ms = timeout_ms;
     config.buffer_size = 4096;
     config.event_handler = httpEventHandler;
     config.user_data = &ctx;
@@ -221,7 +222,7 @@ bool McpClient::listTools(std::string& raw_tools_response, std::string* error_ou
 }
 
 bool McpClient::callTool(const std::string& name, const std::string& arguments_json,
-                         std::string& raw_call_response, std::string* error_out) {
+                         std::string& raw_call_response, std::string* error_out, int timeout_ms) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_url.empty()) {
         if (error_out) *error_out = "MCP URL not configured";
@@ -248,14 +249,14 @@ bool McpClient::callTool(const std::string& name, const std::string& arguments_j
 
     int id = m_next_id++;
     std::string payload = makePayload(id);
-    int status = postJsonRpc(payload, raw_call_response, id, error_out);
+    int status = postJsonRpc(payload, raw_call_response, id, error_out, timeout_ms);
 
     if (status == 404) {
         ESP_LOGI(TAG, "Session 404 on tools/call; re-initializing session");
         if (initialize(error_out)) {
             id = m_next_id++;
             payload = makePayload(id);
-            status = postJsonRpc(payload, raw_call_response, id, error_out);
+            status = postJsonRpc(payload, raw_call_response, id, error_out, timeout_ms);
         }
     }
 

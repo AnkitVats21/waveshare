@@ -6,6 +6,7 @@ from waveshare_host import (
     mcp_extract_json_rpc_body,
     mcp_convert_tools_list,
     mcp_format_tool_response,
+    mcp_parse_device_tool_result,
 )
 
 
@@ -179,3 +180,31 @@ def test_format_tool_response_for_gemini():
     formatted3 = json.loads(mcp_format_tool_response(json.dumps(resp3)))
     assert formatted3["status"] == "error"
     assert "Location not found" in formatted3["message"]
+
+
+def test_device_only_tools_are_not_offered_to_the_model():
+    # The device calls these itself (music lookup); they must not reach the
+    # model's declarations, and must not use up its limit.
+    raw = json.dumps({"tools": [
+        {"name": "music_track", "_meta": {"nexus/device_only": True}, "inputSchema": {"type": "object"}},
+        {"name": "news_headlines", "inputSchema": {"type": "object"}},
+        {"name": "music_search", "_meta": {"nexus/device_only": True}, "inputSchema": {"type": "object"}},
+    ]})
+    tools, skipped, _ = mcp_convert_tools_list(raw, 1)
+    assert [t[0] for t in tools] == ["news_headlines"]
+    assert skipped == []
+
+
+def test_parse_device_tool_result():
+    ok, out, err = mcp_parse_device_tool_result(json.dumps({"jsonrpc": "2.0", "id": 3, "result": {
+        "content": [{"type": "text", "text": "Artist - Song"}],
+        "structuredContent": {"id": "abc", "stream_url": "https://x/y", "duration": 200}}}))
+    assert ok and json.loads(out) == {"id": "abc", "stream_url": "https://x/y", "duration": 200}
+
+    ok, _, err = mcp_parse_device_tool_result(json.dumps({"jsonrpc": "2.0", "id": 3, "result": {
+        "isError": True, "content": [{"type": "text", "text": "music lookup failed: timeout"}]}}))
+    assert not ok and err == "music lookup failed: timeout"
+
+    ok, _, err = mcp_parse_device_tool_result(json.dumps({"jsonrpc": "2.0", "id": 3,
+        "error": {"code": -32602, "message": "unknown tool"}}))
+    assert not ok and err == "unknown tool"

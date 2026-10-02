@@ -160,6 +160,17 @@ bool McpService::refreshSync(std::string* error_out) {
     return true;
 }
 
+bool McpService::callDeviceTool(const std::string& name, const std::string& args_json, JsonDocument& out,
+                                std::string* error, int timeout_ms) {
+    if (!m_client.isConfigured()) {
+        if (error) *error = "MCP not configured";
+        return false;
+    }
+    std::string raw;
+    if (!m_client.callTool(name, args_json, raw, error, timeout_ms)) return false;
+    return parseDeviceToolResult(raw, out, error);
+}
+
 bool McpService::isConfigured() const {
     return m_client.isConfigured();
 }

@@ -37,6 +37,12 @@ public:
     bool hasTool(const std::string& name) const;
 
     bool executeToolAsync(const char* call_id, const std::string& name, const std::string& args_json);
+
+    // Calls a device-only tool (one the server marks _meta "nexus/device_only")
+    // and blocks for its structuredContent. False, with the reason, when MCP
+    // is not configured, the call fails, or the tool reports an error.
+    bool callDeviceTool(const std::string& name, const std::string& args_json, JsonDocument& out,
+                        std::string* error = nullptr, int timeout_ms = McpClient::DEFAULT_TIMEOUT_MS);
     // skip: a tool name to leave out, or nullptr.
     void populateGeminiDeclarations(JsonArray& functionDeclarations, const char* skip = nullptr);
 

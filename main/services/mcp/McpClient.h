@@ -21,15 +21,20 @@ public:
     bool listTools(std::string& raw_tools_response, std::string* error_out = nullptr);
 
     // Sends "tools/call" request. On 404, automatically re-initializes and retries once.
+    // timeout_ms: for the call itself (a music lookup on the server runs yt-dlp).
     bool callTool(const std::string& name, const std::string& arguments_json,
-                  std::string& raw_call_response, std::string* error_out = nullptr);
+                  std::string& raw_call_response, std::string* error_out = nullptr,
+                  int timeout_ms = DEFAULT_TIMEOUT_MS);
+
+    static constexpr int DEFAULT_TIMEOUT_MS = 8000;
 
     std::string currentUrl() const;
     std::string currentSessionId() const;
     bool hasToken() const;
 
 private:
-    int postJsonRpc(const std::string& payload, std::string& response_body, int expected_id, std::string* error_out);
+    int postJsonRpc(const std::string& payload, std::string& response_body, int expected_id, std::string* error_out,
+                    int timeout_ms = DEFAULT_TIMEOUT_MS);
 
     mutable std::mutex m_mutex;
     std::string m_url;

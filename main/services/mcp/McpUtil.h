@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ArduinoJson.h>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -42,6 +43,11 @@ ConvertToolsResult convertToolsListToDeclarations(
     uint8_t max_tools,
     const std::unordered_set<std::string>& built_in_tools = builtInToolNames()
 );
+
+// The structuredContent of a device-only tool's tools/call result (tools
+// marked _meta "nexus/device_only", which the device calls itself). False,
+// with the message, on a JSON-RPC error or an isError result.
+bool parseDeviceToolResult(std::string_view json_rpc_result, JsonDocument& out, std::string* error = nullptr);
 
 // Formats a tools/call result into the JSON object expected by Gemini Live.
 // Joins text content into {"result": "..."}, includes structuredContent if present,
