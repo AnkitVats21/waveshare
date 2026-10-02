@@ -28,10 +28,6 @@ struct RxDetail {
     uint32_t gaps_500ms;      // of which 500 ms or more
     uint32_t gap_total_ms;    // time spent in those pauses
     uint32_t max_gap_ms;
-    // IPv4 frames by IP precedence (TOS >> 5), which picks the Wi-Fi
-    // priority queue: 0 and 3 best effort, 1-2 background, 4-5 video,
-    // 6-7 voice. Since the reset.
-    uint32_t precedence[8];
 };
 // Totals since the last reset; the gap fields start counting at the reset.
 RxDetail rxDetail();

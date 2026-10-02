@@ -33,7 +33,6 @@ set(srcs
             # Services
             "services/network/WifiService.cpp"
             "services/network/NetStats.cpp"
-            "services/network/WifiSniff.cpp"
             "services/network/UsbNet.cpp"
             "services/network/CaptiveDnsServer.cpp"
             "services/http/HttpService.cpp"
@@ -58,7 +57,6 @@ set(srcs
             "services/http/routes/McpRoutes.cpp"
             "services/storage/SysDbSyncReactor.cpp"
             "services/storage/SystemDatabase.cpp"
-            "services/storage/TuningFile.cpp"
             "services/storage/generated/SystemDb.generated.cpp"
             "services/storage/RecordingsDatabase.cpp"
             "services/storage/generated/RecordingsDb.generated.cpp"

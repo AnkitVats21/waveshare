@@ -24,7 +24,7 @@ are capped at ~85 KB/s"); a bigger TCP window measured no difference.
 On the home router (an ISP-provided Nokia gateway, 2.4 GHz) most internet downloads reach the
 board at 60-85 KB/s, against 0.4-1.4 MB/s for the same data from the LAN or
 through another access point. Gemini's replies need ~64 KB/s, so they have
-almost no margin. **Cause** (radio capture, `/api/system/wifi-sniff`): the
+almost no margin. **Cause** (a promiscuous-mode radio capture, since removed): the
 ISP marks each internet connection with an IP precedence (0, 1 or 5,
 varying per connection), and the router maps it to a Wi-Fi traffic class:
 best effort arrives as TID 1, marked connections as TID 2, 6 or 7. The

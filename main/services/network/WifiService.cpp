@@ -11,7 +11,6 @@
 #include "esp_mac.h"
 #include "nvs_flash.h"
 #include "nvs.h"
-#include "esp_random.h"
 #include <cstring>
 
 WifiService::WifiService(const Config& cfg)
@@ -42,68 +41,6 @@ bool WifiService::clearStoredCredentials() {
     if (!credentials::clearWifi()) return false;
     LOGI_WIFI("Cleared stored Wi-Fi credentials in NVS");
     return true;
-}
-
-namespace {
-constexpr const char* MAC_NS = "net";
-constexpr const char* MAC_KEY = "sta_mac";
-}  // namespace
-
-bool WifiService::randomMacEnabled(uint8_t mac[6]) {
-    nvs_handle_t h;
-    size_t len = 6;
-    bool found = false;
-    if (nvs_open(MAC_NS, NVS_READONLY, &h) == ESP_OK) {
-        found = nvs_get_blob(h, MAC_KEY, mac, &len) == ESP_OK && len == 6;
-        nvs_close(h);
-    }
-    if (!found) esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    return found;
-}
-
-bool WifiService::setRandomMac(bool enabled, uint8_t mac[6]) {
-    nvs_handle_t h;
-    if (nvs_open(MAC_NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    esp_err_t err;
-    if (enabled) {
-        esp_fill_random(mac, 6);
-        mac[0] = (mac[0] & 0xFC) | 0x02;  // unicast, locally administered
-        err = nvs_set_blob(h, MAC_KEY, mac, 6);
-    } else {
-        err = nvs_erase_key(h, MAC_KEY);
-        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
-        esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    }
-    if (err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
-    return err == ESP_OK;
-}
-
-namespace {
-constexpr const char* RX_KEY = "wifi_rx";
-}  // namespace
-
-bool WifiService::loadRxTuning(RxTuning& out) {
-    nvs_handle_t h;
-    size_t len = sizeof(out);
-    bool found = false;
-    if (nvs_open(MAC_NS, NVS_READONLY, &h) == ESP_OK) {
-        found = nvs_get_blob(h, RX_KEY, &out, &len) == ESP_OK && len == sizeof(out);
-        nvs_close(h);
-    }
-    if (!found) out = RxTuning{};
-    return found;
-}
-
-bool WifiService::saveRxTuning(const RxTuning* tuning) {
-    nvs_handle_t h;
-    if (nvs_open(MAC_NS, NVS_READWRITE, &h) != ESP_OK) return false;
-    esp_err_t err = tuning ? nvs_set_blob(h, RX_KEY, tuning, sizeof(*tuning))
-                           : nvs_erase_key(h, RX_KEY);
-    if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
-    if (err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
-    return err == ESP_OK;
 }
 
 bool WifiService::loadCredentials(std::string& outSsid, std::string& outPassword) {
@@ -259,23 +196,13 @@ bool WifiService::begin() {
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
     // These override sdkconfig's buffer counts, to save internal RAM (each
-    // static RX buffer is ~1.6 KB). Measured 2026-10-02 with the wifi-rx
-    // setting: 4/16, 6/16, 10/32 and 16/32 (BA window 16) gave the same
-    // speeds, LAN 1.6-3 MB/s and internet ~85 KB/s; 16/32 cost 16 KB.
+    // static RX buffer is ~1.6 KB). Measured 2026-10-02: 4/16, 6/16, 10/32
+    // and 16/32 (BA window 16) gave the same speeds, LAN 1.6-3 MB/s and
+    // internet ~85 KB/s; 16/32 cost 16 KB.
     init_cfg.static_rx_buf_num = 4;
     init_cfg.dynamic_rx_buf_num = 16;
     init_cfg.cache_tx_buf_num = 16;
     init_cfg.mgmt_sbuf_num = 16;
-    RxTuning rx;
-    if (loadRxTuning(rx)) {
-        if (rx.static_rx) init_cfg.static_rx_buf_num = rx.static_rx;
-        if (rx.dynamic_rx) init_cfg.dynamic_rx_buf_num = rx.dynamic_rx;
-        if (rx.ampdu_rx) init_cfg.ampdu_rx_enable = rx.ampdu_rx == 2;
-        if (rx.ba_win) init_cfg.rx_ba_win = rx.ba_win;
-        LOGI_WIFI("Wi-Fi RX tuning: static %d, dynamic %d, AMPDU RX %d, BA window %d",
-                  init_cfg.static_rx_buf_num, init_cfg.dynamic_rx_buf_num,
-                  init_cfg.ampdu_rx_enable, init_cfg.rx_ba_win);
-    }
     ESP_ERROR_CHECK(esp_wifi_init(&init_cfg));
 
     // 4. Register ESP system event handlers
@@ -309,14 +236,7 @@ bool WifiService::begin() {
         wifi_config.sta.pmf_cfg.required = false;
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        uint8_t mac[6];
-        if (randomMacEnabled(mac) && esp_wifi_set_mac(WIFI_IF_STA, mac) == ESP_OK) {
-            LOGI_WIFI("Station MAC override: " MACSTR, MAC2STR(mac));
-        }
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-        if (rx.no_11b && esp_wifi_config_11b_rate(WIFI_IF_STA, true) == ESP_OK) {
-            LOGI_WIFI("802.11b rates off for the station");
-        }
         ESP_ERROR_CHECK(esp_wifi_start());
 
         EmbeddedSysDb::getInstance().mutate([&activeSsid](SystemState& s) {

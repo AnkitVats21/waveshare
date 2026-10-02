@@ -25,22 +25,11 @@ std::atomic<uint32_t> s_gaps500{0};
 std::atomic<uint32_t> s_gapTotalMs{0};
 std::atomic<uint32_t> s_maxGapMs{0};
 std::atomic<uint32_t> s_lastFrameMs{0};  // 0: none since the reset
-std::atomic<uint32_t> s_precedence[8] = {};
-
-// IPv4 TOS byte of an Ethernet frame, or -1.
-int ipv4Tos(const struct pbuf* p) {
-    if (p->len < 16) return -1;
-    const auto* f = static_cast<const uint8_t*>(p->payload);
-    if (f[12] != 0x08 || f[13] != 0x00) return -1;
-    return f[15];
-}
 
 // Runs on the Wi-Fi (or USB) task for every received frame: a few relaxed
 // adds and a timer read, no lock.
 err_t rxHook(struct pbuf* p, struct netif* n) {
     const uint16_t len = p->tot_len;  // read first: the stack may free p
-    const int tos = ipv4Tos(p);
-    if (tos >= 0) s_precedence[tos >> 5].fetch_add(1, std::memory_order_relaxed);
     s_rx.fetch_add(len, std::memory_order_relaxed);
     s_frames.fetch_add(1, std::memory_order_relaxed);
     const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000) | 1;
@@ -111,8 +100,7 @@ RxDetail rxDetail() {
     RxDetail d = {s_frames.load(std::memory_order_relaxed), s_refused.load(std::memory_order_relaxed),
                   s_gaps100.load(std::memory_order_relaxed), s_gaps500.load(std::memory_order_relaxed),
                   s_gapTotalMs.load(std::memory_order_relaxed),
-                  s_maxGapMs.load(std::memory_order_relaxed), {}};
-    for (int i = 0; i < 8; ++i) d.precedence[i] = s_precedence[i].load(std::memory_order_relaxed);
+                  s_maxGapMs.load(std::memory_order_relaxed)};
     return d;
 }
 
@@ -122,7 +110,6 @@ void resetRxDetail() {
     s_gapTotalMs.store(0, std::memory_order_relaxed);
     s_maxGapMs.store(0, std::memory_order_relaxed);
     s_lastFrameMs.store(0, std::memory_order_relaxed);
-    for (auto& c : s_precedence) c.store(0, std::memory_order_relaxed);
 }
 uint32_t txBytes() { return s_tx.load(std::memory_order_relaxed); }
 

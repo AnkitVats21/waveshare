@@ -1,5 +1,4 @@
 #include "core_sysdb/AudioRates.h"
-#include "core_sysdb/Tuning.h"
 #include "NexusPlayer.h"
 #include "media_player/CatalogDB.h"
 #include "media_player/MusicPlaybackService.h"
@@ -461,7 +460,6 @@ void NexusPlayer::stopActivePipelines() {
 void NexusPlayer::holdDownloadForSession() {
     if (!_session_active || _state == STATE_STREAMING_AND_CACHING) return;
     if (!_streamManager.isStreaming()) return;  // nothing to hold
-    if (!Tuning::get("hold_download_in_session", 1)) return;
     _streamManager.hold(true);
     ESP_LOGI(TAG, "Download held for the assistant session");
 }

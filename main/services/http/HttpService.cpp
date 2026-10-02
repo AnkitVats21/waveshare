@@ -80,7 +80,7 @@ bool HttpService::startServer() {
     config.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // keep internal SRAM for audio/Wi-Fi
     config.stack_size = 12288;
     config.core_id = ThreadConfig::CORE_NETWORK;
-    config.max_uri_handlers = 112;  // 97 registered (2026-10-02); a pointer each
+    config.max_uri_handlers = 112;  // 89 registered (2026-10-02); a pointer each
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_open_sockets = 12;
     config.recv_wait_timeout = 10;

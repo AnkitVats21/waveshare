@@ -12,10 +12,6 @@
 #include "audio_core/WakeWordEngine.h"
 #include "services/network/UsbNet.h"
 #include "services/network/NetStats.h"
-#include "services/network/WifiService.h"
-#include "services/network/WifiSniff.h"
-#include "services/storage/TuningFile.h"
-#include "core_sysdb/Tuning.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -30,7 +26,6 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
-#include <esp_private/wifi.h>
 #include <lwip/stats.h>
 #include <algorithm>
 #include <cstdlib>
@@ -252,184 +247,6 @@ esp_err_t usbModeGetHandler(httpd_req_t* req) {
     JsonDocument doc;
     doc["mode"] = UsbNet::modeName(UsbNet::savedMode());
     doc["fallback_sec"] = UsbNet::kFallbackSec;
-    return Http::sendJson(req, 200, doc);
-}
-
-void putMac(JsonDocument& doc, const uint8_t mac[6]) {
-    char buf[18];
-    snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3],
-             mac[4], mac[5]);
-    doc["mac"] = buf;
-}
-
-// Station MAC override for network tests (WifiService::setRandomMac).
-esp_err_t wifiMacGetHandler(httpd_req_t* req) {
-    uint8_t mac[6];
-    JsonDocument doc;
-    doc["random"] = WifiService::randomMacEnabled(mac);
-    putMac(doc, mac);
-    return Http::sendJson(req, 200, doc);
-}
-
-// {"random": true | false}: a new random MAC, or back to the factory one;
-// saves and reboots. The router then sees a new device (new IP via DHCP).
-esp_err_t wifiMacSetHandler(httpd_req_t* req) {
-    std::string body;
-    if (req->content_len == 0 || req->content_len > 128 || !Http::readBody(req, body, 128)) {
-        return Http::sendError(req, 400, "Missing JSON payload");
-    }
-    JsonDocument in;
-    if (deserializeJson(in, body) || !in["random"].is<bool>()) {
-        return Http::sendError(req, 400, "random must be true or false");
-    }
-    uint8_t mac[6];
-    if (!WifiService::setRandomMac(in["random"].as<bool>(), mac)) {
-        return Http::sendError(req, 500, "Could not save the MAC");
-    }
-    scheduleReboot();
-    JsonDocument doc;
-    doc["status"] = "ok";
-    doc["random"] = in["random"].as<bool>();
-    putMac(doc, mac);
-    doc["rebooting"] = true;
-    return Http::sendJson(req, 200, doc);
-}
-
-// {"level": 0-5} (none, error, warning, info, debug, verbose): the Wi-Fi
-// driver's log level, at once and until reboot. Debug shows Block Ack
-// (aggregation) setup and teardown per traffic class; lines go to /api/logs.
-esp_err_t wifiLogSetHandler(httpd_req_t* req) {
-    std::string body;
-    if (req->content_len == 0 || req->content_len > 64 || !Http::readBody(req, body, 64)) {
-        return Http::sendError(req, 400, "Missing JSON payload");
-    }
-    JsonDocument in;
-    const int level = deserializeJson(in, body) ? -1 : (in["level"] | -1);
-    if (level < 0 || level > 5) return Http::sendError(req, 400, "level must be 0-5");
-    esp_log_level_set("wifi", static_cast<esp_log_level_t>(level));
-    esp_err_t err = esp_wifi_internal_set_log_level(static_cast<wifi_log_level_t>(level));
-    if (err == ESP_OK) err = esp_wifi_internal_set_log_mod(WIFI_LOG_MODULE_ALL, WIFI_LOG_SUBMODULE_ALL, true);
-    if (err != ESP_OK) return Http::sendError(req, 500, esp_err_to_name(err));
-    JsonDocument doc;
-    doc["level"] = level;
-    return Http::sendJson(req, 200, doc);
-}
-
-// {"seconds": 1-30}: starts a radio capture of the frames the AP sends
-// the board (WifiSniff); GET reads the counters once it has ended.
-esp_err_t wifiSniffSetHandler(httpd_req_t* req) {
-    std::string body;
-    if (req->content_len == 0 || req->content_len > 64 || !Http::readBody(req, body, 64)) {
-        return Http::sendError(req, 400, "Missing JSON payload");
-    }
-    JsonDocument in;
-    const int seconds = deserializeJson(in, body) ? 0 : (in["seconds"] | 0);
-    if (seconds < 1 || seconds > 30) return Http::sendError(req, 400, "seconds must be 1-30");
-    if (!WifiSniff::start(seconds)) return Http::sendError(req, 409, "Capture running or refused");
-    JsonDocument doc;
-    doc["started"] = true;
-    doc["seconds"] = seconds;
-    return Http::sendJson(req, 200, doc);
-}
-
-esp_err_t wifiSniffGetHandler(httpd_req_t* req) {
-    const WifiSniff::Stats s = WifiSniff::stats();
-    JsonDocument doc;
-    doc["running"] = s.running;
-    doc["seconds"] = s.seconds;
-    doc["frames"] = s.frames;
-    doc["non_qos"] = s.non_qos;
-    doc["rx_errors"] = s.rx_errors;
-    if (s.frames) doc["rssi_avg"] = s.rssi_sum / int32_t(s.frames);
-    JsonObject tids = doc["tid"].to<JsonObject>();
-    for (int i = 0; i < 8; ++i) {
-        if (!s.tid[i].frames) continue;
-        JsonObject t = tids[std::to_string(i)].to<JsonObject>();
-        t["frames"] = s.tid[i].frames;
-        t["bytes"] = s.tid[i].bytes;
-        t["retries"] = s.tid[i].retries;
-        t["aggregated"] = s.tid[i].aggregated;
-    }
-    JsonObject mcs = doc["ht_mcs"].to<JsonObject>();
-    for (int i = 0; i < 16; ++i) if (s.ht_mcs[i]) mcs[std::to_string(i)] = s.ht_mcs[i];
-    JsonObject legacy = doc["legacy_rate"].to<JsonObject>();
-    for (int i = 0; i < 32; ++i) if (s.legacy[i]) legacy[std::to_string(i)] = s.legacy[i];
-    JsonObject addba = doc["addba_req"].to<JsonObject>();
-    JsonObject delba = doc["delba"].to<JsonObject>();
-    for (int i = 0; i < 8; ++i) {
-        if (s.addba_req[i]) addba[std::to_string(i)] = s.addba_req[i];
-        if (s.delba[i]) delba[std::to_string(i)] = s.delba[i];
-    }
-    return Http::sendJson(req, 200, doc);
-}
-
-// Performance-experiment flags (core_sysdb/Tuning.h): each flag the firmware
-// read, its value, and whether /sdcard/tuning.json set it. A file key no
-// code read shows "read": false (a typo, or a flag this build lacks).
-esp_err_t tuningGetHandler(httpd_req_t* req) {
-    Tuning::Flag flags[Tuning::kMaxFlags];
-    const size_t n = Tuning::list(flags, Tuning::kMaxFlags);
-    JsonDocument doc;
-    doc["file"] = Services::TUNING_FILE;
-    JsonObject out = doc["flags"].to<JsonObject>();
-    for (size_t i = 0; i < n; ++i) {
-        JsonObject f = out[flags[i].key].to<JsonObject>();
-        f["value"] = flags[i].value;
-        f["from_file"] = flags[i].from_file;
-        f["read"] = flags[i].read;
-    }
-    return Http::sendJson(req, 200, doc);
-}
-
-void putRxTuning(JsonDocument& doc) {
-    WifiService::RxTuning t;
-    doc["stored"] = WifiService::loadRxTuning(t);
-    doc["static"] = t.static_rx;
-    doc["dynamic"] = t.dynamic_rx;
-    doc["ba_win"] = t.ba_win;
-    doc["ampdu_rx"] = t.ampdu_rx == 0 ? "built-in" : (t.ampdu_rx == 2 ? "on" : "off");
-    doc["no_11b"] = t.no_11b != 0;
-}
-
-// Wi-Fi receive tuning for network tests (WifiService::RxTuning); 0 means
-// the built-in value.
-esp_err_t wifiRxGetHandler(httpd_req_t* req) {
-    JsonDocument doc;
-    putRxTuning(doc);
-    return Http::sendJson(req, 200, doc);
-}
-
-// {"static":N, "dynamic":N, "ba_win":N, "ampdu_rx":true|false, "no_11b":bool} or
-// {"reset":true}: saves and reboots.
-esp_err_t wifiRxSetHandler(httpd_req_t* req) {
-    std::string body;
-    if (req->content_len == 0 || req->content_len > 256 || !Http::readBody(req, body, 256)) {
-        return Http::sendError(req, 400, "Missing JSON payload");
-    }
-    JsonDocument in;
-    if (deserializeJson(in, body)) return Http::sendError(req, 400, "Invalid JSON payload");
-    bool ok;
-    if (in["reset"] | false) {
-        ok = WifiService::saveRxTuning(nullptr);
-    } else {
-        WifiService::RxTuning t;
-        const int st = in["static"] | 0, dy = in["dynamic"] | 0, ba = in["ba_win"] | 0;
-        if (st < 0 || st > 25 || dy < 0 || dy > 128 || ba < 0 || ba > 32 || (ba && ba < 2) ||
-            (st && st < 2)) {
-            return Http::sendError(req, 400, "static 2-25, dynamic 0-128, ba_win 2-32");
-        }
-        t.static_rx = st;
-        t.dynamic_rx = dy;
-        t.ba_win = ba;
-        if (in["ampdu_rx"].is<bool>()) t.ampdu_rx = in["ampdu_rx"].as<bool>() ? 2 : 1;
-        t.no_11b = (in["no_11b"] | false) ? 1 : 0;
-        ok = WifiService::saveRxTuning(&t);
-    }
-    if (!ok) return Http::sendError(req, 500, "Could not save");
-    scheduleReboot();
-    JsonDocument doc;
-    putRxTuning(doc);
-    doc["rebooting"] = true;
     return Http::sendJson(req, 200, doc);
 }
 
@@ -688,8 +505,6 @@ void addRxDetail(JsonDocument& doc, const NetStats::RxDetail& rx0, const LwipCou
     o["gaps_500ms"] = rx.gaps_500ms;
     o["gap_total_ms"] = rx.gap_total_ms;
     o["max_gap_ms"] = rx.max_gap_ms;
-    JsonArray prec = o["precedence"].to<JsonArray>();
-    for (uint32_t c : rx.precedence) prec.add(c);
 #if LWIP_STATS
     JsonObject l = doc["lwip"].to<JsonObject>();
     l["link_recv"] = (uint16_t)(lw.link_recv - lw0.link_recv);
@@ -835,14 +650,6 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/reboot", HTTP_POST, rebootHandler);
     server.on("/api/system/usb-mode", HTTP_GET, usbModeGetHandler);
     server.on("/api/system/usb-mode", HTTP_POST, usbModeSetHandler);
-    server.on("/api/system/wifi-mac", HTTP_GET, wifiMacGetHandler);
-    server.on("/api/system/wifi-mac", HTTP_POST, wifiMacSetHandler);
-    server.on("/api/system/wifi-rx", HTTP_GET, wifiRxGetHandler);
-    server.on("/api/system/wifi-rx", HTTP_POST, wifiRxSetHandler);
-    server.on("/api/system/wifi-log", HTTP_POST, wifiLogSetHandler);
-    server.on("/api/system/tuning", HTTP_GET, tuningGetHandler);
-    server.on("/api/system/wifi-sniff", HTTP_GET, wifiSniffGetHandler);
-    server.on("/api/system/wifi-sniff", HTTP_POST, wifiSniffSetHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/system/nettest", HTTP_GET, netTestHandler);
