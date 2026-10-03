@@ -623,6 +623,11 @@ void WakeWordEngine::detectTask(esp_afe_sr_data_t *afe_data) {
                 // Update inactivity timer on active user speech (completely immune to speaker echo)
                 m_listener->onSpeechDetected();
                 silence_frames = 0;
+                if (m_listener->mustEndOnSpeech()) {
+                    LOGW_AUDIO("VAD: session stuck. Suspending stream.");
+                    m_streaming_active = false;
+                    m_listener->onVadTimeout();
+                }
             } else {
                 silence_frames++;
                 if (silence_frames >= silence_timeout_frames &&

@@ -13,4 +13,5 @@ NB_MODULE(waveshare_host, m) {
     init_weather(m);
     init_mcp(m);
     init_framing(m);
+    init_session_guard(m);
 }

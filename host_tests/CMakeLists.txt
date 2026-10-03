@@ -66,6 +66,7 @@ nanobind_add_module(waveshare_host
     bindings/bind_mcp.cpp
     ../main/services/mcp/McpUtil.cpp
     bindings/bind_framing.cpp
+    bindings/bind_session_guard.cpp
     ../main/services/hub/UplinkFraming.cpp
 )
 

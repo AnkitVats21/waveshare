@@ -73,6 +73,12 @@ public:
     // connection for a quick next session.
     virtual void endSession() = 0;
 
+    // The backend heard words from the person (input transcription text):
+    // any backend calls this on each one. lastInputWordsUs() is when that
+    // last was (esp_timer time, 0 = never since boot).
+    static void noteInputWords();
+    static int64_t lastInputWordsUs();
+
     // Tools. The board's own skills (gemini_skills_schema.json) go to the
     // tool handler; any other name to the remote handler (MCP), whose
     // declarations come from the declarations source. Shared by every

@@ -34,6 +34,13 @@ public:
     virtual bool mayEndOnSilence() { return true; }
 
     /**
+     * @brief Asked on every VAD speech frame: true ends the session now,
+     *        as a silence timeout does (the session is stuck: sound but no
+     *        words, or a reply that never comes). Must be cheap.
+     */
+    virtual bool mustEndOnSpeech() { return false; }
+
+    /**
      * @brief Called when the person talks over the assistant's reply
      *        (barge-in on): the reply should stop.
      */

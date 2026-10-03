@@ -3,6 +3,7 @@
 #include "common/ReactorTask.h"
 #include "common/hw_types.h"
 #include "app/wake_word/IWakeWordListener.h"
+#include "app/audio/SessionGuard.h"
 #include <memory>
 
 class AudioHal;
@@ -38,6 +39,7 @@ public:
     void onWakeWord(uint8_t channel) override;
     void onVadTimeout() override;
     bool mayEndOnSilence() override;
+    bool mustEndOnSpeech() override;
     void onUserSpeechDetected() override;
     void onSpeechDetected() override;
 
@@ -60,6 +62,8 @@ private:
     void returnToWakeMode();
 
     std::unique_ptr<SpeakerPlaybackTask> m_speaker_task;
+
+    App::SessionGuard m_guard;   // the stuck-session rules (SessionLimits)
 
     static constexpr const char* TAG = "AudioSvc";
     // After the ready chime, silence ends the session only once this has

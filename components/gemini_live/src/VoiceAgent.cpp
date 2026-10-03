@@ -2,11 +2,16 @@
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include <atomic>
+#include "esp_timer.h"
 #include <cassert>
 #include <cstring>
 #include <string>
 
 static std::atomic<VoiceAgent*> s_active{nullptr};
+static std::atomic<int64_t> s_last_words_us{0};
+
+void VoiceAgent::noteInputWords() { s_last_words_us = esp_timer_get_time(); }
+int64_t VoiceAgent::lastInputWordsUs() { return s_last_words_us.load(); }
 static VoiceAgent::SelectorFn s_selector = nullptr;
 static void* s_selector_ctx = nullptr;
 

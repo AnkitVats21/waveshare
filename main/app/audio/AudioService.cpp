@@ -168,7 +168,9 @@ void AudioService::onWakeWord(uint8_t channel) {
     LOGI_AUDIO("Wake word (ch %d) — mutating SysDb COMP_ASSISTANT.", channel);
     // The backend first: the connection is requested in the same mutation.
     VoiceAgent::selectForSession();
+    m_guard.reset();
     sysdb.mutate([](SystemState& s) {
+        s.assistant.media_pending_idle = false;   // never carried into a new session
         s.assistant.session_state  = AssistantState::StartingSession;
         s.assistant.visual_state   = AssistantVisualState::Thinking;
         s.assistant.connect_requested = true;
@@ -189,6 +191,13 @@ bool AudioService::mayEndOnSilence() {
     if (listening_us && esp_timer_get_time() - listening_us < LISTEN_GRACE_US) {
         LOGI_AUDIO("VAD timeout held (listening for %d ms).", (int)((esp_timer_get_time() - listening_us) / 1000));
         return false;
+    }
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    const bool holding = snap.assistant.media_pending_idle || VoiceAgent::active().awaitingReply();
+    if (m_guard.holdExpired(now_ms, holding)) {
+        LOGW_AUDIO("Ending: no reply for %d s (the hold on the silence timeout expired).",
+                   (int)(App::SessionLimits::REPLY_HOLD_MAX_MS / 1000));
+        return true;
     }
     if (snap.assistant.media_pending_idle || snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
         LOGI_AUDIO("VAD timeout held (media_pending=%d, speaking=%d, turn_pending=%d).",
@@ -222,7 +231,35 @@ void AudioService::onUserSpeechDetected() {
 }
 
 void AudioService::onSpeechDetected() {
-    // Handled
+    m_guard.noteSpeech(esp_timer_get_time() / 1000);
+}
+
+bool AudioService::mustEndOnSpeech() {
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    if (!m_guard.dueForCheck(now_ms)) return false;
+    auto snap = sysdb.snapshot();
+    if (snap.assistant.session_state != AssistantState::StreamingUserAudio &&
+        snap.assistant.session_state != AssistantState::WaitingForFollowup) {
+        return false;   // connecting, or the reply is on
+    }
+    const int64_t listening_us = AssistantService::listeningSinceUs();
+    if (!listening_us) return false;
+    const bool holding = snap.assistant.media_pending_idle || VoiceAgent::active().awaitingReply();
+    const bool busy = holding || snap.audio.assistant_speaking || snap.audio.turn_complete_pending;
+    const int64_t words_us = VoiceAgent::lastInputWordsUs();
+    const int64_t words_ms = words_us ? words_us / 1000 : App::SessionGuard::kNone;
+    switch (m_guard.check(now_ms, std::max<int64_t>(words_ms, listening_us / 1000), busy, holding)) {
+        case App::SessionGuard::Verdict::SoundNoWords:
+            LOGW_AUDIO("Ending: sound but no words for %d s (music or noise nearby).",
+                       (int)(App::SessionLimits::SOUND_NO_WORDS_MS / 1000));
+            return true;
+        case App::SessionGuard::Verdict::ReplyHoldExpired:
+            LOGW_AUDIO("Ending: no reply for %d s (the hold on the silence timeout expired).",
+                       (int)(App::SessionLimits::REPLY_HOLD_MAX_MS / 1000));
+            return true;
+        default:
+            return false;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

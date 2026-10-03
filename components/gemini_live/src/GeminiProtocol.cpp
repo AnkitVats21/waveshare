@@ -1028,6 +1028,7 @@ void GeminiProtocol::recordTranscription(JsonObjectConst serverContent) {
     if (in[0]) {
         // Gemini heard the person, so a reply follows (possibly seconds later).
         expectReply();
+        VoiceAgent::noteInputWords();
         if (m_record_transcripts) TranscriptLog::instance().append(TranscriptLog::Role::User, in, strlen(in));
     }
     if (out[0] && m_record_transcripts) TranscriptLog::instance().append(TranscriptLog::Role::Model, out, strlen(out));
