@@ -102,6 +102,14 @@ void HubLink::taskEntry(void* arg) {
     static_cast<HubLink*>(arg)->run();
 }
 
+void HubLink::drainRx() {
+    std::string* frame = nullptr;
+    while (xQueueReceive(m_rx_queue, &frame, 0) == pdTRUE) {
+        handleMessage(*frame);
+        delete frame;
+    }
+}
+
 void HubLink::run() {
     ControlChannel::getInstance().setRelay(
         [](const std::string& text, void* ctx) { return static_cast<HubLink*>(ctx)->sendText(text); }, this);
@@ -116,11 +124,7 @@ void HubLink::run() {
         uint32_t bits = 0;
         xTaskNotifyWait(0, UINT32_MAX, &bits, pdMS_TO_TICKS(wait_ms));
 
-        std::string* frame = nullptr;
-        while (xQueueReceive(m_rx_queue, &frame, 0) == pdTRUE) {
-            handleMessage(*frame);
-            delete frame;
-        }
+        drainRx();
         if (bits & BIT_RECONFIGURE) {
             ESP_LOGI(TAG, "Settings changed; reconnecting");
             close();
@@ -128,8 +132,12 @@ void HubLink::run() {
             retry_at_us = 0;
         }
         if (bits & BIT_DOWN) setDown();
-        if ((bits & BIT_CONNECTED) && m_connected.load()) sendHello();
+        if ((bits & BIT_CONNECTED) && m_connected.load()) {
+            sendHello();
+            drainRx();
+        }
         reportLink();
+        drainRx();
 
         now = esp_timer_get_time();
         if (m_rejected) {
@@ -397,7 +405,27 @@ void HubLink::onEvent(void* arg, esp_event_base_t, int32_t id, void* data) {
             if (!self->m_rx_dropping && !self->m_rx.empty()) {
                 auto* frame = new std::string(std::move(self->m_rx));
                 if (xQueueSend(self->m_rx_queue, &frame, 0) != pdTRUE) {
-                    ESP_LOGW(TAG, "Message queue full; dropped one");
+                    std::string msg_type = "unknown";
+                    JsonDocument drop_doc;
+                    if (deserializeJson(drop_doc, *frame) == DeserializationError::Ok) {
+                        const char* t = drop_doc["type"] | "";
+                        if (t && t[0] != '\0') {
+                            msg_type = t;
+                        } else if (drop_doc["cmd"].is<const char*>()) {
+                            msg_type = std::string("cmd:") + (drop_doc["cmd"].as<const char*>());
+                        }
+                    }
+                    bool is_state_changing = (msg_type == "turn_complete" ||
+                                              msg_type == "interrupted" ||
+                                              msg_type == "session_ready" ||
+                                              msg_type == "session_error" ||
+                                              msg_type == "tool_call" ||
+                                              msg_type == "reply_owed");
+                    if (is_state_changing) {
+                        ESP_LOGE(TAG, "Message queue full; CRITICAL dropped state-changing message type='%s'", msg_type.c_str());
+                    } else {
+                        ESP_LOGW(TAG, "Message queue full; dropped message type='%s'", msg_type.c_str());
+                    }
                     delete frame;
                 } else {
                     xTaskNotify(self->m_task, BIT_RX, eSetBits);

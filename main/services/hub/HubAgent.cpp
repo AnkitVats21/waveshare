@@ -427,7 +427,13 @@ void HubAgent::onMessage(const std::string& text, void* ctx) {
     auto* self = static_cast<HubAgent*>(ctx);
     auto* msg = new std::string(text);
     if (xQueueSend(self->m_rx_queue, &msg, 0) != pdTRUE) {
-        LOGW_NET("Hub voice queue full; dropped a message");
+        std::string msg_type = "unknown";
+        JsonDocument drop_doc;
+        if (deserializeJson(drop_doc, *msg) == DeserializationError::Ok) {
+            const char* t = drop_doc["type"] | "";
+            if (t && t[0] != '\0') msg_type = t;
+        }
+        LOGE_NET("Hub voice queue full; dropped message type='%s'", msg_type.c_str());
         delete msg;
         return;
     }

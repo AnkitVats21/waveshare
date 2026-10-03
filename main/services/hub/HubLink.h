@@ -153,11 +153,12 @@ private:
     static constexpr uint32_t BIT_RECONFIGURE = 1u << 3;
 
     void reportLink();
+    void drainRx();
 
     // A music_queue or music_state with 20 songs can pass 4 KB (PSRAM).
     static constexpr size_t MAX_RX_FRAME = 8192;
     static constexpr size_t TEXT_FRAGMENT = 4096;           // below CLIENT_BUFFER
-    static constexpr int RX_QUEUE_LEN = 8;
+    static constexpr int RX_QUEUE_LEN = 32;
     static constexpr uint32_t TASK_STACK = 6 * 1024;        // PSRAM
     static constexpr int CLIENT_TASK_STACK = 3584;          // internal (esp_websocket_client); 1.7 KB used
     // The client's rx and tx buffers, one malloc each: above
