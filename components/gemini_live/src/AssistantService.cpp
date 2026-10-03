@@ -197,7 +197,10 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
         case AssistantState::Connecting:
             if (ws == WsState::CONNECTED) {
                 transitionTo(AssistantState::StreamingUserAudio, &snap);
-            } else if (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE) {
+            } else if (ws == WsState::ERROR_STATE) {
+                ESP_LOGE(TAG, "Connecting: WebSocket error.");
+                transitionTo(AssistantState::Idle, &snap);
+            } else if (ws == WsState::DISCONNECTED && !snap.assistant.connect_requested) {
                 ESP_LOGE(TAG, "Connecting: WebSocket failed or disconnected.");
                 transitionTo(AssistantState::Idle, &snap);
             }
@@ -402,6 +405,9 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
         s.audio.session_active    = sessionActive;
         s.audio.mic_enabled       = micEnabled;
         s.assistant.connect_requested = connectRequested;
+        if (newState == AssistantState::Connecting) {
+            s.assistant.ws_state = WsState::CONNECTING;
+        }
         if (newState == AssistantState::AssistantSpeaking) {
             s.audio.assistant_speaking = true;
         }

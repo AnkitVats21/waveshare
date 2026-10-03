@@ -73,17 +73,31 @@ void HubAgent::onStateChanged(ComponentMask, const SystemState& snap) {
     // The wake asks for the connection; ws_state must leave DISCONNECTED at
     // once (Connecting reads DISCONNECTED as a failed connect).
     if (snap.assistant.connect_requested && !m_session &&
-        (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE)) {
+        (ws == WsState::DISCONNECTED || ws == WsState::ERROR_STATE || ws == WsState::CONNECTING)) {
         if (!HubLink::getInstance().voiceAvailable()) {
             m_fail_pending = true;
             sysdb.mutate([](SystemState& s) { s.assistant.ws_state = WsState::CONNECTING; });
             return;
         }
+        sysdb.mutate([](SystemState& s) {
+            s.assistant.ws_state = WsState::CONNECTING;
+            s.assistant.connect_requested = false;
+        });
         startSession();
     }
 }
 
 void HubAgent::startSession() {
+    m_session = true;
+    m_ready = false;
+    m_dropping = false;
+    m_reply_audio = false;
+    m_accept_audio = true;
+    sysdb.mutate([](SystemState& s) {
+        s.assistant.ws_state = WsState::CONNECTING;
+        s.assistant.connect_requested = false;
+    });
+
     auto cfg = GeminiProtocol::getInstance().settings();
     m_record_transcripts = cfg.transcripts;
 
@@ -143,12 +157,6 @@ void HubAgent::startSession() {
     std::string out;
     serializeJson(doc, out);
 
-    m_ready = false;
-    m_dropping = false;
-    m_reply_audio = false;
-    m_accept_audio = true;
-    m_session = true;
-    sysdb.mutate([](SystemState& s) { s.assistant.ws_state = WsState::CONNECTING; });
     if (!sendJson(out)) {
         failSession("session_start not sent");
         return;
@@ -170,6 +178,7 @@ void HubAgent::endSession() {
     sendJson("{\"type\":\"session_end\"}");
     sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::DISCONNECTED;
+        s.assistant.connect_requested = false;
         s.audio.assistant_speaking = false;
     });
 }
@@ -517,6 +526,14 @@ void HubAgent::handleMessage(const std::string& text) {
     }
 
     if (strcmp(type, "session_ready") == 0) {
+        auto assistant_state = sysdb.snapshot().assistant.session_state;
+        if (assistant_state == AssistantState::Idle || assistant_state == AssistantState::ErrorCooldown ||
+            assistant_state == AssistantState::Closing) {
+            LOGW_NET("Hub session ready received while assistant state is not active (state=%d); ending orphan session",
+                     static_cast<int>(assistant_state));
+            endSession();
+            return;
+        }
         m_ready = true;
         LOGI_NET("Hub session ready%s", (doc["resumed"] | false) ? " (conversation resumed)" : "");
         sysdb.mutate([](SystemState& s) { s.assistant.ws_state = WsState::CONNECTED; });
