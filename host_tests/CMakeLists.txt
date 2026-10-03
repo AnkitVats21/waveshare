@@ -65,6 +65,8 @@ nanobind_add_module(waveshare_host
     ../main/services/weather/WeatherText.cpp
     bindings/bind_mcp.cpp
     ../main/services/mcp/McpUtil.cpp
+    bindings/bind_framing.cpp
+    ../main/services/hub/UplinkFraming.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)
