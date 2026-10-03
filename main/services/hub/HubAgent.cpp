@@ -549,10 +549,20 @@ void HubAgent::handleMessage(const std::string& text) {
         bool user = strcmp(role, "user") == 0;
         // Gemini heard the person, so a reply follows (possibly seconds later).
         if (user) expectReply();
+        if (user && t[0]) VoiceAgent::noteInputWords();
         if (t[0] && m_record_transcripts) {
             TranscriptLog::instance().append(user ? TranscriptLog::Role::User : TranscriptLog::Role::Model,
                                              t, strlen(t));
         }
+    } else if (strcmp(type, "end_after_reply") == 0) {
+        // A music command ran on the hub: as in direct mode, close the
+        // session once the reply has played (the music may be on another
+        // speaker that the mic hears). Not in Idle: the flag would leak
+        // into the next session.
+        LOGI_NET("The hub asks to end the session after the reply.");
+        sysdb.mutate([](SystemState& s) {
+            if (s.assistant.session_state != AssistantState::Idle) s.assistant.media_pending_idle = true;
+        });
     } else if (strcmp(type, "reply_owed") == 0) {
         expectReply();   // an MCP tool is running on the hub
     } else if (strcmp(type, "tool_call") == 0) {
