@@ -125,6 +125,9 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
             esp_timer_stop(m_park_timer);
             m_parked = false;
             m_accept_audio = true;
+            sysdb.mutate([](SystemState& s) {
+                s.assistant.connect_requested = false;
+            });
             LOGI_NET("Reusing the open connection.");
         }
     }
@@ -143,6 +146,10 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
     } else if (!wifi_ok) {
         if (ws != WsState::DISCONNECTED) {
             closeConnection();
+        } else if (requested) {
+            sysdb.mutate([](SystemState& s) {
+                s.assistant.connect_requested = false;
+            });
         }
     }
 }
@@ -211,6 +218,7 @@ bool GeminiProtocol::startClientConnection() {
     
     sysdb.mutate([](SystemState& s) {
         s.assistant.ws_state = WsState::CONNECTING;
+        s.assistant.connect_requested = false;
     });
 
     esp_err_t err = m_client.start();

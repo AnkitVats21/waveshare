@@ -405,9 +405,6 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
         s.audio.session_active    = sessionActive;
         s.audio.mic_enabled       = micEnabled;
         s.assistant.connect_requested = connectRequested;
-        if (newState == AssistantState::Connecting) {
-            s.assistant.ws_state = WsState::CONNECTING;
-        }
         if (newState == AssistantState::AssistantSpeaking) {
             s.audio.assistant_speaking = true;
         }
