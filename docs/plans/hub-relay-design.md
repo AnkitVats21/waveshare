@@ -524,3 +524,30 @@ Not done:
 - Orbit's media keys as controller actions.
 - The board's dashboard picker (`/api/orbit/target`) acts on the board's
   own satellites, not the hub's.
+
+## Phase 4 as built (mic uplink Opus)
+
+- **Negotiation:** The board's hello advertises `voice.up = ["opus16", "pcm16"]`
+  unless `uplink_codec` is `pcm`, where it offers only `["pcm16"]`. The hub's welcome
+  `voice.up` returns `"opus"` or `"pcm"`. Opus uplink is enabled only if welcome
+  allows `"opus"` and `uplink_codec != pcm`.
+- **Encoder:** 16 kHz mono, `OPUS_APPLICATION_RESTRICTED_LOWDELAY` (CELT-only
+  mode), 20 ms frames (320 samples). Bitrate (`uplink_opus_kbps`, default 24)
+  and complexity (`uplink_opus_complexity`, default 3) configured from settings.
+  State and buffers allocated in PSRAM (`heap_caps_malloc MALLOC_CAP_SPIRAM`).
+  Created lazily on the first session using Opus and reset via `OPUS_RESET_STATE`
+  at session start. Runs on the existing `VoiceUplinkPump` task (single thread).
+- **Framing:** Portable `PcmAccumulator` handles arbitrary-size PCM chunk accumulation
+  into 320-sample frames across chunk boundaries. Packets are packed into Channel 1
+  binary frames (`flags = 0x02`) as `[uint16_le len][opus packet bytes]...` up to
+  `MIC_FRAME_MAX` (4098 bytes).
+- **Fallback:** Per-session fallback to raw PCM (`flags = 0x00`) if encoder creation
+  fails, `opus_encode` returns an error, or the average encode time per 20 ms frame
+  over ~1 s (50 frames) exceeds 8 ms (unless `uplink_codec == "opus"`). On fallback,
+  leftover accumulator samples flush as PCM, exactly one warning is logged, and
+  the remainder of the session continues as PCM. The next session tries Opus again.
+- **Metrics:** Per-session stats logged at session end (formats used, frames,
+  bytes sent, avg/max encode microseconds, fallback reason, and `uxTaskGetStackHighWaterMark`).
+- **Settings:** `uplink_codec` (`auto`, `pcm`, `opus`), `uplink_opus_kbps` (12-64),
+  `uplink_opus_complexity` (0-10) exposed on GET/POST `/api/hub`. Changing `uplink_codec`
+  reconnects the link and re-sends hello.

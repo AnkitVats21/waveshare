@@ -84,7 +84,8 @@ endif()
 # The link to a LAN hub and the voice backend through it; off by default
 # (Kconfig WAVESHARE_VOICE_HUB).
 if(CONFIG_WAVESHARE_VOICE_HUB)
-    list(APPEND srcs "services/hub/HubLink.cpp" "services/hub/HubAgent.cpp" "services/hub/HubMusic.cpp")
+    list(APPEND srcs "services/hub/HubLink.cpp" "services/hub/HubAgent.cpp" "services/hub/HubMusic.cpp"
+                     "services/hub/UplinkFraming.cpp" "services/hub/UplinkEncoder.cpp")
 endif()
 
 if(CONFIG_DISPLAY_ENABLE)

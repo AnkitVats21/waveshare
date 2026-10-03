@@ -269,7 +269,11 @@ void HubLink::sendHello() {
     // Roles (nexus-orbit docs/PROTOCOL.md section 2).
     JsonObject roles = doc["roles"].to<JsonObject>();
     JsonObject voice = roles["voice"].to<JsonObject>();
-    voice["up"].to<JsonArray>().add("pcm16");
+    JsonArray up = voice["up"].to<JsonArray>();
+    if (s_uplink_codec.load() != 1) {
+        up.add("opus16");
+    }
+    up.add("pcm16");
     voice["down"].to<JsonArray>().add("pcm24");
     roles["state"]["http_port"] = CONFIG_WAVESHARE_HTTP_FILE_SERVER_PORT;
     if (s_music_control.load() != 1) {
@@ -308,15 +312,18 @@ void HubLink::handleMessage(const std::string& text) {
             m_last_error.clear();
         }
         m_down_since_us = 0;
-        // voice: {"up": "pcm", "down": "pcm", ...}, or false without Gemini on the hub.
+        // voice: {"up": "opus"|"pcm", "down": "pcm", ...}, or false without Gemini on the hub.
+        const char* up_codec = doc["voice"]["up"] | "";
         bool voice = doc["voice"].is<JsonObjectConst>() && strcmp(doc["voice"]["down"] | "", "pcm") == 0 &&
-                     strcmp(doc["voice"]["up"] | "", "pcm") == 0;
+                     (strcmp(up_codec, "pcm") == 0 || strcmp(up_codec, "opus") == 0);
         m_hub_voice = voice;
+        m_hub_voice_opus = voice && strcmp(up_codec, "opus") == 0 && (s_uplink_codec.load() != 1);
         m_hub_music = (doc["music"] | false) && s_music_control.load() != 1;
         m_up = true;
         ControlChannel::getInstance().setRelayUp(true);
-        ESP_LOGI(TAG, "Hub link up (%s, voice %s, music %s)", doc["hub"] | "?", voice ? "yes" : "no",
-                 m_hub_music.load() ? "yes" : "no");
+        ESP_LOGI(TAG, "Hub link up (%s, voice %s [up=%s], music %s)", doc["hub"] | "?",
+                 voice ? (m_hub_voice_opus.load() ? "opus" : "pcm") : "no",
+                 up_codec, m_hub_music.load() ? "yes" : "no");
     } else if (strcmp(type, "rejected") == 0) {
         const char* reason = doc["reason"] | "rejected";
         ESP_LOGW(TAG, "The hub refused the board: %s", reason);

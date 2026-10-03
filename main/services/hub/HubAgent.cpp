@@ -1,19 +1,24 @@
 #include "services/hub/HubAgent.h"
 
 #include "services/hub/HubLink.h"
+#include "services/hub/UplinkFraming.h"
+#include "services/hub/UplinkEncoder.h"
 #include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/PsramAllocator.h"
 #include "gemini_live/TranscriptLog.h"
+#include "gemini_live/VoiceUplinkPump.h"
 #include "common/AppLogger.h"
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "common/thread_config.h"
 #include "services/BufferManager.h"
+#include "services/storage/SystemDatabase.h"
 #include "app/audio/AudioOrchestrator.h"
 #include "app/audio/SpeakerPlayback.h"
 
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
+#include "opus.h"
 #include <cstring>
 
 namespace Services {
@@ -36,7 +41,12 @@ HubAgent::HubAgent()
 {
     m_rx_queue = xQueueCreate(RX_QUEUE_LEN, sizeof(std::string*));
     m_mic_frame = static_cast<uint8_t*>(heap_caps_malloc(MIC_FRAME_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    assert(m_rx_queue && m_mic_frame);
+    m_accumulator = static_cast<PcmAccumulator*>(heap_caps_malloc(sizeof(PcmAccumulator), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (m_accumulator) new (m_accumulator) PcmAccumulator();
+    m_frame_builder = static_cast<OpusFrameBuilder*>(heap_caps_malloc(sizeof(OpusFrameBuilder), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (m_frame_builder) new (m_frame_builder) OpusFrameBuilder(m_mic_frame, MIC_FRAME_MAX);
+    m_packet_buf = static_cast<uint8_t*>(heap_caps_malloc(UplinkEncoder::MAX_PACKET_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    assert(m_rx_queue && m_mic_frame && m_accumulator && m_frame_builder && m_packet_buf);
     HubLink::getInstance().setVoiceListener({onMessage, onAudio, onLinkChange, this});
 }
 
@@ -77,6 +87,47 @@ void HubAgent::startSession() {
     auto cfg = GeminiProtocol::getInstance().settings();
     m_record_transcripts = cfg.transcripts;
 
+    // Reset uplink state & metrics for this session
+    m_using_opus = false;
+    m_opus_frames = 0;
+    m_pcm_frames = 0;
+    m_uplink_bytes = 0;
+    m_total_encode_us = 0;
+    m_max_encode_us = 0;
+    m_fallback_reason.clear();
+    resetRollingEncodeTime();
+    if (m_accumulator) m_accumulator->reset();
+    if (m_frame_builder) m_frame_builder->reset();
+
+    auto sys_settings = Services::loadSettings();
+    if (HubLink::getInstance().opusUplinkAllowed()) {
+        if (!m_encoder) {
+            void* mem = heap_caps_malloc(sizeof(UplinkEncoder), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (mem) {
+                m_encoder = new (mem) UplinkEncoder();
+                if (!m_encoder->init(sys_settings.uplink_opus_kbps, sys_settings.uplink_opus_complexity)) {
+                    m_fallback_reason = "encoder init failed";
+                    LOGW_NET("Hub uplink Opus fallback to PCM: %s", m_fallback_reason.c_str());
+                    m_encoder->~UplinkEncoder();
+                    heap_caps_free(m_encoder);
+                    m_encoder = nullptr;
+                } else {
+                    m_using_opus = true;
+                }
+            } else {
+                m_fallback_reason = "out of PSRAM for UplinkEncoder";
+                LOGW_NET("Hub uplink Opus fallback to PCM: %s", m_fallback_reason.c_str());
+            }
+        } else {
+            if (!m_encoder->reset(sys_settings.uplink_opus_kbps, sys_settings.uplink_opus_complexity)) {
+                m_fallback_reason = "encoder reset failed";
+                LOGW_NET("Hub uplink Opus fallback to PCM: %s", m_fallback_reason.c_str());
+            } else {
+                m_using_opus = true;
+            }
+        }
+    }
+
     // {"setup": ...} from the builder, the rest added beside it (a copy of
     // the setup into another document recursed off the end of the stack).
     PsramAllocator psram;
@@ -102,13 +153,15 @@ void HubAgent::startSession() {
         failSession("session_start not sent");
         return;
     }
-    LOGI_NET("Hub session started (setup %u bytes)", (unsigned)out.size());
+    LOGI_NET("Hub session started (setup %u bytes, uplink=%s)", (unsigned)out.size(),
+             m_using_opus.load() ? "opus" : "pcm");
 }
 
 void HubAgent::endSession() {
     if (!m_session.exchange(false)) return;
     m_ready = false;
     m_accept_audio = false;
+    logSessionStats();
     {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         m_pending_turn.clear();
@@ -127,6 +180,7 @@ void HubAgent::failSession(const char* why) {
     bool was = m_session.exchange(false);
     m_ready = false;
     m_accept_audio = false;
+    if (was) logSessionStats();
     BufferManager::getInstance().flush(Buffers::VOICE_RX_BUF);
     {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
@@ -153,23 +207,159 @@ bool HubAgent::sendJson(const std::string& text) {
 }
 
 void HubAgent::sendMicAudio(const uint8_t* pcm, size_t len) {
-    if (!m_ready || !pcm || len == 0 || len > MIC_FRAME_MAX - 2) return;
+    if (!m_ready || !pcm || len == 0) return;
     // Half-duplex: no uplink while the assistant speaks, unless barge-in.
     if (!m_barge_in && sysdb.assistantSpeaking()) return;
-    m_mic_frame[0] = CHANNEL_MIC;
-    m_mic_frame[1] = 0;
-    std::memcpy(m_mic_frame + 2, pcm, len);
-    // esp_websocket_client drops the link when a write times out, so wait
-    // rather than give up: a late chunk costs less than the session. Over a
-    // music download a write once stalled past 1 s (docs/known-issues.md).
+
+    if (!m_using_opus.load()) {
+        sendPcmMicChunk(pcm, len);
+        return;
+    }
+
+    m_accumulator->feed(pcm, len, [this](const int16_t* frame_320) {
+        if (!m_using_opus.load()) {
+            sendPcmMicChunk(reinterpret_cast<const uint8_t*>(frame_320), BYTES_PER_FRAME);
+            return;
+        }
+
+        const int64_t t0 = esp_timer_get_time();
+        int n = m_encoder->encode(frame_320, m_packet_buf, UplinkEncoder::MAX_PACKET_BYTES);
+        const int64_t took_us = esp_timer_get_time() - t0;
+
+        if (n < 0) {
+            m_fallback_reason = std::string("opus_encode failed: ") + opus_strerror(n);
+            LOGW_NET("Hub uplink Opus fallback to PCM: %s", m_fallback_reason.c_str());
+            m_using_opus = false;
+            if (!m_frame_builder->empty()) {
+                sendFrame(m_frame_builder->data(), m_frame_builder->size());
+                m_frame_builder->reset();
+            }
+            sendPcmMicChunk(reinterpret_cast<const uint8_t*>(frame_320), BYTES_PER_FRAME);
+            flushAccumulatorRemainderAsPcm();
+            return;
+        }
+
+        m_opus_frames++;
+        m_total_encode_us += took_us;
+        if (took_us > m_max_encode_us) {
+            m_max_encode_us = took_us;
+        }
+
+        recordRollingEncodeTime(took_us);
+        if (m_rolling_count >= ROLLING_WINDOW_FRAMES &&
+            (m_rolling_sum_us / m_rolling_count) > 8000 &&
+            HubLink::uplinkCodec() != 2) {
+            uint32_t avg = static_cast<uint32_t>(m_rolling_sum_us / m_rolling_count);
+            m_fallback_reason = "slow encode: avg " + std::to_string(avg) + " us > 8000 us";
+            LOGW_NET("Hub uplink Opus fallback to PCM: %s", m_fallback_reason.c_str());
+            m_using_opus = false;
+            if (!m_frame_builder->addPacket(m_packet_buf, static_cast<size_t>(n))) {
+                sendFrame(m_frame_builder->data(), m_frame_builder->size());
+                m_frame_builder->reset();
+                m_frame_builder->addPacket(m_packet_buf, static_cast<size_t>(n));
+            }
+            sendFrame(m_frame_builder->data(), m_frame_builder->size());
+            m_frame_builder->reset();
+            flushAccumulatorRemainderAsPcm();
+            return;
+        }
+
+        if (!m_frame_builder->addPacket(m_packet_buf, static_cast<size_t>(n))) {
+            sendFrame(m_frame_builder->data(), m_frame_builder->size());
+            m_frame_builder->reset();
+            m_frame_builder->addPacket(m_packet_buf, static_cast<size_t>(n));
+        }
+    });
+
+    if (m_using_opus.load() && !m_frame_builder->empty()) {
+        sendFrame(m_frame_builder->data(), m_frame_builder->size());
+        m_frame_builder->reset();
+    }
+}
+
+void HubAgent::sendPcmMicChunk(const uint8_t* pcm, size_t len) {
+    if (len == 0) return;
+    while (len > 0) {
+        size_t chunk = len > (MIC_FRAME_MAX - 2) ? (MIC_FRAME_MAX - 2) : len;
+        m_mic_frame[0] = CHANNEL_MIC;
+        m_mic_frame[1] = FLAG_PCM;
+        std::memcpy(m_mic_frame + 2, pcm, chunk);
+        m_pcm_frames++;
+        sendFrame(m_mic_frame, chunk + 2);
+        pcm += chunk;
+        len -= chunk;
+    }
+}
+
+bool HubAgent::sendFrame(const uint8_t* frame, size_t len) {
     const int64_t t0 = esp_timer_get_time();
-    const bool sent = HubLink::getInstance().sendBinary(m_mic_frame, len + 2, MIC_SEND_TIMEOUT_MS);
+    const bool sent = HubLink::getInstance().sendBinary(frame, len, MIC_SEND_TIMEOUT_MS);
     const int64_t took_ms = (esp_timer_get_time() - t0) / 1000;
-    if (!sent) {
-        LOGW_NET("Mic chunk not sent to the hub (%d ms)", (int)took_ms);
-    } else if (took_ms > 300) {
+    if (sent) {
+        m_uplink_bytes += len;
+    } else {
+        LOGW_NET("Mic frame not sent to the hub (%d ms)", (int)took_ms);
+    }
+    if (took_ms > 300) {
         LOGW_NET("Slow mic write to the hub: %d ms", (int)took_ms);
     }
+    return sent;
+}
+
+void HubAgent::flushAccumulatorRemainderAsPcm() {
+    if (!m_accumulator || m_accumulator->remainderBytes() == 0) return;
+    int16_t rem[SAMPLES_PER_FRAME];
+    size_t samples = m_accumulator->flushSamples(rem);
+    if (samples > 0) {
+        sendPcmMicChunk(reinterpret_cast<const uint8_t*>(rem), samples * sizeof(int16_t));
+    }
+}
+
+void HubAgent::resetRollingEncodeTime() {
+    m_rolling_idx = 0;
+    m_rolling_count = 0;
+    m_rolling_sum_us = 0;
+    for (size_t i = 0; i < ROLLING_WINDOW_FRAMES; ++i) {
+        m_rolling_window[i] = 0;
+    }
+}
+
+void HubAgent::recordRollingEncodeTime(int64_t us) {
+    if (m_rolling_count == ROLLING_WINDOW_FRAMES) {
+        m_rolling_sum_us -= m_rolling_window[m_rolling_idx];
+    } else {
+        m_rolling_count++;
+    }
+    m_rolling_window[m_rolling_idx] = us;
+    m_rolling_sum_us += us;
+    m_rolling_idx = (m_rolling_idx + 1) % ROLLING_WINDOW_FRAMES;
+}
+
+void HubAgent::logSessionStats() {
+    if (m_opus_frames == 0 && m_pcm_frames == 0) return;
+
+    const char* fmt = "none";
+    if (m_opus_frames > 0 && m_pcm_frames > 0) {
+        fmt = "opus, pcm";
+    } else if (m_opus_frames > 0) {
+        fmt = "opus";
+    } else if (m_pcm_frames > 0) {
+        fmt = "pcm";
+    }
+
+    uint32_t avg_us = m_opus_frames > 0 ? static_cast<uint32_t>(m_total_encode_us / m_opus_frames) : 0;
+    const char* fallback = m_fallback_reason.empty() ? "none" : m_fallback_reason.c_str();
+
+    UBaseType_t pump_hwm = 0;
+    TaskHandle_t pump = VoiceUplinkPump::getInstance().getHandle();
+    if (pump) {
+        pump_hwm = uxTaskGetStackHighWaterMark(pump);
+    }
+
+    LOGI_NET("Hub uplink stats: formats=%s, frames=%u (opus=%u, pcm=%u), bytes=%u, avg_encode_us=%u, max_encode_us=%u, fallback=%s, pump_stack_hwm=%u",
+             fmt, (unsigned)(m_opus_frames + m_pcm_frames), (unsigned)m_opus_frames, (unsigned)m_pcm_frames,
+             (unsigned)m_uplink_bytes, (unsigned)avg_us, (unsigned)m_max_encode_us,
+             fallback, (unsigned)pump_hwm);
 }
 
 void HubAgent::sendTextTurn(const std::string& text) {

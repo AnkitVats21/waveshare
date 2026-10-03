@@ -138,6 +138,7 @@ extern "C" void app_main(void) {
     Services::HubAgent::setBackendSetting(Services::loadSettings().voice_backend);
     // Music: the hub runs it while its link is up, unless music_control is local.
     Services::HubLink::setMusicControl(Services::loadSettings().music_control);
+    Services::HubLink::setUplinkCodec(Services::loadSettings().uplink_codec);
     static Services::HubMusic&  hub_music = Services::HubMusic::getInstance();
     MusicPlaybackService::getInstance().setMusicHub(&hub_music);
 #endif

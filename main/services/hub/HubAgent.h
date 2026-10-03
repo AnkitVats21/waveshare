@@ -10,6 +10,10 @@
 
 namespace Services {
 
+class UplinkEncoder;
+class PcmAccumulator;
+class OpusFrameBuilder;
+
 /**
  * @brief The voice backend through the hub (docs/plans/hub-relay-design.md 4.2).
  *
@@ -61,6 +65,12 @@ private:
     void replyEnded(const char* how);
     void expectReply();
     bool sendJson(const std::string& text);
+    void sendPcmMicChunk(const uint8_t* pcm, size_t len);
+    bool sendFrame(const uint8_t* frame, size_t len);
+    void flushAccumulatorRemainderAsPcm();
+    void logSessionStats();
+    void resetRollingEncodeTime();
+    void recordRollingEncodeTime(int64_t us);
 
     static void onMessage(const std::string& text, void* ctx);
     static void onAudio(uint8_t channel, const uint8_t* data, size_t len, bool start, void* ctx);
@@ -87,6 +97,26 @@ private:
     // Mic frames: header + one chunk (MIC_TX_BUF items are up to 1024 bytes).
     uint8_t* m_mic_frame = nullptr;
     static constexpr size_t MIC_FRAME_MAX = 2 + 4096;
+
+    // Uplink Opus encoder & framing state (buffers and state in PSRAM)
+    UplinkEncoder* m_encoder = nullptr;
+    PcmAccumulator* m_accumulator = nullptr;
+    OpusFrameBuilder* m_frame_builder = nullptr;
+    uint8_t* m_packet_buf = nullptr;
+
+    std::atomic<bool> m_using_opus{false};
+    std::string m_fallback_reason;
+    uint32_t m_opus_frames = 0;
+    uint32_t m_pcm_frames = 0;
+    uint32_t m_uplink_bytes = 0;
+    int64_t m_total_encode_us = 0;
+    int64_t m_max_encode_us = 0;
+
+    static constexpr size_t ROLLING_WINDOW_FRAMES = 50; // ~1 s of 20 ms frames
+    int64_t m_rolling_window[ROLLING_WINDOW_FRAMES] = {};
+    size_t m_rolling_idx = 0;
+    size_t m_rolling_count = 0;
+    int64_t m_rolling_sum_us = 0;
 
     // Per reply, measured where the audio arrives (client task), logged at
     // its end: delivery against real time, the longest gap between frames,

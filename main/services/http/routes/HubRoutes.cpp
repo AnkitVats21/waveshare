@@ -14,14 +14,20 @@ namespace {
 
 const char* const BACKENDS[] = {"direct", "hub", "auto"};   // voice_backend values
 const char* const MUSIC[] = {"auto", "local"};               // music_control values
+const char* const CODECS[] = {"auto", "pcm", "opus"};        // uplink_codec values
 
 // GET /api/hub: the link to the hub. "compiled": false in a build without it.
 esp_err_t getHubStatus(httpd_req_t* req) {
     JsonDocument doc;
-    uint8_t backend = Services::loadSettings().voice_backend;
+    auto settings = Services::loadSettings();
+    uint8_t backend = settings.voice_backend;
     doc["backend"] = backend < 3 ? BACKENDS[backend] : "direct";
-    uint8_t music = Services::loadSettings().music_control;
+    uint8_t music = settings.music_control;
     doc["music"] = music < 2 ? MUSIC[music] : "auto";
+    uint8_t codec = settings.uplink_codec;
+    doc["uplink_codec"] = codec < 3 ? CODECS[codec] : "auto";
+    doc["uplink_opus_kbps"] = settings.uplink_opus_kbps;
+    doc["uplink_opus_complexity"] = settings.uplink_opus_complexity;
 #if CONFIG_WAVESHARE_VOICE_HUB
     auto s = Services::HubLink::getInstance().status();
     doc["compiled"] = true;
@@ -83,6 +89,43 @@ esp_err_t setHubConfig(httpd_req_t* req) {
         Services::HubLink::setMusicControl((uint8_t)music);
 #endif
         link_changed = true;   // the hello says the roles again
+    }
+    if (doc["uplink_codec"].is<const char*>()) {
+        const char* name = doc["uplink_codec"];
+        int codec = -1;
+        for (int i = 0; i < 3; ++i) {
+            if (strcmp(name, CODECS[i]) == 0) codec = i;
+        }
+        if (codec < 0) return Http::sendError(req, 400, "uplink_codec must be auto, pcm or opus");
+        auto settings = Services::loadSettings();
+        settings.uplink_codec = (uint8_t)codec;
+        if (!Services::saveSettings(settings, ndb::system::Settings::F_UPLINK_CODEC)) {
+            return Http::sendError(req, 500, "Could not save the uplink codec");
+        }
+#if CONFIG_WAVESHARE_VOICE_HUB
+        Services::HubLink::setUplinkCodec((uint8_t)codec);
+#endif
+        link_changed = true;   // the hello says the offered formats again
+    }
+    if (doc["uplink_opus_kbps"].is<int>()) {
+        int kbps = doc["uplink_opus_kbps"].as<int>();
+        if (kbps < 12) kbps = 12;
+        if (kbps > 64) kbps = 64;
+        auto settings = Services::loadSettings();
+        settings.uplink_opus_kbps = (uint8_t)kbps;
+        if (!Services::saveSettings(settings, ndb::system::Settings::F_UPLINK_OPUS_KBPS)) {
+            return Http::sendError(req, 500, "Could not save the opus bitrate");
+        }
+    }
+    if (doc["uplink_opus_complexity"].is<int>()) {
+        int complexity = doc["uplink_opus_complexity"].as<int>();
+        if (complexity < 0) complexity = 0;
+        if (complexity > 10) complexity = 10;
+        auto settings = Services::loadSettings();
+        settings.uplink_opus_complexity = (uint8_t)complexity;
+        if (!Services::saveSettings(settings, ndb::system::Settings::F_UPLINK_OPUS_COMPLEXITY)) {
+            return Http::sendError(req, 500, "Could not save the opus complexity");
+        }
     }
     if (doc["url"].is<const char*>()) {
         const char* url = doc["url"];

@@ -52,6 +52,14 @@ public:
     // at boot and by POST /api/hub (which then reconnects).
     static void setMusicControl(uint8_t value) { s_music_control = value; }
     static uint8_t musicControl() { return s_music_control.load(); }
+    // The uplink_codec setting (0 auto, 1 pcm, 2 opus), cached for the hello.
+    // Set at boot and by POST /api/hub (which then reconnects).
+    static void setUplinkCodec(uint8_t value) { s_uplink_codec = value; }
+    static uint8_t uplinkCodec() { return s_uplink_codec.load(); }
+    // Up, the hub welcomed voice with Opus uplink allowed, and setting is not pcm.
+    bool opusUplinkAllowed() const {
+        return m_up.load() && m_hub_voice.load() && m_hub_voice_opus.load() && s_uplink_codec.load() != 1;
+    }
     // Sends a text frame; false if the link is down or the send failed. A
     // long text goes in fragments of one message.
     bool sendText(const std::string& text);
@@ -115,8 +123,10 @@ private:
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_up{false};
     std::atomic<bool> m_hub_voice{false};   // the welcome offered voice
+    std::atomic<bool> m_hub_voice_opus{false}; // the welcome allowed opus uplink
     std::atomic<bool> m_hub_music{false};   // the welcome took the music
     static inline std::atomic<uint8_t> s_music_control{0};
+    static inline std::atomic<uint8_t> s_uplink_codec{0};
     MusicListener m_music{};
     bool m_reported_up = false;             // last link state given to the voice listener; run() only
     VoiceListener m_voice{};
