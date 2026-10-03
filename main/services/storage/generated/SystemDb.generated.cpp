@@ -75,6 +75,9 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_HUB_URL) w.str(22, hub_url);
     if (fields & F_VOICE_BACKEND) w.u8(23, voice_backend);
     if (fields & F_MUSIC_CONTROL) w.u8(24, music_control);
+    if (fields & F_UPLINK_CODEC) w.u8(25, uplink_codec);
+    if (fields & F_UPLINK_OPUS_KBPS) w.u8(26, uplink_opus_kbps);
+    if (fields & F_UPLINK_OPUS_COMPLEXITY) w.u8(27, uplink_opus_complexity);
 }
 
 void Settings::decode(std::string_view value) {
@@ -107,6 +110,9 @@ void Settings::decode(std::string_view value) {
             case 22: nexus_db::FieldReader::read(v, len, hub_url); break;
             case 23: nexus_db::FieldReader::read(v, len, voice_backend); break;
             case 24: nexus_db::FieldReader::read(v, len, music_control); break;
+            case 25: nexus_db::FieldReader::read(v, len, uplink_codec); break;
+            case 26: nexus_db::FieldReader::read(v, len, uplink_opus_kbps); break;
+            case 27: nexus_db::FieldReader::read(v, len, uplink_opus_complexity); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

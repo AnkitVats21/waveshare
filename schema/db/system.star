@@ -45,6 +45,9 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field hub_url:              string         tag=22  // hub link (HubLink) "ws://host:port/hub/board"; "" = find the hub by mDNS (_nexus-hub._tcp)
         field voice_backend:        u8             tag=23  // 0 direct (Gemini from the board), 1 hub, 2 auto (the hub when its link is up, else direct)
         field music_control:        u8             tag=24  // 0 auto (the hub runs the music when its link is up and it offers music), 1 local (this board's own queue)
+        field uplink_codec:         u8             tag=25  // 0 auto (Opus if hub allows, else PCM), 1 pcm, 2 opus
+        field uplink_opus_kbps:     u8 = 24        tag=26  // 12-64 kbps (default 24)
+        field uplink_opus_complexity: u8 = 3       tag=27  // 0-10 (default 3)
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",
