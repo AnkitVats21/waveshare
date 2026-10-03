@@ -19,6 +19,7 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 
 CONFIG_HTTPD_WS_SUPPORT=y
 CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
 
 # Increase socket capacity for persistent STAR WebSocket connection, HTTP requests, and streaming
 CONFIG_LWIP_MAX_SOCKETS=24
