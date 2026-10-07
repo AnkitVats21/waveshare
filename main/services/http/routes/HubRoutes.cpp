@@ -47,9 +47,10 @@ esp_err_t getHubStatus(httpd_req_t* req) {
 }
 
 // POST /api/hub {"url"?, "token"?, "backend"?, "music"?}: any may be left
-// out; "" clears url or token (url "" = find the hub by mDNS). The token is
-// never sent back. backend ("direct", "hub", "auto") applies from the next
-// session; music ("auto": the hub runs it when up, "local") reconnects.
+// out; "" clears url or token (url "" = find the hub by mDNS; url must start
+// with ws:// or wss://). The token is never sent back. backend ("direct",
+// "hub", "auto") applies from the next session; music ("auto": the hub runs it
+// when up, "local") reconnects.
 esp_err_t setHubConfig(httpd_req_t* req) {
     std::string body;
     JsonDocument doc;
@@ -129,8 +130,8 @@ esp_err_t setHubConfig(httpd_req_t* req) {
     }
     if (doc["url"].is<const char*>()) {
         const char* url = doc["url"];
-        if (url[0] != '\0' && strncmp(url, "ws://", 5) != 0) {
-            return Http::sendError(req, 400, "url must start with ws://");
+        if (url[0] != '\0' && strncmp(url, "ws://", 5) != 0 && strncmp(url, "wss://", 6) != 0) {
+            return Http::sendError(req, 400, "url must start with ws:// or wss://");
         }
         auto settings = Services::loadSettings();
         settings.hub_url = url;

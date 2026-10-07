@@ -120,6 +120,7 @@ private:
 
     std::mutex m_client_mutex;            // m_client, against close()
     esp_websocket_client_handle_t m_client = nullptr;
+    TaskHandle_t m_ws_task = nullptr;
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_up{false};
     std::atomic<bool> m_hub_voice{false};   // the welcome offered voice
@@ -160,7 +161,8 @@ private:
     static constexpr size_t TEXT_FRAGMENT = 4096;           // below CLIENT_BUFFER
     static constexpr int RX_QUEUE_LEN = 32;
     static constexpr uint32_t TASK_STACK = 6 * 1024;        // PSRAM
-    static constexpr int CLIENT_TASK_STACK = 3584;          // internal (esp_websocket_client); 1.7 KB used
+    static constexpr int CLIENT_TASK_STACK = 3584;          // internal (esp_websocket_client); 1.7 KB used for ws://
+    static constexpr int CLIENT_TASK_STACK_WSS = 8192;      // internal (esp_websocket_client); required for wss:// TLS handshake
     // The client's rx and tx buffers, one malloc each: above
     // CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL (4096) they go to PSRAM. At 2048
     // they took 4 KB of internal RAM.

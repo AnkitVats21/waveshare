@@ -8,6 +8,7 @@
 
 #include <ArduinoJson.h>
 #include <esp_app_desc.h>
+#include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -15,6 +16,20 @@
 #include <mdns.h>
 #include <algorithm>
 #include <cstring>
+
+static std::string urlHost(const std::string& url) {
+    size_t start = 0;
+    if (url.rfind("wss://", 0) == 0) {
+        start = 6;
+    } else if (url.rfind("ws://", 0) == 0) {
+        start = 5;
+    }
+    size_t end = url.find_first_of("/:", start);
+    if (end == std::string::npos) {
+        return url.substr(start);
+    }
+    return url.substr(start, end - start);
+}
 
 namespace Services {
 
@@ -181,10 +196,12 @@ void HubLink::run() {
 }
 
 bool HubLink::open(const std::string& url) {
+    bool is_wss = (strncmp(url.c_str(), "wss://", 6) == 0);
+
     esp_websocket_client_config_t cfg = {};
     cfg.uri = url.c_str();
     cfg.task_name = "hub_ws";
-    cfg.task_stack = CLIENT_TASK_STACK;
+    cfg.task_stack = is_wss ? CLIENT_TASK_STACK_WSS : CLIENT_TASK_STACK;
     cfg.task_prio = ThreadConfig::NORMAL;
     cfg.task_core_id = ThreadConfig::CORE_NETWORK;
     cfg.task_core_id_set = true;
@@ -193,6 +210,11 @@ bool HubLink::open(const std::string& url) {
     cfg.network_timeout_ms = 5000;
     cfg.ping_interval_sec = 5;
     cfg.pingpong_timeout_sec = 10;
+
+    if (is_wss) {
+        cfg.crt_bundle_attach = esp_crt_bundle_attach;
+        cfg.skip_cert_common_name_check = false;
+    }
 
     esp_websocket_client_handle_t client = esp_websocket_client_init(&cfg);
     if (!client) {
@@ -210,7 +232,7 @@ bool HubLink::open(const std::string& url) {
         close();
         return false;
     }
-    ESP_LOGI(TAG, "Connecting to the hub at %s", url.c_str());
+    ESP_LOGI(TAG, "Connecting to the hub at %s", urlHost(url).c_str());
     return true;
 }
 
@@ -221,6 +243,7 @@ void HubLink::close() {
     if (!m_client) return;
     m_up = false;
     m_connected = false;
+    m_ws_task = nullptr;
     ControlChannel::getInstance().setRelayUp(false);
     reportLink();
     esp_websocket_client_destroy(m_client);
@@ -329,9 +352,15 @@ void HubLink::handleMessage(const std::string& text) {
         m_hub_music = (doc["music"] | false) && s_music_control.load() != 1;
         m_up = true;
         ControlChannel::getInstance().setRelayUp(true);
-        ESP_LOGI(TAG, "Hub link up (%s, voice %s [up=%s], music %s)", doc["hub"] | "?",
+
+        TaskHandle_t ws_task = m_ws_task ? m_ws_task : xTaskGetHandle("hub_ws");
+        unsigned ws_hwm = ws_task ? (unsigned)uxTaskGetStackHighWaterMark(ws_task) : 0;
+        size_t int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        ESP_LOGI(TAG, "Hub link up (%s, voice %s [up=%s], music %s). hub_ws stack HWM: %u B, free internal heap: %u B",
+                 doc["hub"] | "?",
                  voice ? (m_hub_voice_opus.load() ? "opus" : "pcm") : "no",
-                 up_codec, m_hub_music.load() ? "yes" : "no");
+                 up_codec, m_hub_music.load() ? "yes" : "no",
+                 ws_hwm, (unsigned)int_free);
     } else if (strcmp(type, "rejected") == 0) {
         const char* reason = doc["reason"] | "rejected";
         ESP_LOGW(TAG, "The hub refused the board: %s", reason);
@@ -354,6 +383,7 @@ void HubLink::onEvent(void* arg, esp_event_base_t, int32_t id, void* data) {
     auto* self = static_cast<HubLink*>(arg);
     switch (id) {
         case WEBSOCKET_EVENT_CONNECTED:
+            self->m_ws_task = xTaskGetCurrentTaskHandle();
             self->m_connected = true;
             self->m_rx.clear();
             self->m_rx_dropping = false;
