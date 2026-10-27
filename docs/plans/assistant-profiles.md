@@ -1,24 +1,38 @@
 # Plan: assistant profiles
 
-**Status:** agreed on 2026-09-29, reviewed 2026-10-27, not built yet.
+**Status:** agreed on 2026-09-29, reviewed 2026-10-27, built 2026-10-27
+(firmware steps 1-6 on hub-wss, nexus `profiles-fresh`, dashboard
+`bc04338`); not yet tested on the device.
 
 ## Decisions (2026-10-27)
 
 - **Hub mode needs no hub change.** The board builds the Gemini setup
   (voice, instructions, model) and sends it in `session_start`, so the
-  active profile applies to both backends.
+  active profile applies to both backends. *Corrected while building:* the
+  hub reuses a kept Gemini connection whenever the model matches, so the
+  old voice would carry on. The board now sends `"fresh": true` (with
+  `resume_min` 0) on the first session after a switch, and the hub never
+  reuses a kept connection for it (nexus `profiles-fresh`, one test).
 - **Fresh context after a switch:** direct mode clears the resume handle;
   in hub mode the hub holds the handle but reads `resume_min` from
   `session_start`, so the board sends `0` for the first session after a
   switch.
 - **Restart after a voice switch:** stop + start at the assistant level
   (same for both backends), after the tool reply's `turn_complete`.
+  Built as `AssistantService::requestRestart()`: waits for a finished
+  model turn since the request and nothing playing or owed, closes without
+  the end chime, wakes again without the wake chime (the ready chime
+  stays). A conversation generation (`VoiceAgent::newConversation()`) makes
+  both backends drop the resume handle and the kept connection.
 - **The old fields** (`gemini_voice`, `gemini_system_prompt`) mirror the
   active profile, so a firmware rollback keeps the current persona.
 - **No spoken greeting in the new voice:** the tool's normal reply
   confirms the switch.
 - **Music keeps playing** across a profile switch, as after any session.
-- **Limits:** 8 profiles, 8 KB of instructions each.
+- **Limits:** 8 profiles, 8 KB of instructions each, names up to 32
+  characters and unique ignoring case. Id 1 is the default profile.
+- **Old API:** `POST /api/config/gemini` with `voice` or `system_prompt`
+  edits the active profile.
 
 ## Goal
 
