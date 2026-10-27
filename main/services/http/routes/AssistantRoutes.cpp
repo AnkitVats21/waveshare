@@ -7,6 +7,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "services/http/StateNames.h"
 #include "services/storage/SystemDatabase.h"
+#include "services/profiles/Profiles.h"
 #include "services/BufferManager.h"
 #include "app/audio/SpeakerPlayback.h"
 
@@ -84,7 +85,85 @@ esp_err_t statusHandler(httpd_req_t* req) {
     doc["state"] = assistantStateToString(snap.assistant.session_state);
     doc["connection"] = wsStateToString(snap.assistant.ws_state);
     doc["mic_streaming"] = WakeWordEngine::getInstance().isStreamingActive();
+    doc["profile"] = snap.assistant.profile;
     return Http::sendJson(req, 200, doc);
+}
+
+// Assistant profiles (personas). Voice and model empty = the defaults; see
+// Services::Profiles.
+//   GET    /api/assistant/profiles           {"active": id, "profiles": [{id, name, voice, model, instructions}]}
+//   POST   /api/assistant/profiles           {"id"?, "name", "voice", "model", "instructions"}: without
+//          an id creates one; with an id updates it, keeping absent fields. Answers {"id": n}.
+//   DELETE /api/assistant/profiles?id=n      the active one hands over to the default (id 1, undeletable)
+//   POST   /api/assistant/profiles/activate  {"id": n}: the next session uses it, in a new conversation
+esp_err_t listProfilesHandler(httpd_req_t* req) {
+    JsonDocument doc;
+    doc["active"] = Services::Profiles::activeId();
+    doc["default_id"] = Services::DEFAULT_PROFILE_ID;
+    doc["max_profiles"] = Services::Profiles::MAX_PROFILES;
+    doc["max_instructions"] = Services::Profiles::MAX_INSTRUCTIONS;
+    JsonArray list = doc["profiles"].to<JsonArray>();
+    for (const auto& [id, p] : Services::listProfiles()) {
+        JsonObject o = list.add<JsonObject>();
+        o["id"] = id;
+        o["name"] = p.name;
+        o["voice"] = p.voice;
+        o["model"] = p.model;
+        o["instructions"] = p.instructions;
+    }
+    return Http::sendJson(req, 200, doc);
+}
+
+esp_err_t saveProfileHandler(httpd_req_t* req) {
+    std::string body;
+    if (req->content_len == 0 || !Http::readBody(req, body, Services::Profiles::MAX_INSTRUCTIONS + 1024)) {
+        return Http::sendError(req, 400, "Missing or oversized JSON body");
+    }
+    JsonDocument in;
+    if (deserializeJson(in, body) || !in.is<JsonObject>()) {
+        return Http::sendError(req, 400, "Body must be a JSON object");
+    }
+    int id = in["id"] | 0;
+    ndb::system::ProfileDoc p;
+    if (id > 0 && !Services::loadProfile(id, p)) return Http::sendError(req, 404, "No such profile");
+    if (id < 0) return Http::sendError(req, 400, "id must be positive");
+    for (auto [key, dst] : {std::pair<const char*, std::string*>{"name", &p.name}, {"voice", &p.voice},
+                            {"model", &p.model}, {"instructions", &p.instructions}}) {
+        if (in[key].is<const char*>()) {
+            *dst = in[key].as<const char*>();
+        } else if (!in[key].isNull()) {
+            return Http::sendError(req, 400, "name, voice, model and instructions must be strings");
+        }
+    }
+    body.clear();
+    body.shrink_to_fit();
+    std::string error;
+    if (!Services::Profiles::save(id, p, error)) return Http::sendError(req, 400, error.c_str());
+    JsonDocument out;
+    out["id"] = id;
+    return Http::sendJson(req, 200, out);
+}
+
+esp_err_t deleteProfileHandler(httpd_req_t* req) {
+    std::string arg;
+    int id = Http::queryParam(req, "id", arg) ? atoi(arg.c_str()) : 0;
+    if (id <= 0) return Http::sendError(req, 400, "Missing ?id=");
+    std::string error;
+    if (!Services::Profiles::remove(id, error)) {
+        return Http::sendError(req, error == "no such profile" ? 404 : 400, error.c_str());
+    }
+    return Http::sendOk(req, "Profile deleted");
+}
+
+esp_err_t activateProfileHandler(httpd_req_t* req) {
+    std::string body;
+    JsonDocument in;
+    if (req->content_len == 0 || !Http::readBody(req, body, 256) || deserializeJson(in, body) ||
+        !in["id"].is<int>()) {
+        return Http::sendError(req, 400, "Body must be {\"id\": n}");
+    }
+    if (!Services::Profiles::activate(in["id"].as<int>())) return Http::sendError(req, 404, "No such profile");
+    return Http::sendOk(req, "Profile active; applies to the next session");
 }
 
 // ?since=<seq> returns only entries changed after that seq (poll with the
@@ -106,4 +185,8 @@ void Routes::registerAssistant(Http::Server& server) {
     server.on("/api/assistant/handoff", HTTP_POST, handoffHandler);
     server.on("/api/assistant/status", HTTP_GET, statusHandler);
     server.on("/api/assistant/transcript", HTTP_GET, transcriptHandler);
+    server.on("/api/assistant/profiles", HTTP_GET, listProfilesHandler);
+    server.on("/api/assistant/profiles", HTTP_POST, saveProfileHandler);
+    server.on("/api/assistant/profiles", HTTP_DELETE, deleteProfileHandler);
+    server.on("/api/assistant/profiles/activate", HTTP_POST, activateProfileHandler);
 }

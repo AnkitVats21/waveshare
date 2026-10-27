@@ -1,6 +1,7 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "services/storage/SystemDatabase.h"
+#include "services/profiles/Profiles.h"
 #include "services/time/TimeSyncHelper.h"
 #include "credentials/Credentials.h"
 #include "app/audio/AudioService.h"
@@ -53,7 +54,8 @@ void addDefaults(JsonDocument& doc) {
 }
 
 // Model, voice, system prompt and the transcript and session options live in
-// system.ndb; the API key in NVS. The key is write-only: GET reports only
+// system.ndb; the API key in NVS. Voice and system prompt are the active
+// assistant profile's (/api/assistant/profiles); writing them edits it. The key is write-only: GET reports only
 // whether one is set; POST stores a new key when the body carries one. Unset
 // strings are omitted, and the firmware defaults are listed under "defaults".
 //   transcripts:      ask Gemini for transcriptions (shown on the dashboard)
@@ -259,6 +261,18 @@ esp_err_t setGeminiHandler(httpd_req_t* req) {
         return Http::sendError(req, 500, "Failed to store the API key");
     }
 
+    // Voice and system prompt belong to the active profile (the settings
+    // fields mirror it); without profiles (no card) they are settings.
+    const uint64_t profile_fields = fields & (Settings::F_GEMINI_VOICE | Settings::F_GEMINI_SYSTEM_PROMPT);
+    if (profile_fields && Services::Profiles::activeId() > 0) {
+        fields &= ~profile_fields;
+        int id = Services::Profiles::activeId();
+        ndb::system::ProfileDoc p = Services::Profiles::active();
+        if (profile_fields & Settings::F_GEMINI_VOICE) p.voice = s.gemini_voice;
+        if (profile_fields & Settings::F_GEMINI_SYSTEM_PROMPT) p.instructions = s.gemini_system_prompt;
+        std::string error;
+        if (!Services::Profiles::save(id, p, error)) return Http::sendError(req, 400, error.c_str());
+    }
     if (fields && !Services::saveSettings(s, fields)) {
         return Http::sendError(req, 500, "Failed to save settings");
     }
