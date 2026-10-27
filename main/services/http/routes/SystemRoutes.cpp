@@ -14,6 +14,7 @@
 #include "services/network/UsbNet.h"
 #endif
 #include "services/network/NetStats.h"
+#include "services/network/WifiService.h"
 
 #include <esp_app_desc.h>
 #include <esp_app_format.h>
@@ -273,6 +274,34 @@ esp_err_t usbModeSetHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, resp);
 }
 #endif
+
+// ── GET/POST /api/system/wifi-mode ──────────────────────────────────────
+// {"mode": "bgn" | "bg"}: the station's Wi-Fi standards. "bg" leaves out
+// 802.11n, for APs that drop to 1 Mbps on traffic the board has no Block Ack
+// session for (see WifiService::legacyOnly). Saves and reboots.
+esp_err_t wifiModeGetHandler(httpd_req_t* req) {
+    JsonDocument doc;
+    doc["mode"] = WifiService::legacyOnly() ? "bg" : "bgn";
+    return Http::sendJson(req, 200, doc);
+}
+
+esp_err_t wifiModeSetHandler(httpd_req_t* req) {
+    std::string body;
+    if (req->content_len == 0 || req->content_len > 128 || !Http::readBody(req, body, 128)) {
+        return Http::sendError(req, 400, "Missing JSON payload");
+    }
+    JsonDocument doc;
+    if (deserializeJson(doc, body)) return Http::sendError(req, 400, "Invalid JSON payload");
+    const std::string mode = doc["mode"] | "";
+    if (mode != "bg" && mode != "bgn") return Http::sendError(req, 400, "mode must be \"bg\" or \"bgn\"");
+    if (!WifiService::saveLegacyOnly(mode == "bg")) return Http::sendError(req, 500, "Could not save the mode");
+    scheduleReboot();
+    JsonDocument resp;
+    resp["status"] = "ok";
+    resp["mode"] = mode;
+    resp["rebooting"] = true;
+    return Http::sendJson(req, 200, resp);
+}
 
 // ── GET /api/system/tasks ───────────────────────────────────────────────
 // Every task's stack: size, the least free since it started, and whether it
@@ -656,6 +685,8 @@ void Routes::registerSystem(Http::Server& server) {
     server.on("/api/system/usb-mode", HTTP_GET, usbModeGetHandler);
     server.on("/api/system/usb-mode", HTTP_POST, usbModeSetHandler);
 #endif
+    server.on("/api/system/wifi-mode", HTTP_GET, wifiModeGetHandler);
+    server.on("/api/system/wifi-mode", HTTP_POST, wifiModeSetHandler);
     server.on("/api/system/flash", HTTP_GET, flashHandler);
     server.on("/api/system/tasks", HTTP_GET, tasksHandler);
     server.on("/api/system/nettest", HTTP_GET, netTestHandler);

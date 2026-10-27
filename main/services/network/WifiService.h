@@ -62,6 +62,15 @@ public:
      */
     bool connectWithCredentials(const std::string& ssid, const std::string& password);
 
+    /**
+     * @brief Station without 802.11n (b/g only), saved in NVS; read at connect.
+     * Some APs (Nokia) send ISP-marked traffic on TIDs the S3 has no Block Ack
+     * session for and fall back to 1 Mbps single frames; without HT there is
+     * no aggregation to set up, so the AP uses its normal rates.
+     */
+    static bool legacyOnly();
+    static bool saveLegacyOnly(bool on);
+
     const Config& getConfig() const { return m_config; }
 
 private:

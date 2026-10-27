@@ -13,6 +13,38 @@
 #include "nvs.h"
 #include <cstring>
 
+namespace {
+constexpr const char* NVS_NS = "net";
+constexpr const char* NVS_KEY_LEGACY = "wifi_bg";
+
+// Call after esp_wifi_set_mode with the station enabled.
+void applyStaProtocol() {
+    const bool bg = WifiService::legacyOnly();
+    const uint8_t proto = bg ? (WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G)
+                             : (WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+    const esp_err_t err = esp_wifi_set_protocol(WIFI_IF_STA, proto);
+    LOGI_WIFI("Station protocol: %s (%s)", bg ? "802.11b/g" : "802.11b/g/n", esp_err_to_name(err));
+}
+}  // namespace
+
+bool WifiService::legacyOnly() {
+    nvs_handle_t h;
+    uint8_t v = 0;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, NVS_KEY_LEGACY, &v);
+        nvs_close(h);
+    }
+    return v != 0;
+}
+
+bool WifiService::saveLegacyOnly(bool on) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) return false;
+    const bool ok = nvs_set_u8(h, NVS_KEY_LEGACY, on ? 1 : 0) == ESP_OK && nvs_commit(h) == ESP_OK;
+    nvs_close(h);
+    return ok;
+}
+
 WifiService::WifiService(const Config& cfg)
     : ReactorTask(ReactorTask::Config{
           "WifiSvc",
@@ -151,6 +183,7 @@ bool WifiService::connectWithCredentials(const std::string& ssid, const std::str
 
     // Keep AP active (APSTA) while attempting to connect, so client can monitor progress
     esp_wifi_set_mode(WIFI_MODE_APSTA);
+    applyStaProtocol();
     esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
 
     EmbeddedSysDb::getInstance().mutate([&ssid](SystemState& s) {
@@ -236,6 +269,7 @@ bool WifiService::begin() {
         wifi_config.sta.pmf_cfg.required = false;
 
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        applyStaProtocol();
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
         ESP_ERROR_CHECK(esp_wifi_start());
 
