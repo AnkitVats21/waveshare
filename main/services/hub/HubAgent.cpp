@@ -153,7 +153,12 @@ void HubAgent::startSession() {
     doc["type"] = "session_start";
     doc["web_search"] = cfg.web_search;
     doc["keepalive_s"] = cfg.keepalive_s;
-    doc["resume_min"] = cfg.resume_min;
+    // A new conversation (another profile): the hub neither resumes the
+    // last one nor reuses its kept connection, whose setup is the old one.
+    const bool fresh = m_conversation != VoiceAgent::conversation();
+    m_conversation = VoiceAgent::conversation();
+    doc["resume_min"] = fresh ? 0 : cfg.resume_min;
+    if (fresh) doc["fresh"] = true;
     std::string out;
     serializeJson(doc, out);
 

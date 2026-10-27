@@ -137,6 +137,13 @@ private:
     int64_t m_resume_handle_us = 0;
     bool m_resuming = false;           // this connection's setup carries a handle
     bool m_force_resume = false;       // a handoff resumes whatever resume_min says
+    // The VoiceAgent::conversation() the handle and the open connection
+    // belong to; another one is never resumed or reused.
+    uint32_t m_conversation = 0;
+    bool otherConversation() {
+        std::lock_guard<std::mutex> lock(m_turn_mutex);
+        return m_conversation != conversation();
+    }
 
     // Restarting the connection inside a session, which the event handler
     // can't do itself: after Gemini refuses an expired handle (close 1008;

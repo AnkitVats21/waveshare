@@ -2,6 +2,7 @@
 
 #include "gemini_skills_generated.h"
 #include <ArduinoJson.h>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -73,6 +74,13 @@ public:
     // connection for a quick next session.
     virtual void endSession() = 0;
 
+    // Conversations. A backend resumes a conversation, or keeps its
+    // connection for the next session, only within one conversation
+    // generation; newConversation() starts the next one, for a setup that
+    // changed (another assistant profile). Any task.
+    static void newConversation() { s_conversation.fetch_add(1); }
+    static uint32_t conversation() { return s_conversation.load(); }
+
     // The backend heard words from the person (input transcription text):
     // any backend calls this on each one. lastInputWordsUs() is when that
     // last was (esp_timer time, 0 = never since boot).
@@ -115,6 +123,7 @@ protected:
     }
 
 private:
+    static inline std::atomic<uint32_t> s_conversation{0};
     static inline ToolCallHandlerFn s_tool_handler = nullptr;
     static inline void* s_tool_ctx = nullptr;
     static inline RemoteToolCallHandlerFn s_remote_tool_handler = nullptr;

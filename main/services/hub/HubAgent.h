@@ -82,6 +82,7 @@ private:
 
     std::atomic<bool> m_session{false};       // session_start sent, not ended
     bool m_fail_pending = false;              // hub away at the wake; this task only
+    uint32_t m_conversation = 0;              // VoiceAgent::conversation() of the last session_start; this task only
     std::atomic<bool> m_ready{false};         // session_ready received
     std::atomic<bool> m_accept_audio{false};  // reply audio goes to the speaker
     std::atomic<bool> m_dropping{false};      // interrupted: drop audio until the turn ends

@@ -121,6 +121,10 @@ void GeminiProtocol::onStateChanged(ComponentMask changed, const SystemState& sn
             LOGI_NET("The kept connection closed.");
             closeConnection();
             ws = WsState::DISCONNECTED;
+        } else if (requested && otherConversation()) {
+            LOGI_NET("The kept connection has the old setup; reconnecting.");
+            closeConnection();
+            ws = WsState::DISCONNECTED;
         } else if (requested) {
             esp_timer_stop(m_park_timer);
             m_parked = false;
@@ -334,8 +338,9 @@ void GeminiProtocol::endSession() {
         quiet = m_setup_complete && m_pending_turn.empty() && m_reply_wait_us == 0;
     }
     // Closed if a reply is owed or playing: its audio would reach the next
-    // session. And after a goAway the connection is about to end anyway.
-    if (cfg.keepalive_s == 0 || !quiet || !m_client || m_handoff_pending || m_parked ||
+    // session. After a goAway the connection is about to end anyway, and
+    // after a profile switch its setup is the old one.
+    if (cfg.keepalive_s == 0 || !quiet || !m_client || m_handoff_pending || m_parked || otherConversation() ||
         snap.assistant.ws_state != WsState::CONNECTED || snap.audio.assistant_speaking) {
         closeConnection();
         return;
@@ -500,6 +505,11 @@ void GeminiProtocol::transmitSetupHandshake() {
     int resume_age_s = -1;
     {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
+        if (m_conversation != conversation()) {
+            m_conversation = conversation();
+            m_resume_handle.clear();
+            m_force_resume = false;
+        }
         int64_t age_us = esp_timer_get_time() - m_resume_handle_us;
         m_resuming = !m_resume_handle.empty() &&
                      (m_force_resume || (cfg.resume_min > 0 &&
