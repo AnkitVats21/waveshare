@@ -1,5 +1,6 @@
 #include "AssistantService.h"
 #include "audio_core/AlertPlayer.h"
+#include "audio_core/WakeWordEngine.h"
 #include "app/audio/AudioOrchestrator.h"
 #include "VoiceAgent.h"
 #include "common/AppLogger.h"
@@ -34,6 +35,12 @@ void AssistantService::idleTimeoutCallback(void* arg) {
 void AssistantService::cooldownTimeoutCallback(void* arg) {
     auto svc = static_cast<AssistantService*>(arg);
     svc->handleCooldownElapsed();
+}
+
+void AssistantService::restartWakeCallback(void* arg) {
+    auto svc = static_cast<AssistantService*>(arg);
+    svc->m_restart_wake_pending = true;
+    xTaskNotify(svc->m_task_handle, COMP::ASSISTANT, eSetBits);
 }
 
 void AssistantService::handleConnectTimeout() {
@@ -78,6 +85,10 @@ AssistantService::~AssistantService() {
         esp_timer_stop(m_cooldown_timer);
         esp_timer_delete(m_cooldown_timer);
     }
+    if (m_restart_timer) {
+        esp_timer_stop(m_restart_timer);
+        esp_timer_delete(m_restart_timer);
+    }
 }
 
 bool AssistantService::begin() {
@@ -107,6 +118,15 @@ bool AssistantService::begin() {
         cooldown_args.dispatch_method = ESP_TIMER_TASK;
         cooldown_args.name = "error_cooldown";
         esp_timer_create(&cooldown_args, &m_cooldown_timer);
+    }
+
+    if (!m_restart_timer) {
+        esp_timer_create_args_t restart_args = {};
+        restart_args.callback = restartWakeCallback;
+        restart_args.arg = this;
+        restart_args.dispatch_method = ESP_TIMER_TASK;
+        restart_args.name = "session_restart";
+        esp_timer_create(&restart_args, &m_restart_timer);
     }
 
     // Initialize state to Idle
@@ -152,6 +172,10 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
         ESP_LOGI(TAG, "Error cooldown elapsed.");
         transitionTo(AssistantState::Idle, &snap);
         return;
+    }
+    if (m_restart_wake_pending) {
+        m_restart_wake_pending = false;
+        restartWake();
     }
 
     // Get snapshot components
@@ -242,6 +266,60 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
         default:
             break;
     }
+
+    maybeRestart(snap);
+}
+
+void AssistantService::requestRestart(uint32_t silence_ms) {
+    s_restart_after_turn = VoiceAgent::active().turnsCompleted();
+    s_restart_silence_ms = int32_t(silence_ms);
+}
+
+// A requested restart: the session closes, quietly, once the model has
+// finished a turn since the request and nothing more is playing or owed;
+// a new one starts as soon as it is idle. A session that ends otherwise
+// drops the request.
+void AssistantService::maybeRestart(const SystemState& snap) {
+    if (s_restart_silence_ms.load() < 0 || m_restarting) return;
+    switch (m_current_state) {
+        case AssistantState::StreamingUserAudio:
+        case AssistantState::WaitingForFollowup:
+            break;
+        case AssistantState::Idle:
+        case AssistantState::Closing:
+        case AssistantState::ErrorCooldown:
+            LOGW_SYSTEM("Session restart dropped: the session ended first.");
+            s_restart_silence_ms = -1;
+            return;
+        default:
+            return;
+    }
+    if (VoiceAgent::active().turnsCompleted() == s_restart_after_turn.load() ||
+        snap.audio.assistant_speaking || snap.audio.turn_complete_pending ||
+        VoiceAgent::active().awaitingReply()) {
+        return;
+    }
+    m_restart_silence_ms = uint32_t(s_restart_silence_ms.exchange(-1));
+    m_restarting = true;
+    m_restart_tries = 0;
+    LOGI_SYSTEM("Restarting the session (new profile).");
+    transitionTo(AssistantState::Closing, &snap);
+}
+
+// The restart's new session: the wake engine takes it once the old session's
+// streaming has stopped (AudioService, on the mode change), so retry briefly.
+void AssistantService::restartWake() {
+    if (!m_restarting) return;
+    if (m_current_state == AssistantState::Idle &&
+        WakeWordEngine::getInstance().requestManualWake(m_restart_silence_ms)) {
+        return;   // m_restarting ends at StartingSession
+    }
+    if (++m_restart_tries >= RESTART_MAX_TRIES) {
+        LOGW_SYSTEM("Session restart gave up: the wake engine did not take it.");
+        m_restarting = false;
+        return;
+    }
+    esp_timer_start_once(m_restart_timer, RESTART_RETRY_US);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -425,7 +503,8 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             const int64_t quiet_us = s_quiet_wake_us.exchange(0);
             m_quiet_session = quiet_us && m_wake_us - quiet_us < QUIET_WAKE_US;
             AudioOrchestrator::getInstance().notifyWakeWordDetected();
-            if (!m_quiet_session) playAlertAsync(ALERT_WAKE_CONFIRM);
+            if (!m_quiet_session && !m_restarting) playAlertAsync(ALERT_WAKE_CONFIRM);
+            m_restarting = false;
             break;
         }
         case AssistantState::StreamingUserAudio:
@@ -437,13 +516,17 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             if (!(oldState == AssistantState::Connecting && m_quiet_session)) playAlertAsync(ALERT_READY_TO_SPEAK);
             break;
         case AssistantState::Closing:
-            playAlertAsync(ALERT_SESSION_END);
+            if (!m_restarting) playAlertAsync(ALERT_SESSION_END);
             break;
         case AssistantState::ErrorCooldown:
             playAlertAsync(ALERT_ERROR);
             break;
         default:
             break;
+    }
+
+    if (newState == AssistantState::Idle && m_restarting) {
+        esp_timer_start_once(m_restart_timer, RESTART_RETRY_US);
     }
 
     // Defer Closing→Idle via task notification to avoid recursive executeTransition()
