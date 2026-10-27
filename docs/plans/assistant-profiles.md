@@ -1,6 +1,24 @@
 # Plan: assistant profiles
 
-**Status:** agreed on 2026-09-29, not built yet.
+**Status:** agreed on 2026-09-29, reviewed 2026-10-27, not built yet.
+
+## Decisions (2026-10-27)
+
+- **Hub mode needs no hub change.** The board builds the Gemini setup
+  (voice, instructions, model) and sends it in `session_start`, so the
+  active profile applies to both backends.
+- **Fresh context after a switch:** direct mode clears the resume handle;
+  in hub mode the hub holds the handle but reads `resume_min` from
+  `session_start`, so the board sends `0` for the first session after a
+  switch.
+- **Restart after a voice switch:** stop + start at the assistant level
+  (same for both backends), after the tool reply's `turn_complete`.
+- **The old fields** (`gemini_voice`, `gemini_system_prompt`) mirror the
+  active profile, so a firmware rollback keeps the current persona.
+- **No spoken greeting in the new voice:** the tool's normal reply
+  confirms the switch.
+- **Music keeps playing** across a profile switch, as after any session.
+- **Limits:** 8 profiles, 8 KB of instructions each.
 
 ## Goal
 
