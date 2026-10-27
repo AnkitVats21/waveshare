@@ -382,5 +382,21 @@
         }
       }
     }
+  },
+  {
+    "name": "switch_profile",
+    "description": "Switches you to another assistant profile (a persona with its own voice and instructions), e.g. 'switch to the yoga teacher'. The profiles are named in your instructions. After a switch, confirm in a few words: the conversation then starts afresh in the new voice. Without a match the answer lists the names.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "name": {
+          "type": "STRING",
+          "description": "The profile's name, as the user said it."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
   }
 ]

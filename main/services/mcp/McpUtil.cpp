@@ -84,7 +84,8 @@ const std::unordered_set<std::string>& builtInToolNames() {
         "cancel_scheduled",
         "acknowledge_reminders",
         "save_to_memory",
-        "get_weather"
+        "get_weather",
+        "switch_profile"
     };
     return s_builtins;
 }

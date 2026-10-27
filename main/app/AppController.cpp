@@ -1,4 +1,5 @@
 #include "services/weather/Weather.h"
+#include "services/profiles/Profiles.h"
 #include "AppController.h"
 #include "app/audio/AudioService.h"
 #include "gemini_live/VoiceAgent.h"
@@ -104,6 +105,9 @@ void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_
         }
         response_doc["status"] = "error";
         response_doc["message"] = "Weather lookup unavailable (out of memory)";
+    } else if (skill_call.type == GeminiSkills::SkillType::SWITCH_PROFILE) {
+        const auto* args = skill_call.args.switch_profile;
+        Services::Profiles::switchTool(args ? args->name : "", response_doc);
     } else if (!DeviceCommandHandler::handle(skill_call, response_doc)) {
         // Not a device/local command: try the media commands.
         if (MediaCommandHandler::handle(skill_call, response_doc)) {
