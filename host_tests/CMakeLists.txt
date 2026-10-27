@@ -63,6 +63,8 @@ nanobind_add_module(waveshare_host
     ../main/app/audio/recording/RecordingProbe.cpp
     bindings/bind_weather.cpp
     ../main/services/weather/WeatherText.cpp
+    bindings/bind_profiles.cpp
+    ../main/services/profiles/ProfileMatch.cpp
     bindings/bind_mcp.cpp
     ../main/services/mcp/McpUtil.cpp
     bindings/bind_framing.cpp

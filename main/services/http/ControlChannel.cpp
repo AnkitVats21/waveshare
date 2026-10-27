@@ -403,6 +403,7 @@ void ControlChannel::buildState(std::string& out) {
     JsonObject assistant = doc["assistant"].to<JsonObject>();
     assistant["state"] = assistantStateToString(snap.assistant.session_state);
     assistant["connection"] = wsStateToString(snap.assistant.ws_state);
+    assistant["profile"] = snap.assistant.profile;
 
     JsonObject alarm = doc["alarm"].to<JsonObject>();
     alarm["ringing"] = snap.alarm.playing;

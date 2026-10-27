@@ -18,6 +18,7 @@
 #include "nexus_db/StressTest.h"
 #include "services/storage/RecordingsDatabase.h"
 #include "services/storage/SystemDatabase.h"
+#include "services/profiles/Profiles.h"
 #include "services/alarm/AlarmService.h"
 #include "services/time/TimeSyncHelper.h"
 #include "services/storage/SysDbSyncReactor.h"
@@ -87,6 +88,7 @@ extern "C" void app_main(void) {
             // and before system.ndb imports (and deletes) gemini_config.json.
             credentials::importFromSdCard();
             if (Services::openSystemDb()) Services::SysDbSyncReactor::getInstance().loadPersistentState();
+            Services::Profiles::begin();
         }
 #endif
 #if CONFIG_NEXUS_DB_STRESS_TEST
@@ -154,11 +156,17 @@ extern "C" void app_main(void) {
 #endif
         return GeminiProtocol::getInstance();
     }, nullptr);
+    // Voice, instructions and model from the active assistant profile (an
+    // empty model: the global one), the rest from the settings.
     gemini_proto.setSettingsSource([]() {
         ndb::system::Settings s = Services::loadSettings();
-        return GeminiProtocol::SessionSettings{s.gemini_model, s.gemini_voice, s.gemini_system_prompt,
-                                               s.transcripts, s.transcript_log, s.resume_min,
-                                               s.keepalive_s, s.web_search, s.vad_start,
+        ndb::system::ProfileDoc p = Services::Profiles::active();
+        std::string instructions = std::move(p.instructions);
+        std::string line = Services::Profiles::instructionsLine();
+        if (!line.empty()) instructions += (instructions.empty() ? "" : "\n\n") + line;
+        return GeminiProtocol::SessionSettings{p.model.empty() ? s.gemini_model : p.model, p.voice,
+                                               std::move(instructions), s.transcripts, s.transcript_log,
+                                               s.resume_min, s.keepalive_s, s.web_search, s.vad_start,
                                                s.vad_end, s.vad_prefix_ms, s.vad_silence_ms};
     });
     VoiceAgent::setRemoteToolCallHandler([](const char* call_id, const char* name, JsonObjectConst args, void* ctx) -> bool {

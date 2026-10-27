@@ -50,6 +50,7 @@ component Assistant id=3 mask=0x00080000 {
     field connect_requested: bool = false [writable, bit=3:CONNECT_REQ]
     field ws_state: WsState = WsState::DISCONNECTED [readonly, bit=2:WS_STATE]
     field media_pending_idle: bool = false [readonly]
+    field profile: string[33] = "" [readonly, bit=4:PROFILE]   // the active assistant profile's name
 }
 
 component Led id=4 mask=0x00100000 {

@@ -75,6 +75,7 @@ namespace BIT_ASSISTANT {
     static constexpr ComponentMask VISUAL_STATE     = (1u << 1);
     static constexpr ComponentMask CONNECT_REQ      = (1u << 3);
     static constexpr ComponentMask WS_STATE         = (1u << 2);
+    static constexpr ComponentMask PROFILE          = (1u << 4);
 }
 
 namespace BIT_LED {
@@ -141,7 +142,8 @@ namespace BIT_MEDIA {
     X(AssistantVisualState, visual_state, AssistantVisualState::Offline, BIT_ASSISTANT::VISUAL_STATE, FieldAccess::ReadOnly) \
     X(bool, connect_requested, false, BIT_ASSISTANT::CONNECT_REQ, FieldAccess::Writable) \
     X(WsState, ws_state, WsState::DISCONNECTED, BIT_ASSISTANT::WS_STATE, FieldAccess::ReadOnly) \
-    X(bool, media_pending_idle, false, 0, FieldAccess::ReadOnly)
+    X(bool, media_pending_idle, false, 0, FieldAccess::ReadOnly) \
+    X_STR(profile, 33, "", BIT_ASSISTANT::PROFILE, FieldAccess::ReadOnly)
 
 #define LED_FIELDS \
     X(LedMode, mode, LedMode::OFF, BIT_LED::MODE, FieldAccess::Writable) \

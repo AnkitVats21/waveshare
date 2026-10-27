@@ -11,6 +11,7 @@ NB_MODULE(waveshare_host, m) {
     init_alarm(m);
     init_media(m);
     init_weather(m);
+    init_profiles(m);
     init_mcp(m);
     init_framing(m);
     init_session_guard(m);

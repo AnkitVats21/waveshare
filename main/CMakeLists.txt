@@ -67,6 +67,8 @@ set(srcs
             "services/alarm/AudioSniff.cpp"
             "services/weather/Weather.cpp"
             "services/weather/WeatherText.cpp"
+            "services/profiles/Profiles.cpp"
+            "services/profiles/ProfileMatch.cpp"
             "services/alarm/AlarmTools.cpp"
             "services/alarm/ToneDownload.cpp"
             "services/alerts/AlertLibrary.cpp"
