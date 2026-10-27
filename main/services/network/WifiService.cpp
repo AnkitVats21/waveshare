@@ -27,9 +27,11 @@ void applyStaProtocol() {
 }
 }  // namespace
 
+// Default b/g: on the home AP it took internet downloads from 30-42 KB/s to
+// 0.8-1.2 MB/s (known-issues.md); 802.11n only gave the LAN ~25% more.
 bool WifiService::legacyOnly() {
     nvs_handle_t h;
-    uint8_t v = 0;
+    uint8_t v = 1;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
         nvs_get_u8(h, NVS_KEY_LEGACY, &v);
         nvs_close(h);

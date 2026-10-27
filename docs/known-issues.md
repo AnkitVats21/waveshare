@@ -20,7 +20,7 @@ download is slow because of the router issue below ("Internet downloads
 are capped at ~85 KB/s"); a bigger TCP window measured no difference.
 **Options:** fix the link, or start decoding mid-cluster.
 
-### Internet downloads are capped at ~85 KB/s on the home router
+### Internet downloads were capped at ~85 KB/s on the home router (fixed)
 On the home router (an ISP-provided Nokia gateway, 2.4 GHz) most internet downloads reach the
 board at 60-85 KB/s, against 0.4-1.4 MB/s for the same data from the LAN or
 through another access point. Gemini's replies need ~64 KB/s, so they have
@@ -40,6 +40,12 @@ Wi-Fi clears the stuck state. Reported to Espressif: esp-idf issue #19168.
 Voice through a hub on the LAN (`voice_backend` hub or auto,
 `docs/plans/hub-relay-design.md`) avoids it for Gemini: no underruns in the
 first sessions measured.
+**Fix (2026-10-27):** the station connects as 802.11b/g by default
+(`/api/system/wifi-mode`, `"bgn"` brings 802.11n back). Without HT there
+is no Block Ack for the router to set up, and it uses its normal rates.
+Measured on the board, same router, after a reboot each: internet plain
+HTTP 30-42 → 808-1212 KB/s, HTTPS 24-58 → 292-299 KB/s (TLS CPU-bound),
+longest receive pause 0.5-2.4 s → under 0.3 s; LAN 1.2-1.4 → 0.9-1.0 MB/s.
 
 ### The hub link dropped on a mic write
 The board's link to the hub dropped twice in the hub voice tests: a mic
