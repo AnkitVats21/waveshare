@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0x56D7CB89u;
+constexpr uint32_t SCHEMA_HASH = 0x5DDAABD0u;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -75,7 +75,8 @@ struct Settings {
         F_UPLINK_CODEC = 1ull << 24,
         F_UPLINK_OPUS_KBPS = 1ull << 25,
         F_UPLINK_OPUS_COMPLEXITY = 1ull << 26,
-        F_ALL = 0x7FFFFFFull,
+        F_ACTIVE_PROFILE = 1ull << 27,
+        F_ALL = 0xFFFFFFFull,
     };
 
     std::string timezone = "UTC";
@@ -105,6 +106,28 @@ struct Settings {
     uint8_t uplink_codec = 0;
     uint8_t uplink_opus_kbps = 24;
     uint8_t uplink_opus_complexity = 3;
+    uint16_t active_profile = 0;
+
+    void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
+    // Fields missing from `value` keep their current values.
+    void decode(std::string_view value);
+};
+
+// Collection 'profiles' (id 6, key: string, cached).
+struct ProfileDoc {
+    static constexpr uint8_t COLLECTION = 6;
+    enum : uint64_t {
+        F_NAME = 1ull << 0,
+        F_VOICE = 1ull << 1,
+        F_INSTRUCTIONS = 1ull << 2,
+        F_MODEL = 1ull << 3,
+        F_ALL = 0xFull,
+    };
+
+    std::string name{};
+    std::string voice{};
+    std::string instructions{};
+    std::string model{};
 
     void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
     // Fields missing from `value` keep their current values.
@@ -222,6 +245,7 @@ public:
 
     nexus_db::Collection<SavedState> state() { return nexus_db::Collection<SavedState>(m_db); }
     nexus_db::Collection<Settings> settings() { return nexus_db::Collection<Settings>(m_db); }
+    nexus_db::Collection<ProfileDoc> profiles() { return nexus_db::Collection<ProfileDoc>(m_db); }
     nexus_db::Collection<AlertConfig> alerts() { return nexus_db::Collection<AlertConfig>(m_db); }
     nexus_db::Collection<AlarmDoc> alarms() { return nexus_db::Collection<AlarmDoc>(m_db); }
     nexus_db::Collection<ReminderDoc> reminders() { return nexus_db::Collection<ReminderDoc>(m_db); }

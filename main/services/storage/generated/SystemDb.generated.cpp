@@ -78,6 +78,7 @@ void Settings::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_UPLINK_CODEC) w.u8(25, uplink_codec);
     if (fields & F_UPLINK_OPUS_KBPS) w.u8(26, uplink_opus_kbps);
     if (fields & F_UPLINK_OPUS_COMPLEXITY) w.u8(27, uplink_opus_complexity);
+    if (fields & F_ACTIVE_PROFILE) w.u16(28, active_profile);
 }
 
 void Settings::decode(std::string_view value) {
@@ -113,6 +114,29 @@ void Settings::decode(std::string_view value) {
             case 25: nexus_db::FieldReader::read(v, len, uplink_codec); break;
             case 26: nexus_db::FieldReader::read(v, len, uplink_opus_kbps); break;
             case 27: nexus_db::FieldReader::read(v, len, uplink_opus_complexity); break;
+            case 28: nexus_db::FieldReader::read(v, len, active_profile); break;
+            default: break;  // unknown tag: a newer or retired field
+        }
+    }
+}
+
+void ProfileDoc::encode(nexus_db::Writer& w, uint64_t fields) const {
+    if (fields & F_NAME) w.str(1, name);
+    if (fields & F_VOICE) w.str(2, voice);
+    if (fields & F_INSTRUCTIONS) w.str(3, instructions);
+    if (fields & F_MODEL) w.str(4, model);
+}
+
+void ProfileDoc::decode(std::string_view value) {
+    nexus_db::FieldReader r(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+    uint16_t tag, len;
+    const uint8_t* v;
+    while (r.next(tag, v, len)) {
+        switch (tag) {
+            case 1: nexus_db::FieldReader::read(v, len, name); break;
+            case 2: nexus_db::FieldReader::read(v, len, voice); break;
+            case 3: nexus_db::FieldReader::read(v, len, instructions); break;
+            case 4: nexus_db::FieldReader::read(v, len, model); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }
@@ -219,6 +243,7 @@ void ReminderDoc::decode(std::string_view value) {
 static const nexus_db::CollectionDef COLLECTIONS[] = {
     {1, "state", true},
     {2, "settings", true},
+    {6, "profiles", true},
     {3, "alerts", true},
     {4, "alarms", true},
     {5, "reminders", true},

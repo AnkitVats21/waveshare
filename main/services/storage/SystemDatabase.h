@@ -41,4 +41,13 @@ bool mergeReminder(int id, const ndb::system::ReminderDoc& doc, uint64_t fields)
 bool removeReminder(int id);
 int nextReminderId();
 
+// Assistant profiles. Id 1 is the default profile (made at the first boot
+// with profiles, from the old voice and system prompt); it can't be deleted.
+constexpr int DEFAULT_PROFILE_ID = 1;
+std::vector<std::pair<int, ndb::system::ProfileDoc>> listProfiles();
+bool loadProfile(int id, ndb::system::ProfileDoc& doc);
+bool saveProfile(int id, const ndb::system::ProfileDoc& doc);
+bool removeProfile(int id);
+int nextProfileId();
+
 } // namespace Services

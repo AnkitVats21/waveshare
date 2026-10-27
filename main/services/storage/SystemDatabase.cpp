@@ -121,14 +121,42 @@ void migrateGeminiFile(ndb::system::SystemDb& db) {
     ESP_LOGI(TAG, "Imported and deleted %s", OLD_GEMINI_FILE);
 }
 
+std::string idKey(int id) { return std::to_string(id); }
+
+// The first boot with profiles: the voice and system prompt so far become
+// the default profile, made active. The old fields stay (and from now on
+// mirror the active profile), so older firmware keeps the persona. An
+// active id without its profile falls back to the default.
+void migrateProfiles(ndb::system::SystemDb& db) {
+    ndb::system::Settings s;
+    db.settings().get(SETTINGS_KEY, s);
+    if (db.profiles().contains("1")) {
+        if (s.active_profile == 0 || !db.profiles().contains(idKey(s.active_profile))) {
+            s.active_profile = DEFAULT_PROFILE_ID;
+            db.settings().merge(SETTINGS_KEY, s, ndb::system::Settings::F_ACTIVE_PROFILE);
+            ESP_LOGW(TAG, "Active profile missing; using the default");
+        }
+        return;
+    }
+    ndb::system::ProfileDoc p;
+    p.name = "Default";
+    p.voice = s.gemini_voice;
+    p.instructions = s.gemini_system_prompt;
+    s.active_profile = DEFAULT_PROFILE_ID;
+    if (!db.profiles().put("1", p) || !db.settings().merge(SETTINGS_KEY, s, ndb::system::Settings::F_ACTIVE_PROFILE)) {
+        ESP_LOGE(TAG, "Could not create the default profile");
+        return;
+    }
+    ESP_LOGI(TAG, "Created the default profile (voice '%s', instructions %u bytes)", p.voice.c_str(),
+             (unsigned)p.instructions.size());
+}
+
 // Written by an agent rule, read by nothing.
 void deleteUnusedFiles() {
     for (const char* path : {"/sdcard/playback.txt", "/sdcard/playback_history.txt"}) {
         if (sd_storage::Fs::isFile(path) && sd_storage::Fs::remove(path)) ESP_LOGI(TAG, "Deleted unused %s", path);
     }
 }
-
-std::string idKey(int id) { return std::to_string(id); }
 
 // Keys that are not a positive decimal id are skipped.
 int parseId(std::string_view key) {
@@ -185,6 +213,7 @@ bool openSystemDb() {
             migrateState(db);
             migrateSettingsFile(db);
             migrateGeminiFile(db);
+            migrateProfiles(db);
             deleteUnusedFiles();
         } else {
             ESP_LOGE(TAG, "Could not open system.ndb; settings will not be saved");
@@ -284,6 +313,32 @@ bool removeReminder(int id) {
 int nextReminderId() {
     auto& db = systemDb();
     return db.db().isOpen() ? nextId(db.reminders()) : 1;
+}
+
+std::vector<std::pair<int, ndb::system::ProfileDoc>> listProfiles() {
+    auto& db = systemDb();
+    if (!db.db().isOpen()) return {};
+    return listById(db.profiles());
+}
+
+bool loadProfile(int id, ndb::system::ProfileDoc& doc) {
+    auto& db = systemDb();
+    return db.db().isOpen() && db.profiles().get(idKey(id), doc);
+}
+
+bool saveProfile(int id, const ndb::system::ProfileDoc& doc) {
+    auto& db = systemDb();
+    return id > 0 && db.db().isOpen() && db.profiles().put(idKey(id), doc);
+}
+
+bool removeProfile(int id) {
+    auto& db = systemDb();
+    return id != DEFAULT_PROFILE_ID && db.db().isOpen() && db.profiles().remove(idKey(id));
+}
+
+int nextProfileId() {
+    auto& db = systemDb();
+    return db.db().isOpen() ? nextId(db.profiles()) : 1;
 }
 
 }  // namespace Services

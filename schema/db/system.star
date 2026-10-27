@@ -48,6 +48,20 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field uplink_codec:         u8             tag=25  // 0 auto (Opus if hub allows, else PCM), 1 pcm, 2 opus
         field uplink_opus_kbps:     u8 = 24        tag=26  // 12-64 kbps (default 24)
         field uplink_opus_complexity: u8 = 3       tag=27  // 0-10 (default 3)
+        // The assistant profile in use (a profiles id); 0 = none yet (made at
+        // boot from gemini_voice and gemini_system_prompt, which then mirror
+        // the active profile so older firmware keeps the persona).
+        field active_profile:       u16            tag=28
+    }
+
+    // One document per assistant profile (persona), keyed by its id as a
+    // decimal string. Empty voice and model mean the global ones. Memory,
+    // skills and the other settings are shared by every profile.
+    collection profiles id=6 key=string cache doc=ProfileDoc {
+        field name:         string      tag=1    // unique, case-insensitively; spoken in voice switching
+        field voice:        string      tag=2    // a prebuilt voice name; "" = the firmware default
+        field instructions: string      tag=3    // the system prompt
+        field model:        string      tag=4    // "" = settings.gemini_model
     }
 
     // One document per alert chime, keyed by its name ("wake_confirm",
