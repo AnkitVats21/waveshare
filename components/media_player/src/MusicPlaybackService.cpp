@@ -1103,6 +1103,16 @@ bool MusicPlaybackService::play(const char* query) {
 bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* streamUrl) {
     if (!streamUrl || streamUrl[0] == '\0') return false;
     NexusPlayer::getInstance().yieldAlarm();
+    if (hubActive() && track.videoId.size() == 11 && track.videoId.find('/') == std::string::npos) {
+        // The hub runs the music: it plays the song on the chosen speaker and
+        // looks the stream up itself (the URL given is bound to who resolved
+        // it). Played here behind the hub's back, a transfer can't move it.
+        MusicHub::Action a{"play"};
+        a.id = track.videoId.c_str();
+        ndb::music::TrackDoc rec;
+        a.cached = CatalogDB::getInstance().get(track.videoId.c_str(), rec) && rec.file_size > 0;
+        if (_hub->sendAction(a)) return true;
+    }
 
     {
         std::lock_guard<std::recursive_mutex> lock(_serviceMutex);
