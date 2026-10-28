@@ -15,5 +15,5 @@ NB_MODULE(waveshare_host, m) {
     init_mcp(m);
     init_framing(m);
     init_session_guard(m);
-    init_treble(m);
+    init_tone(m);
 }

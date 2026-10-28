@@ -89,9 +89,12 @@ public:
   // meanwhile), so music ducked at the same moment is down first.
   void holdVoice(uint32_t ms) { m_voice_hold_until_us = esp_timer_get_time() + (int64_t)ms * 1000; }
 
-  // Treble cut on the whole mix (TrebleFilter), -12..0 dB; the mixer task
-  // picks it up at its next frame.
-  void setTrebleDb(int db) { m_treble_db = db; }
+  // Bass and treble on the whole mix (ToneControl), -12..+6 dB each; the
+  // mixer task picks them up at its next frame.
+  void setTone(int bass_db, int treble_db) {
+      m_bass_db = bass_db;
+      m_treble_db = treble_db;
+  }
 
 protected:
   /**
@@ -126,6 +129,7 @@ private:
   esp_codec_dev_handle_t    m_device            = nullptr;
   IAudioSink*               m_custom_sink       = nullptr;
   AmpControl                m_amp_control       = nullptr;
+  volatile int              m_bass_db           = 0;
   volatile int              m_treble_db         = 0;
 
   // ── Mixer Gains ───────────────────────────────────────────────────────────

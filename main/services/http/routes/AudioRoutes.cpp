@@ -3,6 +3,7 @@
 #include "common/sysdb/EmbeddedSysDb.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
+#include "audio_core/ToneControl.h"
 
 #include <cstdlib>
 
@@ -35,20 +36,29 @@ esp_err_t volumeHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
-// {"value": dB}, -12..0: cuts the speaker's treble (0 = flat).
-esp_err_t trebleHandler(httpd_req_t* req) {
+// {"bass": dB, "treble": dB}, either or both, -12..+6 (0 = flat): the
+// speaker's tone (ToneControl).
+esp_err_t toneHandler(httpd_req_t* req) {
     JsonDocument body;
-    if (!readJsonBody(req, body) || !body["value"].is<int>()) {
-        return Http::sendError(req, 400, "Expected JSON {\"value\": dB}");
+    if (!readJsonBody(req, body) || (!body["bass"].is<int>() && !body["treble"].is<int>())) {
+        return Http::sendError(req, 400, "Expected JSON {\"bass\": dB, \"treble\": dB}");
     }
-    int db = body["value"].as<int>();
-    if (db < -12 || db > 0) return Http::sendError(req, 400, "Treble must be between -12 and 0 dB");
-
-    EmbeddedSysDb::getInstance().mutate([db](SystemState& s) { s.audio.treble_db = db; });
+    for (const char* key : {"bass", "treble"}) {
+        if (!body[key].isNull() && (!body[key].is<int>() || body[key].as<int>() != ToneControl::clampDb(body[key].as<int>()))) {
+            return Http::sendError(req, 400, "bass and treble must be whole dB from -12 to 6");
+        }
+    }
+    auto& sysdb = EmbeddedSysDb::getInstance();
+    sysdb.mutate([&body](SystemState& s) {
+        if (body["bass"].is<int>()) s.audio.bass_db = body["bass"].as<int>();
+        if (body["treble"].is<int>()) s.audio.treble_db = body["treble"].as<int>();
+    });
+    auto snap = sysdb.snapshot();
 
     JsonDocument doc;
     doc["status"] = "ok";
-    doc["treble_db"] = db;
+    doc["bass_db"] = snap.audio.bass_db;
+    doc["treble_db"] = snap.audio.treble_db;
     return Http::sendJson(req, 200, doc);
 }
 
@@ -129,7 +139,7 @@ esp_err_t recordHandler(httpd_req_t* req) {
 
 void Routes::registerAudio(Http::Server& server) {
     server.on("/api/audio/volume", HTTP_POST, volumeHandler);
-    server.on("/api/audio/treble", HTTP_POST, trebleHandler);
+    server.on("/api/audio/tone", HTTP_POST, toneHandler);
     server.on("/api/audio/mic_gain", HTTP_POST, micGainHandler);
     server.on("/api/audio/mic_mute", HTTP_POST, micMuteHandler);
     server.on("/api/audio/alert", HTTP_POST, alertHandler);

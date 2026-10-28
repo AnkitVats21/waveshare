@@ -69,7 +69,7 @@ nanobind_add_module(waveshare_host
     ../main/services/mcp/McpUtil.cpp
     bindings/bind_framing.cpp
     bindings/bind_session_guard.cpp
-    bindings/bind_treble.cpp
+    bindings/bind_tone.cpp
     ../main/services/hub/UplinkFraming.cpp
 )
 

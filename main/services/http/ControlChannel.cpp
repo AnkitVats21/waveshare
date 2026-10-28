@@ -3,6 +3,7 @@
 #include "services/http/StateNames.h"
 #include "services/http/OrbitChannel.h"
 #include "app/audio/recording/AudioRecorder.h"
+#include "audio_core/ToneControl.h"
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/NexusPlayer.h"
 #include "gemini_live/TranscriptLog.h"
@@ -195,9 +196,10 @@ void ControlChannel::handleCommand(const char* json, size_t len, bool from_relay
         int vol = std::clamp(doc["value"] | 80, 0, 100);
         sysdb.mutate([vol](SystemState& s) { s.audio.speaker_volume = vol; });
 
-    } else if (strcmp(cmd, "treble") == 0) {
-        int db = std::clamp(doc["value"] | 0, -12, 0);
-        sysdb.mutate([db](SystemState& s) { s.audio.treble_db = db; });
+    } else if (strcmp(cmd, "bass") == 0 || strcmp(cmd, "treble") == 0) {
+        int db = ToneControl::clampDb(doc["value"] | 0);
+        bool bass = cmd[0] == 'b';
+        sysdb.mutate([db, bass](SystemState& s) { (bass ? s.audio.bass_db : s.audio.treble_db) = db; });
 
     } else if (strcmp(cmd, "mic_gain") == 0) {
         float gain = std::clamp(doc["value"] | 60.0f, 0.0f, 60.0f);
@@ -349,6 +351,7 @@ void ControlChannel::buildState(std::string& out) {
 
     JsonObject st = doc["state"].to<JsonObject>();
     st["speaker_volume"] = snap.audio.speaker_volume;
+    st["bass_db"] = snap.audio.bass_db;
     st["treble_db"] = snap.audio.treble_db;
     st["mic_gain_db"] = snap.audio.mic_gain_db;
     st["mic_enabled"] = snap.audio.mic_enabled;
