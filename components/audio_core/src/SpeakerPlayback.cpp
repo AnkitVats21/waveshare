@@ -3,6 +3,7 @@
 #include "audio_core/AlertPlayer.h"
 #include "core_sysdb/AppLogger.h"
 #include "audio_core/Resampler.h"
+#include "audio_core/TrebleFilter.h"
 #include "esp_timer.h"
 #include <cstring>
 #include <cstdlib>
@@ -145,7 +146,13 @@ void SpeakerPlaybackTask::run() {
   constexpr uint32_t VOICE_SRC_RATE = 24000;
   const size_t target_samples = samplesForDurationMs(NATIVE_RATE, TARGET_FRAME_MS);
 
+  TrebleFilter treble;
+
   while (m_running) {
+    if (treble.db() != m_treble_db) {
+      treble.set(m_treble_db, NATIVE_RATE);
+      LOGI_HAL("Treble: %d dB", treble.db());
+    }
 
     auto& sysdb = EmbeddedSysDb::getInstance();
     const uint32_t audio_flags = sysdb.hotAudioFlags();
@@ -280,6 +287,7 @@ void SpeakerPlaybackTask::run() {
         if (has_media && i < num_media) {
           mix += (int32_t)((float)media_pcm[i] * m_media_gain);
         }
+        if (treble.active()) mix = (int32_t)treble.process((float)mix);
 
         // Saturation clamping to avoid harsh int16 overflow wrap-around
         if (mix > 32767) mix = 32767;
@@ -308,6 +316,7 @@ void SpeakerPlaybackTask::run() {
       if (local_silence_samples > MAX_SILENCE_SAMPLES) local_silence_samples = MAX_SILENCE_SAMPLES;
 
       int ret = writeSilence(local_silence_samples);
+      treble.reset();
       if (ret != ESP_CODEC_DEV_OK) {
         vTaskDelay(pdMS_TO_TICKS(10));
       }

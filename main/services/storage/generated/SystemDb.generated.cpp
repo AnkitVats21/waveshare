@@ -13,6 +13,7 @@ void SavedState::fromSysdb(const ::SystemState& s) {
     nexus_db::assignField(led_mode, s.led.mode);
     nexus_db::assignField(autoplay, s.media.autoplay_enabled);
     nexus_db::assignField(cache_downloads, s.media.cache_downloads);
+    nexus_db::assignField(treble_db, s.audio.treble_db);
 }
 
 void SavedState::toSysdb(::SystemState& s) const {
@@ -22,6 +23,7 @@ void SavedState::toSysdb(::SystemState& s) const {
     nexus_db::assignField(s.led.mode, led_mode);
     nexus_db::assignField(s.media.autoplay_enabled, autoplay);
     nexus_db::assignField(s.media.cache_downloads, cache_downloads);
+    nexus_db::assignField(s.audio.treble_db, treble_db);
 }
 
 void SavedState::encode(nexus_db::Writer& w, uint64_t fields) const {
@@ -31,6 +33,7 @@ void SavedState::encode(nexus_db::Writer& w, uint64_t fields) const {
     if (fields & F_LED_MODE) w.u8(4, led_mode);
     if (fields & F_AUTOPLAY) w.boolean(5, autoplay);
     if (fields & F_CACHE_DOWNLOADS) w.boolean(6, cache_downloads);
+    if (fields & F_TREBLE_DB) w.i32(7, treble_db);
 }
 
 void SavedState::decode(std::string_view value) {
@@ -45,6 +48,7 @@ void SavedState::decode(std::string_view value) {
             case 4: nexus_db::FieldReader::read(v, len, led_mode); break;
             case 5: nexus_db::FieldReader::read(v, len, autoplay); break;
             case 6: nexus_db::FieldReader::read(v, len, cache_downloads); break;
+            case 7: nexus_db::FieldReader::read(v, len, treble_db); break;
             default: break;  // unknown tag: a newer or retired field
         }
     }

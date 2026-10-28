@@ -64,6 +64,7 @@ namespace BIT_AUDIO {
     static constexpr ComponentMask ASST_SPEAKING    = (1u << 4);
     static constexpr ComponentMask SESSION_ACTIVE   = (1u << 5);
     static constexpr ComponentMask TURN_COMPLETE    = (1u << 6);
+    static constexpr ComponentMask TREBLE           = (1u << 7);
 }
 
 namespace BIT_PIPELINE {
@@ -132,7 +133,8 @@ namespace BIT_MEDIA {
     X(bool, mic_enabled, true, BIT_AUDIO::MIC_ENABLED, FieldAccess::Writable) \
     X(bool, assistant_speaking, false, BIT_AUDIO::ASST_SPEAKING, FieldAccess::ReadOnly) \
     X(bool, session_active, false, BIT_AUDIO::SESSION_ACTIVE, FieldAccess::ReadOnly) \
-    X(bool, turn_complete_pending, false, BIT_AUDIO::TURN_COMPLETE, FieldAccess::ReadOnly)
+    X(bool, turn_complete_pending, false, BIT_AUDIO::TURN_COMPLETE, FieldAccess::ReadOnly) \
+    X(int, treble_db, 0, BIT_AUDIO::TREBLE, FieldAccess::Writable)
 
 #define PIPELINE_FIELDS \
     X(PipelineMode, mode, PipelineMode::WAKE_IDLE, BIT_PIPELINE::MODE, FieldAccess::Writable)

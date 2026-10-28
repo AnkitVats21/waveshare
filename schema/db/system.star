@@ -14,6 +14,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field led_mode:        u8          tag=4  sysdb=led.mode       // LedMode
         field autoplay:        bool = true tag=5  sysdb=media.autoplay_enabled
         field cache_downloads: bool        tag=6  sysdb=media.cache_downloads
+        field treble_db:       i32         tag=7  sysdb=audio.treble_db
     }
 
     // One document, key "settings". Empty strings mean "use the default":

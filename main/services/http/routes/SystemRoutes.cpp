@@ -114,6 +114,7 @@ esp_err_t initHandler(httpd_req_t* req) {
     SystemState snap = EmbeddedSysDb::getInstance().snapshot();
     JsonObject state = doc["state"].to<JsonObject>();
     state["speaker_volume"] = snap.audio.speaker_volume;
+    state["treble_db"]      = snap.audio.treble_db;
     state["mic_gain_db"]    = snap.audio.mic_gain_db;
     state["mic_enabled"]    = snap.audio.mic_enabled;
     state["sample_rate"]    = snap.audio.sample_rate;

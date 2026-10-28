@@ -35,6 +35,23 @@ esp_err_t volumeHandler(httpd_req_t* req) {
     return Http::sendJson(req, 200, doc);
 }
 
+// {"value": dB}, -12..0: cuts the speaker's treble (0 = flat).
+esp_err_t trebleHandler(httpd_req_t* req) {
+    JsonDocument body;
+    if (!readJsonBody(req, body) || !body["value"].is<int>()) {
+        return Http::sendError(req, 400, "Expected JSON {\"value\": dB}");
+    }
+    int db = body["value"].as<int>();
+    if (db < -12 || db > 0) return Http::sendError(req, 400, "Treble must be between -12 and 0 dB");
+
+    EmbeddedSysDb::getInstance().mutate([db](SystemState& s) { s.audio.treble_db = db; });
+
+    JsonDocument doc;
+    doc["status"] = "ok";
+    doc["treble_db"] = db;
+    return Http::sendJson(req, 200, doc);
+}
+
 esp_err_t micGainHandler(httpd_req_t* req) {
     std::string val;
     float gain = -1.0f;
@@ -112,6 +129,7 @@ esp_err_t recordHandler(httpd_req_t* req) {
 
 void Routes::registerAudio(Http::Server& server) {
     server.on("/api/audio/volume", HTTP_POST, volumeHandler);
+    server.on("/api/audio/treble", HTTP_POST, trebleHandler);
     server.on("/api/audio/mic_gain", HTTP_POST, micGainHandler);
     server.on("/api/audio/mic_mute", HTTP_POST, micMuteHandler);
     server.on("/api/audio/alert", HTTP_POST, alertHandler);

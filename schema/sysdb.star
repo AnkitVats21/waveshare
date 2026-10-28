@@ -38,6 +38,8 @@ component Audio id=1 mask=0x00020000 {
     field assistant_speaking: bool = false [readonly, bit=4:ASST_SPEAKING]
     field session_active: bool = false [readonly, bit=5:SESSION_ACTIVE]
     field turn_complete_pending: bool = false [readonly, bit=6:TURN_COMPLETE]
+    // Treble cut on the speaker, -12..0 dB (0 = flat); TrebleFilter in the mixer.
+    field treble_db: int = 0 [writable, bit=7:TREBLE]
 }
 
 component Pipeline id=2 mask=0x00040000 {

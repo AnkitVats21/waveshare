@@ -80,6 +80,7 @@ bool AudioService::begin() {
     
     // Sync initial hardware levels to match boot SysDb values
     m_hal.setPlayVolume(snap.audio.speaker_volume);
+    m_speaker_task->setTrebleDb(snap.audio.treble_db);
     m_hal.setRecordGain(snap.audio.mic_gain_db);
     m_last_applied_mic_enabled = snap.audio.mic_enabled;
 
@@ -100,6 +101,10 @@ void AudioService::onStateChanged(ComponentMask changed, const SystemState& snap
             m_hal.setPlayVolume(target_vol);
             LOGI_AUDIO("Volume applied: %d", target_vol);
         }
+    }
+
+    if (((changed & COMP::AUDIO) && (changed & BIT_AUDIO::TREBLE)) || (changed == 0)) {
+        if (m_speaker_task) m_speaker_task->setTrebleDb(snap.audio.treble_db);
     }
 
     // 2. Reconcile Mic Record Gain

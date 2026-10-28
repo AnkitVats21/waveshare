@@ -13,7 +13,7 @@ struct SystemState;
 
 namespace ndb::system {
 
-constexpr uint32_t SCHEMA_HASH = 0x5DDAABD0u;
+constexpr uint32_t SCHEMA_HASH = 0x0926CA52u;
 
 // Collection 'state' (id 1, key: string, cached).
 struct SavedState {
@@ -25,7 +25,8 @@ struct SavedState {
         F_LED_MODE = 1ull << 3,
         F_AUTOPLAY = 1ull << 4,
         F_CACHE_DOWNLOADS = 1ull << 5,
-        F_ALL = 0x3Full,
+        F_TREBLE_DB = 1ull << 6,
+        F_ALL = 0x7Full,
     };
 
     int32_t speaker_volume = 80;
@@ -34,6 +35,7 @@ struct SavedState {
     uint8_t led_mode = 0;
     bool autoplay = true;
     bool cache_downloads = false;
+    int32_t treble_db = 0;
 
     void encode(nexus_db::Writer& w, uint64_t fields = F_ALL) const;
     // Fields missing from `value` keep their current values.

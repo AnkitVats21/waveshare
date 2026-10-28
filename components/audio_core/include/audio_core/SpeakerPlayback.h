@@ -89,6 +89,10 @@ public:
   // meanwhile), so music ducked at the same moment is down first.
   void holdVoice(uint32_t ms) { m_voice_hold_until_us = esp_timer_get_time() + (int64_t)ms * 1000; }
 
+  // Treble cut on the whole mix (TrebleFilter), -12..0 dB; the mixer task
+  // picks it up at its next frame.
+  void setTrebleDb(int db) { m_treble_db = db; }
+
 protected:
   /**
    * @brief Internal worker thread — multi-track audio mixer & drain loop.
@@ -122,6 +126,7 @@ private:
   esp_codec_dev_handle_t    m_device            = nullptr;
   IAudioSink*               m_custom_sink       = nullptr;
   AmpControl                m_amp_control       = nullptr;
+  volatile int              m_treble_db         = 0;
 
   // ── Mixer Gains ───────────────────────────────────────────────────────────
   volatile float            m_media_gain        = 1.0f;
