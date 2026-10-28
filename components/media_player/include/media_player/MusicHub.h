@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <string>
+#include <vector>
 
 // The hub, when it runs the music (hub mode; docs/plans/hub-relay-design.md
 // section 13, nexus-orbit docs/PROTOCOL.md section 5). The board is then a
@@ -34,4 +36,13 @@ public:
     virtual bool sendAction(const Action& action) = 0;
     // The song the hub sent (seq) ended, or failed: the hub picks what's next.
     virtual void playerEvent(uint32_t seq, const char* id, const char* event, const char* reason = nullptr) = 0;
+
+    // The hub's other speakers (its players but this board) and where the
+    // music is, from its last music_state.
+    struct Speakers {
+        std::vector<std::string> names;
+        std::string playing_on;   // a speaker's name; "" with here false: nowhere
+        bool here = false;        // on this board
+    };
+    virtual Speakers speakers() const { return {}; }
 };

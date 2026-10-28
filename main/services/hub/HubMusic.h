@@ -4,6 +4,7 @@
 #include "media_player/MusicHub.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include <mutex>
 #include <string>
 
 namespace Services {
@@ -33,6 +34,7 @@ public:
     bool active() const override;
     bool sendAction(const Action& action) override;
     void playerEvent(uint32_t seq, const char* id, const char* event, const char* reason) override;
+    Speakers speakers() const override;
 
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
@@ -64,6 +66,10 @@ private:
     std::string m_last_state;             // the last report's state and id
     std::string m_last_id;
     int64_t m_last_report_us = 0;
+
+    // From music_state; read by the voice tool handler (another task).
+    mutable std::mutex m_speakers_mu;
+    Speakers m_speakers;
 
     // sysdb notifies with field bits in the low 16 and components above;
     // these are unused component bits.

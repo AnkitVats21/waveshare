@@ -113,6 +113,7 @@ public:
     // sends. The hub* calls below come from the link (must not block).
     void setMusicHub(MusicHub* hub) { _hub = hub; }
     bool hubActive() const { return _hub && _hub->active(); }
+    MusicHub::Speakers hubSpeakers() const { return _hub ? _hub->speakers() : MusicHub::Speakers{}; }
     // Asks the hub to move the music to another speaker (music_output).
     bool hubOutput(const char* target);
     void hubPlay(const InvidiousTrack& track, const std::string& url, uint32_t positionMs, bool paused, uint32_t seq);

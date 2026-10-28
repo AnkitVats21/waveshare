@@ -75,8 +75,13 @@ bool MediaCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_cal
             if (music.hubActive()) {
                 // The hub picks the speaker (a direct session over hub music).
                 if (target.empty()) {
-                    response_doc["status"] = "error";
-                    response_doc["message"] = "name the speaker to move the music to";
+                    // Say what there is, from the hub's last music_state.
+                    const MusicHub::Speakers sp = music.hubSpeakers();
+                    JsonArray names = response_doc["satellites"].to<JsonArray>();
+                    for (const auto& n : sp.names) names.add(n);
+                    response_doc["status"] = "success";
+                    response_doc["now_playing_on"] = sp.here ? std::string("board")
+                                                   : sp.playing_on.empty() ? std::string("nothing") : sp.playing_on;
                     return true;
                 }
                 bool sent = music.hubOutput(target == "board" ? "here" : target.c_str());

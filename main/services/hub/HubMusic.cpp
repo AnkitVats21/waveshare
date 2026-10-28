@@ -313,6 +313,19 @@ void HubMusic::handleMessage(const std::string& text) {
         music.hubQueue(std::move(q), repeat, doc["autoplay"] | true);
     } else if (strcmp(type, "music_state") == 0) {
         const char* output = doc["output"] | "";
+        Speakers sp;
+        sp.here = m_id == output;
+        for (JsonObjectConst p : doc["players"].as<JsonArrayConst>()) {
+            const char* pid = p["id"] | "";
+            const char* name = p["name"] | pid;
+            if (m_id == pid) continue;
+            sp.names.emplace_back(name);
+            if (strcmp(pid, output) == 0) sp.playing_on = name;
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_speakers_mu);
+            m_speakers = std::move(sp);
+        }
         if (output[0] != '\0' && m_id != output) {
             JsonObjectConst t = doc["track"];
             mirror(output, doc["state"] | "idle", t["id"] | "", t["title"] | "", t["artist"] | "",
@@ -321,6 +334,11 @@ void HubMusic::handleMessage(const std::string& text) {
             unmirror();
         }
     }
+}
+
+MusicHub::Speakers HubMusic::speakers() const {
+    std::lock_guard<std::mutex> lock(m_speakers_mu);
+    return m_speakers;
 }
 
 // The music plays on another edge: show it in the board's media state as a
