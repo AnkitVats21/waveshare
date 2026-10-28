@@ -343,6 +343,22 @@ std::vector<RemoteOutput::Satellite> OrbitChannel::satellites() {
 
 bool OrbitChannel::select(const std::string& target, std::string& chosen) {
     auto& music = MusicPlaybackService::getInstance();
+    if (music.hubActive()) {
+        // The hub runs the music: it moves it between its speakers (the
+        // board is "here"), carrying on from where the song is.
+        if (isLocalTarget(target)) {
+            chosen = "local";
+            return music.hubOutput("here");
+        }
+        for (const std::string& name : music.hubSpeakers().names) {
+            if (strcasecmp(name.c_str(), target.c_str()) == 0 ||
+                (!target.empty() && containsNoCase(name, target))) {
+                chosen = name;
+                return music.hubOutput(name.c_str());
+            }
+        }
+        return false;
+    }
     JsonDocument stopDoc;
     stopDoc["cmd"] = "orbit_stop";
 
@@ -395,6 +411,23 @@ bool OrbitChannel::select(const std::string& target, std::string& chosen) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void OrbitChannel::toJson(JsonObject out) {
+    auto& music = MusicPlaybackService::getInstance();
+    if (music.hubActive()) {
+        // The hub's speakers (ids are their names: the hub matches either).
+        MusicHub::Speakers sp = music.hubSpeakers();
+        const bool remote = !sp.here && !sp.playing_on.empty();
+        out["active_target"] = remote ? sp.playing_on : "local";
+        out["source"] = "hub";
+        JsonArray list = out["satellites"].to<JsonArray>();
+        for (const std::string& name : sp.names) {
+            JsonObject o = list.add<JsonObject>();
+            o["id"] = name;
+            o["name"] = name;
+            o["type"] = "hub";
+            o["active"] = remote && name == sp.playing_on;
+        }
+        return;
+    }
     std::lock_guard<std::mutex> lock(m_mutex);
     out["active_target"] = m_active >= 0 ? m_slots[m_active].id : "local";
     JsonArray list = out["satellites"].to<JsonArray>();
