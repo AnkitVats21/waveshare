@@ -24,11 +24,21 @@ LedService::LedService(LedStripManager& leds)
       })
     , m_leds(leds)
 {
+    s_instance = this;
     m_cmd_mutex = xSemaphoreCreateMutex();
     m_current_command.mode         = LedMode::OFF;
     m_current_command.color        = OFF_LED;
     m_current_command.speed_ms     = 0;
     m_current_command.repeat_count = 0;
+}
+
+LedService*      LedService::s_instance = nullptr;
+std::atomic<int> LedService::s_power_hold{-1};
+
+void LedService::setPowerHold(int lit) {
+    if (s_power_hold.exchange(lit) == lit) return;
+    // The loop may be waiting with no timeout (solid or off).
+    if (s_instance && s_instance->getHandle()) xTaskNotify(s_instance->getHandle(), 0, eNoAction);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +121,22 @@ void LedService::run() {
     while (m_running) {
         if (!m_leds.isInitialized()) {
             vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        // KEY_2 power hold: amber LEDs fill up; nothing else is drawn.
+        if (const int lit = s_power_hold.load(); lit >= 0) {
+            for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+                if (i < lit) m_leds.setPixel(i, 60, 25, 0);
+                else m_leds.setPixel(i, 0, 0, 0);
+            }
+            m_leds.refresh();
+            last_mode = LedMode::OFF;   // redraw the normal state afterwards
+            uint32_t bits = 0;
+            if (xTaskNotifyWait(0, 0xFFFFFFFF, &bits, pdMS_TO_TICKS(50)) == pdTRUE && bits) {
+                m_last_changed = bits;
+                onStateChanged(bits, EmbeddedSysDb::getInstance().snapshot());
+            }
             continue;
         }
 

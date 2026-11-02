@@ -5,10 +5,33 @@
 #include "app/media_player/NexusPlayer.h"
 #include "app/media_player/MusicPlaybackService.h"
 #include "app/audio/recording/AudioRecorder.h"
+#include "app/led/LedService.h"
+#include "audio_core/AlertPlayer.h"
+#include "hal/Board_defs.h"
+#include "services/power/DeepSleep.h"
 #include "freertos/idf_additions.h"
 #include <algorithm>
 
 static auto& sysdb = EmbeddedSysDb::getInstance();
+
+static constexpr uint32_t POLL_MS = 20;
+// The LEDs start filling this far into a KEY_2 hold.
+static constexpr uint32_t SLEEP_FILL_FROM_MS = 1000;
+
+void KeyService::key2Hold(uint32_t ticks) {
+    using Services::DeepSleep::SLEEP_HOLD_MS;
+    const uint32_t ms = ticks * POLL_MS;
+    if (m_key2Sleep || ms < SLEEP_FILL_FROM_MS) return;
+    if (ms >= SLEEP_HOLD_MS) {
+        m_key2Sleep = true;
+        LedService::setPowerHold(LED_STRIP_LED_COUNT);
+        AlertPlayer::getInstance().playAlert(ALERT_SESSION_END);
+        ESP_LOGI(TAG, "Key 2 held %u ms: deep sleep on release", (unsigned)SLEEP_HOLD_MS);
+        return;
+    }
+    LedService::setPowerHold(1 + (int)((ms - SLEEP_FILL_FROM_MS) * (LED_STRIP_LED_COUNT - 1) /
+                                       (SLEEP_HOLD_MS - SLEEP_FILL_FROM_MS)));
+}
 
 KeyService::KeyService(ExpanderKeyInput &input)
     : ReactorTask({
@@ -50,6 +73,7 @@ void KeyService::run() {
                     m_longPressedTriggered[i] = false;
                     if (keys[i] == KeyId::KEY_2) {
                         m_key2StopConsumedThisPress = false;
+                        m_key2Sleep = false;
                     }
                     ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
 
@@ -79,6 +103,9 @@ void KeyService::run() {
                     }
                 } else {
                     m_pressCount[i]++;
+                    // Any KEY_2 press, an alarm's or a recording's included,
+                    // can be held on into sleep.
+                    if (keys[i] == KeyId::KEY_2) key2Hold(m_pressCount[i]);
                     // Standard long press threshold (500ms / 25 ticks of 20ms)
                     if (m_pressCount[i] >= 25 && !m_longPressedTriggered[i] && !m_alarmPress[i]) {
                         m_longPressedTriggered[i] = true;
@@ -90,18 +117,24 @@ void KeyService::run() {
                         } else if (keys[i] == KeyId::KEY_5) {
                             ESP_LOGI(TAG, "Key 5 long press: requesting previous track");
                             MusicPlaybackService::getInstance().postCommand(MediaCmdType::PREVIOUS);
-                        } else if (keys[i] == KeyId::KEY_2) {
-                            if (!m_key2StopConsumedThisPress) {
-                                ESP_LOGI(TAG, "Key 2 long press: starting STEREO recording");
-                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::STEREO);
-                            }
                         }
+                        // KEY_2: decided on release (it may become a sleep hold).
                     }
                 }
             } else {
                 if (m_prevState[i]) {
                     m_prevState[i] = false;
                     ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);
+
+                    if (keys[i] == KeyId::KEY_2) {
+                        if (m_key2Sleep) Services::DeepSleep::enter();
+                        LedService::setPowerHold(-1);
+                        // Held past the long press but not into sleep: stereo recording.
+                        if (m_longPressedTriggered[i] && !m_alarmPress[i] && !m_key2StopConsumedThisPress) {
+                            ESP_LOGI(TAG, "Key 2 long press: starting STEREO recording");
+                            AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::STEREO);
+                        }
+                    }
 
                     // Short press logic: volume up/down if long press was NOT triggered
                     if (!m_longPressedTriggered[i] && !m_alarmPress[i]) {
@@ -128,6 +161,6 @@ void KeyService::run() {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(POLL_MS));
     }
 }

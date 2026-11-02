@@ -1058,6 +1058,7 @@ uint32_t AlarmService::checkSchedule() {
             m_warned_unsynced = true;
         }
         m_checked_until = 0;
+        m_next_due = 0;
         return MAX_IDLE_MS;
     }
     struct timeval tv;
@@ -1134,6 +1135,7 @@ uint32_t AlarmService::checkSchedule() {
     }
     const int64_t next_reminder = checkReminders(now);
     if (next_reminder) consider(next_reminder);
+    m_next_due = next;
     m_checked_until = now;
     if (waiting_id != m_waiting_snooze_id || waiting_until != m_waiting_snooze_until) {
         m_waiting_snooze_id = waiting_id;

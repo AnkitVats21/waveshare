@@ -41,13 +41,23 @@ the follow-up window.
 
 | Key | Press | Long press |
 |---|---|---|
-| 2 | start a processed recording, or stop the active one | start a stereo recording |
+| 2 | start a processed recording, or stop the active one | start a stereo recording (on release) |
 | 3 | volume up | next track |
 | 4 | play / pause | |
 | 5 | volume down | previous track |
 
 While an alarm rings or is snoozed, key 2 stops it and the others snooze.
 Key 1 has no action.
+
+**Key 2 is also the power key** (the board's switch can't be relied on):
+held 5 s, the LED ring fills in amber, a chime plays, and on release the
+board goes into deep sleep (`services/power/DeepSleep`): recording and
+music stop, the amplifier, backlight, LEDs and Wi-Fi go off. Key 2 is
+GPIO0, an RTC pin, so pressing it wakes the chip; the board boots on only
+if the key stays down 2 s (the ring fills again), else it sleeps again. A
+timer also wakes it a minute before the next alarm, timer, reminder or
+snooze, which rings as usual; the board then stays on. Holding key 2 that
+long after it stopped an alarm or a recording also ends in sleep.
 
 ## led/
 

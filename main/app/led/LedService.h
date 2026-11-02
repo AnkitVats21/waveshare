@@ -4,6 +4,7 @@
 #include "common/thread_config.h"
 #include "common/led_types.h"
 #include "common/app_types.h"
+#include <atomic>
 
 class LedStripManager;
 
@@ -23,6 +24,10 @@ class LedService : public ReactorTask {
 public:
     explicit LedService(LedStripManager& leds);
 
+    // KEY_2 power hold: lights `lit` of the ring's LEDs (0 = all off) over
+    // whatever the ring shows; -1 gives the ring back. Any task.
+    static void setPowerHold(int lit);
+
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
@@ -36,6 +41,9 @@ private:
     LedEventData      m_current_command{};
 
     void applyVisualState(AssistantVisualState state, const SystemState& snap);
+
+    static LedService*      s_instance;
+    static std::atomic<int> s_power_hold;
 
     static constexpr const char* TAG = "LedSvc";
 };

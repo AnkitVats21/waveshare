@@ -39,6 +39,7 @@
 #include "services/mcp/McpTrackSource.h"
 #include "services/mcp/McpService.h"
 #include "services/BufferManager.h"
+#include "services/power/DeepSleep.h"
 #if CONFIG_DISPLAY_ENABLE
 #include "hal/display/LcdManager.h"
 #endif
@@ -75,10 +76,13 @@ extern "C" void app_main(void) {
     // 3. Initialize Board Hardware
     Board &board = Board::getInstance();
     board.setSampleRate(EmbeddedSysDb::getInstance().snapshot().audio.sample_rate);
+    bool woke_by_key = false;
     if (!board.begin()) {
         LOGE_SYSTEM("Fatal: Failed to initialize board hardware!");
     } else {
         LOGI_SYSTEM("Board hardware and NVS ready.");
+        // From deep sleep: a KEY_2 tap goes back to sleep from here.
+        woke_by_key = Services::DeepSleep::checkWake(board.getLeds());
 #if CONFIG_WAVESHARE_SDCARD_ENABLE
         if (board.initSdCard(CONFIG_WAVESHARE_SDCARD_MOUNT_POINT, 8) != ESP_OK) {
             LOGE_SYSTEM("Failed to mount SD card!");
@@ -250,6 +254,8 @@ extern "C" void app_main(void) {
 
     // 7. Confirm healthy boot for OTA rollback protection
     esp_ota_mark_app_valid_cancel_rollback();
+
+    if (woke_by_key) AlertPlayer::getInstance().playAlert(ALERT_WAKE_CONFIRM);
 
     LOGI_SYSTEM("System initialization complete. Monitoring system events...");
 }

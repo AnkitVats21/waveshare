@@ -60,6 +60,10 @@ public:
     // Next fire of an enabled alarm (epoch s), 0 if none.
     static int64_t nextFireOf(const AlarmDoc& doc, int64_t now);
     static AlarmWhen whenOf(const AlarmDoc& doc);
+    // Epoch s of the next alarm, timer or reminder (a snooze from before a
+    // restart included; the running snooze is in sysdb alarm.snooze_until),
+    // 0 if none or the clock isn't set. Deep sleep wakes for it. Any task.
+    int64_t nextDue() const { return m_next_due.load(); }
 
     // ── Scheduled items (system.ndb "reminders") ─────────────────────────
     // A due reminder chimes and is marked pending until it is spoken or
@@ -240,6 +244,8 @@ private:
     // Alarms due in (m_checked_until, now] fire; 0 until the clock is set.
     int64_t m_checked_until = 0;
     bool m_warned_unsynced = false;
+    // Next alarm, timer or reminder found by checkSchedule() (epoch s, 0 = none).
+    std::atomic<int64_t> m_next_due{0};
     // Snooze written to the alarm's document, so it survives a reboot.
     int m_snooze_saved_id = 0;
     uint32_t m_snooze_saved_until = 0;

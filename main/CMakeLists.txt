@@ -26,6 +26,7 @@ set(srcs
             "app/audio/recording/AudioRecorder.cpp"
             "app/audio/recording/RecordingProbe.cpp"
             "app/input/KeyService.cpp"
+            "services/power/DeepSleep.cpp"
 
             # Event and LED Services
             "app/led/LedService.cpp"
