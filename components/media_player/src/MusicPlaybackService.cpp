@@ -1,4 +1,5 @@
 #include "MusicPlaybackService.h"
+#include "Utf8Copy.h"
 #include "media_player/CatalogDB.h"
 #include "esp_log.h"
 #include "media_player/TlsConfig.h"
@@ -560,10 +561,8 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
             s.media.state = held ? MediaPlaybackState::PAUSED : MediaPlaybackState::BUFFERING;
             strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
             s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-            strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-            s.media.title[sizeof(s.media.title) - 1] = '\0';
-            strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-            s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+            copyUtf8(s.media.title, track.title.c_str());
+            copyUtf8(s.media.artist, track.author.c_str());
             s.media.duration_ms = track.durationSeconds * 1000;
             s.media.position_ms = 0;
             s.media.seekable = true;
@@ -582,10 +581,8 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
             s.media.output_target = MediaOutputTarget::LOCAL;
             strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
             s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-            strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-            s.media.title[sizeof(s.media.title) - 1] = '\0';
-            strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-            s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+            copyUtf8(s.media.title, track.title.c_str());
+            copyUtf8(s.media.artist, track.author.c_str());
             s.media.duration_ms = track.durationSeconds * 1000;
         });
         NexusPlayer::getInstance().play(track.videoId.c_str(), "");
@@ -655,10 +652,8 @@ esp_err_t MusicPlaybackService::playTrackInternal(const InvidiousTrack& track) {
         s.media.output_target = MediaOutputTarget::LOCAL;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-        s.media.title[sizeof(s.media.title) - 1] = '\0';
-        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-        s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        copyUtf8(s.media.title, track.title.c_str());
+        copyUtf8(s.media.artist, track.author.c_str());
         s.media.duration_ms = track.durationSeconds * 1000;
     });
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
@@ -707,10 +702,8 @@ bool MusicPlaybackService::playTrackFallback(const InvidiousTrack& track) {
         s.media.output_target = MediaOutputTarget::LOCAL;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-        s.media.title[sizeof(s.media.title) - 1] = '\0';
-        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-        s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        copyUtf8(s.media.title, track.title.c_str());
+        copyUtf8(s.media.artist, track.author.c_str());
         s.media.duration_ms = track.durationSeconds * 1000;
     });
     NexusPlayer::getInstance().play(track.videoId.c_str(), streamUrl.c_str());
@@ -1148,8 +1141,8 @@ bool MusicPlaybackService::playDirect(const InvidiousTrack& track, const char* s
         s.media.state = MediaPlaybackState::PLAYING;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+        copyUtf8(s.media.title, track.title.c_str());
+        copyUtf8(s.media.artist, track.author.c_str());
         s.media.position_ms = 0;
     });
 
@@ -1207,8 +1200,8 @@ bool MusicPlaybackService::playLocal(const char* songIdOrPath) {
         s.media.state = MediaPlaybackState::PLAYING;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
+        copyUtf8(s.media.title, track.title.c_str());
+        copyUtf8(s.media.artist, track.author.c_str());
         s.media.position_ms = 0;
     });
 
@@ -1241,10 +1234,8 @@ bool MusicPlaybackService::playFile(const InvidiousTrack& track, const char* pat
         s.media.state = MediaPlaybackState::PLAYING;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-        s.media.title[sizeof(s.media.title) - 1] = '\0';
-        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-        s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        copyUtf8(s.media.title, track.title.c_str());
+        copyUtf8(s.media.artist, track.author.c_str());
         s.media.position_ms = 0;
     });
     ESP_LOGI(TAG, "playFile: '%s' (%s)", track.title.c_str(), path);

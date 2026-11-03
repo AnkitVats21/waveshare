@@ -1,6 +1,7 @@
 // MusicPlaybackService in hub mode (MusicHub.h): the person's actions go to
 // the hub; the board plays what the hub sends and keeps a copy of its queue.
 #include "MusicPlaybackService.h"
+#include "Utf8Copy.h"
 #include "media_player/CatalogDB.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "esp_log.h"
@@ -109,10 +110,8 @@ void MusicPlaybackService::playFromHub() {
         s.media.output_target = MediaOutputTarget::LOCAL;
         strncpy(s.media.active_song_id, track.videoId.c_str(), sizeof(s.media.active_song_id) - 1);
         s.media.active_song_id[sizeof(s.media.active_song_id) - 1] = '\0';
-        strncpy(s.media.title, track.title.c_str(), sizeof(s.media.title) - 1);
-        s.media.title[sizeof(s.media.title) - 1] = '\0';
-        strncpy(s.media.artist, track.author.c_str(), sizeof(s.media.artist) - 1);
-        s.media.artist[sizeof(s.media.artist) - 1] = '\0';
+        copyUtf8(s.media.title, track.title.c_str());
+        copyUtf8(s.media.artist, track.author.c_str());
         s.media.duration_ms = track.durationSeconds * 1000;
         s.media.position_ms = posMs;
     });
