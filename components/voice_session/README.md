@@ -31,7 +31,18 @@ While a tool runs for more than 400 ms, `VoiceSession` publishes
 `assistant.tool` / `assistant.tool_kind`: the LED ring spins in the tool's
 colour (search cyan, music purple, Bluetooth blue, other white; not while
 the assistant speaks) and the dashboard can say what is happening. A hub
-tool shows as `tool` / `other` (the hub doesn't say which).
+tool shows with the name and kind the hub sends in `reply_owed` (older
+hubs: `tool` / `other`).
+
+## Errors and the fallback model
+
+A backend reports why a session failed (`VoiceAgent::setErrorSink`: the
+close code and reason, Gemini's own or the hub's `session_error`).
+`voice::classifyError()` sorts it into `quota`, `auth`, `model`, `network`
+or `other`, published as `assistant.error` until the next session starts;
+the LED shows a quota error orange instead of red. After a quota error the
+next sessions use `Rules::fallback_model` (gemini-3.1-flash-live-preview)
+for `fallback_minutes` (60), unless that is the model that failed.
 
 `voice::Rules` holds the tunables (follow-up window, whether a failed music
 command also closes, off by default); defaults are compiled in.

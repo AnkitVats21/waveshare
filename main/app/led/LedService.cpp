@@ -120,8 +120,15 @@ void LedService::applyVisualState(AssistantVisualState state, const SystemState&
                 ESP_LOGI(TAG, "LED State: Rate Limited (Purple Solid)");
                 break;
             case AssistantVisualState::Error:
-                m_current_command = {LedMode::SOLID, RED_LED, 0, 0};
-                ESP_LOGI(TAG, "LED State: Error (Red Solid)");
+                // Out of quota (voice_session's assistant.error): orange, not
+                // the red of a fault; the next session uses the fallback model.
+                if (strcmp(snap.assistant.error, "quota") == 0) {
+                    m_current_command = {LedMode::SOLID, ORANGE_LED, 0, 0};
+                    ESP_LOGI(TAG, "LED State: Error, quota (Orange Solid)");
+                } else {
+                    m_current_command = {LedMode::SOLID, RED_LED, 0, 0};
+                    ESP_LOGI(TAG, "LED State: Error (Red Solid)");
+                }
                 break;
         }
         xSemaphoreGive(m_cmd_mutex);

@@ -16,6 +16,10 @@ class EmbeddedSysDb;
  * AssistantService and AudioService) and decision() for the follow-up
  * window. AssistantService resets it when a session starts or ends.
  *
+ * Errors: a failed session's close code and reason are sorted into a kind
+ * (SessionRules) and published as assistant.error; after a quota error the
+ * next sessions use the fallback model for a while (modelFor()).
+ *
  * Tool progress: while a tool runs for longer than PROGRESS_DELAY_MS it
  * publishes assistant.tool and assistant.tool_kind (the LED spins, the
  * dashboard says "Searching…"); cleared when the tool ends.
@@ -37,10 +41,16 @@ public:
     void onHubMusicDone();
     // A tool runs on the hub (from reply_owed) / its answer is playing or it
     // gave up.
-    void onHubToolStarted();
+    void onHubToolStarted(const char* name, const char* kind);
     void onHubToolEnded();
-    // A session starts, or has ended: forget the facts.
-    void reset();
+    // The session failed (VoiceAgent's error sink): publishes the kind as
+    // assistant.error; a quota error turns the fallback model on.
+    void onSessionError(int code, const char* reason);
+    // The model for the next session (main's settings source).
+    std::string modelFor(const std::string& primary) const;
+    // A session starts (new_session: also clears the last error), or has
+    // ended: forget the facts.
+    void reset(bool new_session);
 
     voice::AfterReply decision() const;
 
@@ -63,4 +73,5 @@ private:
     const char* m_tool_kind = "other";
     bool m_shown = false;             // assistant.tool is set
     esp_timer_handle_t m_timer = nullptr;
+    int64_t m_fallback_until_us = 0;  // the fallback model is on until then
 };

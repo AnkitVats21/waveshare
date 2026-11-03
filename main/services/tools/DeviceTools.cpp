@@ -4,6 +4,13 @@
 #include "sd_storage/Fs.h"
 #include "sd_storage/File.h"
 #include "gemini_live/VoiceAgent.h"
+#include "services/http/SystemInfo.h"
+#include "services/http/routes/MusicStatus.h"
+#include "media_player/MusicPlaybackService.h"
+#include "esp_app_desc.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
 #include <algorithm>
 #include <cstring>
 #include <ctime>
@@ -259,6 +266,35 @@ tools::Answer memoryTool(const tools::Call& call, JsonDocument& reply, void*) {
     return tools::Answer::Now;
 }
 
+// What plays and what is next (the same facts as /api/music/status).
+tools::Answer musicStatusTool(const tools::Call&, JsonDocument& reply, void*) {
+    JsonObject root = reply.to<JsonObject>();
+    MusicStatus::fill(root);
+    root.remove("seekable");
+    root.remove("repeat_mode");
+    const auto queue = MusicPlaybackService::getInstance().getQueue();
+    root["queue_length"] = queue.size();
+    JsonArray next = root["up_next"].to<JsonArray>();
+    for (size_t i = 0; i < queue.size() && i < 5; ++i) {
+        next.add(queue[i].title + " by " + queue[i].author);
+    }
+    root["status"] = "success";
+    return tools::Answer::Now;
+}
+
+tools::Answer deviceInfoTool(const tools::Call&, JsonDocument& reply, void*) {
+    reply["status"] = "success";
+    reply["ip_address"] = SystemInfo::staIp();
+    wifi_ap_record_t ap{};
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) reply["wifi_signal_dbm"] = ap.rssi;
+    reply["uptime_minutes"] = esp_timer_get_time() / 60000000LL;
+    reply["firmware_version"] = esp_app_get_description()->version;
+    reply["free_memory_kb"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024;
+    reply["free_psram_kb"] = heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024;
+    reply["voice"] = strcmp(VoiceAgent::active().name(), "hub") == 0 ? "through the hub" : "directly to Gemini";
+    return tools::Answer::Now;
+}
+
 } // namespace
 
 namespace Services {
@@ -267,6 +303,9 @@ void registerDeviceTools(tools::Registry& registry) {
     registry.add({"notes", tools::Kind::Device, notesTool, nullptr});
     registry.add({"set_led_strip", tools::Kind::Device, ledTool, nullptr});
     registry.add({"save_to_memory", tools::Kind::Device, memoryTool, nullptr});
+    // Questions, not commands: they don't end the session.
+    registry.add({"music_status", tools::Kind::Info, musicStatusTool, nullptr});
+    registry.add({"device_info", tools::Kind::Info, deviceInfoTool, nullptr});
 }
 
 } // namespace Services

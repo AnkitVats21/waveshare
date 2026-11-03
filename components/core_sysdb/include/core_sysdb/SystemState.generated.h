@@ -78,6 +78,7 @@ namespace BIT_ASSISTANT {
     static constexpr ComponentMask WS_STATE         = (1u << 2);
     static constexpr ComponentMask PROFILE          = (1u << 4);
     static constexpr ComponentMask TOOL             = (1u << 5);
+    static constexpr ComponentMask ERROR            = (1u << 6);
 }
 
 namespace BIT_LED {
@@ -149,7 +150,8 @@ namespace BIT_MEDIA {
     X(bool, end_after_reply, false, 0, FieldAccess::ReadOnly) \
     X_STR(profile, 33, "", BIT_ASSISTANT::PROFILE, FieldAccess::ReadOnly) \
     X_STR(tool, 33, "", BIT_ASSISTANT::TOOL, FieldAccess::ReadOnly) \
-    X_STR(tool_kind, 12, "", 0, FieldAccess::ReadOnly)
+    X_STR(tool_kind, 12, "", 0, FieldAccess::ReadOnly) \
+    X_STR(error, 12, "", BIT_ASSISTANT::ERROR, FieldAccess::ReadOnly)
 
 #define LED_FIELDS \
     X(LedMode, mode, LedMode::OFF, BIT_LED::MODE, FieldAccess::Writable) \

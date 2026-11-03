@@ -38,11 +38,12 @@ argument struct and decoder per tool. Edit the schema, not the output.
 |---|---|---|
 | `play`, `playback`, `volume`, `music_settings`, `music_output` | music | `media_player/src/MusicTools.cpp` |
 | `notes`, `save_to_memory`, `set_led_strip` | device | `main/services/tools/DeviceTools.cpp` |
+| `music_status`, `device_info` (questions: they don't end the session) | info | `main/services/tools/DeviceTools.cpp` |
 | `set_alarm`, `set_timer`, `schedule`, `list_schedule`, `cancel_scheduled`, `ringing_alarm`, `acknowledge_reminders` | device | `main/services/alarm/AlarmTools.cpp` |
 | `get_weather` (answers later) | info | `main/services/weather/Weather.cpp` |
 | `switch_profile` | device | `main/services/profiles/Profiles.cpp` |
 | the MCP server's tools (remote) | search for `*search*`/`*news*`, else other | `main/services/mcp/McpService.cpp` |
 
-In hub mode the hub declares its own music and Bluetooth tools under the
-same names and runs them itself; the board's declarations of those are
+In hub mode the hub declares its own music tools (`play`, `playback`,
+`music_output`, `music_status`) and Bluetooth tool under the same names and runs them itself; the board's declarations of those are
 dropped by the hub.

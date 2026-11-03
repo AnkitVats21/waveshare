@@ -64,6 +64,7 @@ void HubAgent::onStateChanged(ComponentMask, const SystemState& snap) {
     if (m_fail_pending) {
         if (state == AssistantState::Connecting) {
             m_fail_pending = false;
+            reportSessionError(-1, "the hub link is down");
             failSession("the hub is not available");
         } else if (state == AssistantState::Idle || state == AssistantState::ErrorCooldown) {
             m_fail_pending = false;
@@ -601,7 +602,7 @@ void HubAgent::handleMessage(const std::string& text) {
             m_hub_tool_us = esp_timer_get_time();
             m_hub_tool_turn_ended = false;
         }
-        if (m_voice_session) m_voice_session->onHubToolStarted();
+        if (m_voice_session) m_voice_session->onHubToolStarted(doc["name"] | "tool", doc["kind"] | "other");
     } else if (strcmp(type, "tool_call") == 0) {
         const char* id = doc["id"] | "";
         const char* tool = doc["name"] | "";
@@ -631,7 +632,10 @@ void HubAgent::handleMessage(const std::string& text) {
             if (s.audio.assistant_speaking) s.audio.turn_complete_pending = true;
         });
     } else if (strcmp(type, "session_error") == 0) {
-        LOGW_NET("Hub session error: %s", doc["reason"] | "?");
+        // Gemini's close code and reason as the hub saw them (older hubs
+        // send the reason only).
+        LOGW_NET("Hub session error: %d %s", doc["code"] | 0, doc["reason"] | "?");
+        reportSessionError(doc["code"] | 0, doc["reason"] | "");
         failSession("the hub ended the session");
     } else {
         LOGD_NET("Ignoring hub message '%s'", type);
@@ -656,6 +660,7 @@ void HubAgent::run() {
             }
         }
         if ((bits & BIT_LINK) && m_session && !HubLink::getInstance().isUp()) {
+            reportSessionError(-1, "the hub link dropped");
             failSession("the hub link dropped");
         }
         uint32_t db_changed = bits & ~(BIT_RX | BIT_REPLY_STARTED | BIT_LINK);

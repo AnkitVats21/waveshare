@@ -706,6 +706,8 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                              reason_len, data->data_ptr + 2);
                     std::string reason(data->data_ptr + 2, reason_len);
                     std::lock_guard<std::mutex> lock(self->m_turn_mutex);
+                    self->m_close_code = (p[0] << 8) | p[1];
+                    self->m_close_reason = reason;
                     if (self->m_search_in_setup && !self->m_setup_complete &&
                         reason.find("quota") != std::string::npos) {
                         self->m_search_quota_closed = true;
@@ -839,6 +841,19 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
                 }
             }
             self->resetTextTurn();
+            {
+                // Gemini closed a live session with a reason (quota, a bad
+                // model, ...): say why. Our own close sends no frame here.
+                int code;
+                std::string reason;
+                {
+                    std::lock_guard<std::mutex> lock(self->m_turn_mutex);
+                    code = self->m_close_code;
+                    reason.swap(self->m_close_reason);
+                    self->m_close_code = 0;
+                }
+                if (code != 0 && code != 1000 && self->m_accept_audio) reportSessionError(code, reason.c_str());
+            }
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::DISCONNECTED;
                 s.audio.assistant_speaking = false;
@@ -848,6 +863,7 @@ void GeminiProtocol::websocketEventHandler(void *handler_args, esp_event_base_t 
         case WEBSOCKET_EVENT_ERROR:
             LOGE_NET("WebSocket socket error.");
             if (!self->isActive()) break;
+            if (self->m_accept_audio) reportSessionError(-1, "connection error");
             // Note: stop() and destroy() must NEVER be called from within the websocket event handler.
             sysdb.mutate([](SystemState& s) {
                 s.assistant.ws_state = WsState::ERROR_STATE;

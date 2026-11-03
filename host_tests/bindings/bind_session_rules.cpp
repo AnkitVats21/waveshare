@@ -27,4 +27,13 @@ void init_session_rules(nb::module_& m) {
           nb::arg("music_ok") = 0, nb::arg("music_failed") = 0, nb::arg("tools_ok") = 0,
           nb::arg("tools_failed") = 0, nb::arg("hub_music_done") = false,
           nb::arg("followup_ms") = 60000, nb::arg("end_after_failed_music") = false);
+
+    m.def("session_classify_error", [](int code, const std::string& reason) {
+        return std::string(voice::errorKindName(voice::classifyError(code, reason.c_str())));
+    });
+    m.def("session_pick_model", [](const std::string& primary, bool fallback_active, const std::string& fallback) {
+        voice::Rules r;
+        r.fallback_model = fallback;
+        return voice::pickModel(primary, fallback_active, r);
+    });
 }

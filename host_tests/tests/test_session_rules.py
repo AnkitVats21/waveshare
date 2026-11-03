@@ -34,3 +34,26 @@ def test_failed_then_successful_music_ends():
 
 def test_follow_up_window_comes_from_the_rules():
     assert session_decide(followup_ms=8000) == (False, 8000, "hold")
+
+
+# ── Errors and the fallback model ──
+from waveshare_host import session_classify_error, session_pick_model
+
+
+def test_error_kinds_from_gemini_close_reasons():
+    assert session_classify_error(1011, "You exceeded your current quota, please check your plan") == "quota"
+    assert session_classify_error(1011, "RESOURCE_EXHAUSTED") == "quota"
+    assert session_classify_error(1008, "Method doesn't allow unregistered callers (callers without established identity). Please use API Key") == "auth"
+    assert session_classify_error(0, "the hub has no Gemini key") == "auth"
+    assert session_classify_error(1008, "models/gemini-x-live is not found for API version v1beta") == "model"
+    assert session_classify_error(-1, "the hub link dropped") == "network"
+    assert session_classify_error(1006, "") == "network"
+    assert session_classify_error(1011, "Internal error encountered.") == "other"
+
+
+def test_model_fallback_only_while_active_and_never_to_itself():
+    fb = "gemini-3.1-flash-live-preview"
+    assert session_pick_model("gemini-3.8-live", False, fb) == "gemini-3.8-live"
+    assert session_pick_model("gemini-3.8-live", True, fb) == fb
+    assert session_pick_model("models/gemini-3.1-flash-live-preview", True, fb) == "models/gemini-3.1-flash-live-preview"
+    assert session_pick_model("gemini-3.8-live", True, "") == "gemini-3.8-live"

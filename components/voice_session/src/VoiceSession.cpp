@@ -54,13 +54,45 @@ void VoiceSession::onToolEvent(const tools::Event& event, void* ctx) {
     self->update();
 }
 
-void VoiceSession::onHubToolStarted() {
+void VoiceSession::onHubToolStarted(const char* name, const char* kind) {
+    // The hub's kind names match tools::kindName(); anything else is "other".
+    static const char* const KINDS[] = {"search", "music", "bluetooth", "info", "device"};
+    const char* k = "other";
+    for (const char* known : KINDS) {
+        if (kind && strcmp(kind, known) == 0) k = known;
+    }
     std::lock_guard<std::mutex> lock(m_mutex);
     m_hub_tool = true;
-    // The hub doesn't say which tool: a generic one.
-    strcpy(m_tool_name, "tool");
-    m_tool_kind = "other";
+    strncpy(m_tool_name, name && name[0] ? name : "tool", sizeof(m_tool_name) - 1);
+    m_tool_name[sizeof(m_tool_name) - 1] = '\0';
+    m_tool_kind = k;
     progressChangedLocked();
+}
+
+void VoiceSession::onSessionError(int code, const char* reason) {
+    const voice::ErrorKind kind = voice::classifyError(code, reason);
+    const char* name = voice::errorKindName(kind);
+    ESP_LOGW(TAG, "Session failed (%s): %d %.120s", name, code, reason ? reason : "");
+    if (kind == voice::ErrorKind::Quota) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_rules.fallback_model.empty()) {
+            m_fallback_until_us = esp_timer_get_time() + int64_t(m_rules.fallback_minutes) * 60 * 1000000;
+            ESP_LOGW(TAG, "Quota used up: the next sessions use %s for %u min", m_rules.fallback_model.c_str(),
+                     (unsigned)m_rules.fallback_minutes);
+        }
+    }
+    m_sysdb.mutate([name](SystemState& s) {
+        strncpy(s.assistant.error, name, sizeof(s.assistant.error) - 1);
+        s.assistant.error[sizeof(s.assistant.error) - 1] = '\0';
+    });
+}
+
+std::string VoiceSession::modelFor(const std::string& primary) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const bool active = m_fallback_until_us != 0 && esp_timer_get_time() < m_fallback_until_us;
+    std::string model = voice::pickModel(primary, active, m_rules);
+    if (model != primary) ESP_LOGI(TAG, "Model %s (fallback after a quota error)", model.c_str());
+    return model;
 }
 
 void VoiceSession::onHubToolEnded() {
@@ -117,7 +149,10 @@ void VoiceSession::onHubMusicDone() {
     update();
 }
 
-void VoiceSession::reset() {
+void VoiceSession::reset(bool new_session) {
+    if (new_session) {
+        m_sysdb.mutate([](SystemState& s) { s.assistant.error[0] = '\0'; });
+    }
     std::lock_guard<std::mutex> lock(m_mutex);
     m_facts = {};
     // Calls still out belong to the session that ended; their answers go

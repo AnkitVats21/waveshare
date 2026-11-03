@@ -4,7 +4,7 @@
 
 namespace Services {
 
-// Registers notes, save_to_memory and set_led_strip.
+// Registers notes, save_to_memory, set_led_strip, music_status and device_info.
 void registerDeviceTools(tools::Registry& registry);
 
 } // namespace Services

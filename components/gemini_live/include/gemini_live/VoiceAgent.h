@@ -98,6 +98,12 @@ public:
     static void setToolRegistry(tools::Registry* registry) { s_tools = registry; }
     static tools::Registry* toolRegistry() { return s_tools; }
 
+    // Why a session failed: the close code (-1: none, the connection
+    // dropped) and reason as the backend saw them. main points it at
+    // VoiceSession, which sorts them into kinds. Any task; keep it quick.
+    typedef void (*ErrorSinkFn)(int code, const char* reason, void* ctx);
+    static void setErrorSink(ErrorSinkFn sink, void* ctx) { s_error_sink = sink; s_error_ctx = ctx; }
+
 protected:
     // A tool the backend's far side runs (the hub's own tools).
     virtual bool remoteToolRunning() { return false; }
@@ -105,8 +111,14 @@ protected:
     // gets an answer. True if a handler took the call (its answer, and then
     // the model's reply, are owed).
     bool dispatchToolCall(const char* call_id, const char* name, JsonObjectConst args);
+    // The session failed (not a recovery the backend handles itself).
+    static void reportSessionError(int code, const char* reason) {
+        if (s_error_sink) s_error_sink(code, reason ? reason : "", s_error_ctx);
+    }
 
 private:
     static inline std::atomic<uint32_t> s_conversation{0};
     static inline tools::Registry* s_tools = nullptr;
+    static inline ErrorSinkFn s_error_sink = nullptr;
+    static inline void* s_error_ctx = nullptr;
 };

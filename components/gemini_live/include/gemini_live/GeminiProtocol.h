@@ -122,6 +122,9 @@ private:
 
     WssClient m_client;
     std::mutex m_client_mutex;
+    // The last close frame from Gemini (m_turn_mutex); 0 = none.
+    int m_close_code = 0;
+    std::string m_close_reason;
     std::mutex m_turn_mutex;
     std::string m_pending_turn;        // waiting for setupComplete
     bool m_setup_complete = false;

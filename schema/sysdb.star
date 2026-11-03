@@ -56,6 +56,7 @@ component Assistant id=3 mask=0x00080000 {
     field profile: string[33] = "" [readonly, bit=4:PROFILE]   // the active assistant profile's name
     field tool: string[33] = "" [readonly, bit=5:TOOL]   // voice_session: a tool running for over 400 ms ("" = none; "tool" for a hub tool)
     field tool_kind: string[12] = "" [readonly]          // its kind: search, music, bluetooth, info, device, other
+    field error: string[12] = "" [readonly, bit=6:ERROR]  // voice_session: why the last session failed (quota, auth, model, network, other); "" once a new one starts
 }
 
 component Led id=4 mask=0x00100000 {

@@ -398,5 +398,21 @@
         "name"
       ]
     }
+  },
+  {
+    "name": "music_status",
+    "description": "Says what music is playing (title, artist, position, state) and what is queued next. Use for 'what song is this', 'what's playing', 'what's next in the queue'.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
+  },
+  {
+    "name": "device_info",
+    "description": "Facts about this device: its IP address, Wi-Fi signal, uptime, firmware version, free memory and how the voice is connected (directly or through a hub). Use for 'what's your IP address', 'how long have you been on'.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {}
+    }
   }
 ]

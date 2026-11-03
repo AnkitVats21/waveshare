@@ -505,7 +505,7 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
     m_current_state = newState;
     // A session starts or is over: the next one starts from no facts.
     if (m_session && (newState == AssistantState::StartingSession || newState == AssistantState::Idle)) {
-        m_session->reset();
+        m_session->reset(newState == AssistantState::StartingSession);
     }
 
     // 4. Play audio alerts asynchronously

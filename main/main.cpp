@@ -154,6 +154,13 @@ extern "C" void app_main(void) {
     static Services::HubMusic&  hub_music = Services::HubMusic::getInstance();
     MusicPlaybackService::getInstance().setMusicHub(&hub_music);
 #endif
+    // What a session does after each reply, its errors and the model's
+    // fallback: one owner, told about tool starts and ends (the registry),
+    // the hub's reports and the backends' errors.
+    static VoiceSession voice_session(EmbeddedSysDb::getInstance());
+    VoiceAgent::setErrorSink([](int code, const char* reason, void* ctx) {
+        static_cast<VoiceSession*>(ctx)->onSessionError(code, reason);
+    }, &voice_session);
     VoiceAgent::setSelector([](void*) -> VoiceAgent& {
 #if CONFIG_WAVESHARE_VOICE_HUB
         // voice_backend: 0 direct, 1 hub, 2 auto (the hub if its link is up
@@ -174,7 +181,10 @@ extern "C" void app_main(void) {
         std::string instructions = std::move(p.instructions);
         std::string line = Services::Profiles::instructionsLine();
         if (!line.empty()) instructions += (instructions.empty() ? "" : "\n\n") + line;
-        return GeminiProtocol::SessionSettings{p.model.empty() ? s.gemini_model : p.model, p.voice,
+        // After a quota error, the fallback model for a while.
+        std::string model = p.model.empty() ? s.gemini_model : p.model;
+        model = voice_session.modelFor(model.empty() ? GeminiProtocol::DEFAULT_MODEL : model);
+        return GeminiProtocol::SessionSettings{model, p.voice,
                                                std::move(instructions), s.transcripts, s.transcript_log,
                                                s.resume_min, s.keepalive_s, s.web_search, s.vad_start,
                                                s.vad_end, s.vad_prefix_ms, s.vad_silence_ms};
@@ -194,9 +204,6 @@ extern "C" void app_main(void) {
     Services::Profiles::registerTool(tool_registry);
     Mcp::McpService::instance().registerWith(tool_registry);
     VoiceAgent::setToolRegistry(&tool_registry);
-    // What a session does after each reply: one owner, told about tool
-    // ends (the registry) and the hub's reports.
-    static VoiceSession voice_session(EmbeddedSysDb::getInstance());
     voice_session.attach(tool_registry);
 #if CONFIG_WAVESHARE_VOICE_HUB
     Services::HubAgent::getInstance().setVoiceSession(&voice_session);

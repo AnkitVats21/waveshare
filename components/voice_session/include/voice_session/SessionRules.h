@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 /**
  * @brief What a voice session does after a reply: the rules, as a pure
@@ -38,8 +39,23 @@ struct Rules {
     // answer ("which one?", "try another song"), as with the hub's music
     // tools, which end the session only on success.
     bool end_after_failed_music = false;
+    // After a quota error the next sessions use this model, for
+    // fallback_minutes (Gemini's quotas are per model). Empty: no fallback.
+    std::string fallback_model = "gemini-3.1-flash-live-preview";
+    uint32_t fallback_minutes = 60;
 };
 
 AfterReply decide(const SessionFacts& facts, const Rules& rules);
+
+// Why a session failed, from the close code and reason the backend saw
+// (Gemini's own, or the hub's report of it).
+enum class ErrorKind : uint8_t { None, Quota, Auth, Model, Network, Other };
+const char* errorKindName(ErrorKind kind);
+// code: the WebSocket close code (-1: none, the connection dropped).
+ErrorKind classifyError(int code, const char* reason);
+
+// The model for the next session: `primary`, or the fallback while one is
+// active. Model names with or without the "models/" prefix.
+std::string pickModel(const std::string& primary, bool fallback_active, const Rules& rules);
 
 } // namespace voice

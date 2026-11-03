@@ -412,6 +412,9 @@ void ControlChannel::buildState(std::string& out) {
     assistant["state"] = assistantStateToString(snap.assistant.session_state);
     assistant["connection"] = wsStateToString(snap.assistant.ws_state);
     assistant["profile"] = snap.assistant.profile;
+    // Why the last session failed (quota, auth, model, network, other), else null.
+    if (snap.assistant.error[0]) assistant["error"] = snap.assistant.error;
+    else assistant["error"] = nullptr;
     // A tool running for over 400 ms (voice_session), else null.
     if (snap.assistant.tool[0]) {
         JsonObject tool = assistant["tool"].to<JsonObject>();
