@@ -117,6 +117,8 @@ restart is saved to `system.ndb` on the card.
 
 - [AGENTS.md](AGENTS.md) — code map, build and test, and the rules that
   aren't visible in the code; start here before changing anything.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the target design and the
+  three rules new code follows.
 - [docs/known-issues.md](docs/known-issues.md) — current bugs and
   limitations.
 - [docs/nexus-db-design.md](docs/nexus-db-design.md) — the database format
