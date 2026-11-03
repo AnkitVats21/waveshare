@@ -82,8 +82,8 @@ recordings/
 playback_audio/
 
 # Generated files
-components/gemini_live/include/gemini_live/gemini_skills_generated.h
-components/gemini_live/src/gemini_skills_generated.cpp
+components/tool_registry/include/tool_registry/skills_generated.h
+components/tool_registry/src/skills_generated.cpp
 
 refactor_phases/
 

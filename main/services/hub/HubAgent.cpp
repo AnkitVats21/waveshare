@@ -179,6 +179,7 @@ void HubAgent::endSession() {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         m_pending_turn.clear();
         m_reply_wait_us = 0;
+        m_hub_tool_us = 0;
     }
     sendJson("{\"type\":\"session_end\"}");
     sysdb.mutate([](SystemState& s) {
@@ -200,6 +201,7 @@ void HubAgent::failSession(const char* why) {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         m_pending_turn.clear();
         m_reply_wait_us = 0;
+        m_hub_tool_us = 0;
     }
     if (was) sendJson("{\"type\":\"session_end\"}");
     sysdb.mutate([](SystemState& s) {
@@ -394,6 +396,7 @@ void HubAgent::sendTextTurn(const std::string& text) {
 
 void HubAgent::sendToolResponse(const char* call_id, const char* json_result) {
     if (!call_id || !m_session) return;
+    expectReply();   // the model speaks about the result next
     // The result is a JSON object; spliced in as it is. (serializeJson
     // replaces a std::string's content, so the id is quoted separately.)
     JsonDocument id;
@@ -405,6 +408,16 @@ void HubAgent::sendToolResponse(const char* call_id, const char* json_result) {
     out += (json_result && !deserializeJson(check, json_result) && check.is<JsonObject>()) ? json_result : "{}";
     out += "}";
     if (!sendJson(out)) LOGE_NET("Tool response %s not sent to the hub", call_id);
+}
+
+bool HubAgent::remoteToolRunning() {
+    std::lock_guard<std::mutex> lock(m_turn_mutex);
+    if (m_hub_tool_us == 0) return false;
+    if (esp_timer_get_time() - m_hub_tool_us >= int64_t(TOOL_WAIT_MS) * 1000) {
+        m_hub_tool_us = 0;   // the answer never came
+        return false;
+    }
+    return true;
 }
 
 bool HubAgent::awaitingReply() {
@@ -489,6 +502,11 @@ void HubAgent::replyStarted() {
     {
         std::lock_guard<std::mutex> lock(m_turn_mutex);
         m_reply_wait_us = 0;
+        if (m_hub_tool_us && m_hub_tool_turn_ended) {
+            // The hub tool's answer is playing.
+            LOGI_NET("Hub tool answered after %lld ms", (esp_timer_get_time() - m_hub_tool_us) / 1000);
+            m_hub_tool_us = 0;
+        }
     }
     if (!m_accept_audio || sysdb.assistantSpeaking()) return;
     sysdb.mutate([](SystemState& s) {
@@ -569,7 +587,21 @@ void HubAgent::handleMessage(const std::string& text) {
             if (s.assistant.session_state != AssistantState::Idle) s.assistant.media_pending_idle = true;
         });
     } else if (strcmp(type, "reply_owed") == 0) {
-        expectReply();   // an MCP tool is running on the hub
+        // A tool runs on the hub (music, Bluetooth, MCP); its answer goes to
+        // Gemini, not here. The turn that called it ends first (Gemini
+        // sends turnComplete right after the call, measured with
+        // gemini-3.8-live: a Bluetooth scan took 10.4 s after it, and the
+        // session had closed on silence 3 s after that turn_complete).
+        // reply_owed also comes ahead of audio the hub still has queued (a
+        // "let me check" said before the call). So the tool counts as
+        // running until reply audio starts after that turn has ended: the
+        // answer.
+        expectReply();
+        {
+            std::lock_guard<std::mutex> lock(m_turn_mutex);
+            m_hub_tool_us = esp_timer_get_time();
+            m_hub_tool_turn_ended = false;
+        }
     } else if (strcmp(type, "tool_call") == 0) {
         const char* id = doc["id"] | "";
         const char* tool = doc["name"] | "";
@@ -584,6 +616,7 @@ void HubAgent::handleMessage(const std::string& text) {
         {
             std::lock_guard<std::mutex> lock(m_turn_mutex);
             m_reply_wait_us = 0;
+            if (m_hub_tool_us) m_hub_tool_turn_ended = true;
         }
         TranscriptLog::instance().closeTurn();
         sysdb.mutate([](SystemState& s) { s.audio.turn_complete_pending = true; });

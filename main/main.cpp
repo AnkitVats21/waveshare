@@ -1,5 +1,10 @@
 #include "audio_core/WakeWordEngine.h"
 #include "app/AppController.h"
+#include "media_player/MusicTools.h"
+#include "services/tools/DeviceTools.h"
+#include "services/alarm/AlarmTools.h"
+#include "services/weather/Weather.h"
+#include "esp_timer.h"
 #include "app/audio/AudioService.h"
 #include "audio_core/AudioOrchestrator.h"
 #include "audio_core/AlertPlayer.h"
@@ -173,21 +178,21 @@ extern "C" void app_main(void) {
                                                s.resume_min, s.keepalive_s, s.web_search, s.vad_start,
                                                s.vad_end, s.vad_prefix_ms, s.vad_silence_ms};
     });
-    VoiceAgent::setRemoteToolCallHandler([](const char* call_id, const char* name, JsonObjectConst args, void* ctx) -> bool {
-        std::string args_json;
-        if (!args.isNull() && args.size() > 0) {
-            serializeJson(args, args_json);
-        } else {
-            args_json = "{}";
-        }
-        return Mcp::McpService::instance().executeToolAsync(call_id, name, args_json);
+    // The tools the voice model can call: each feature registers its own;
+    // names nobody registered go to the MCP server. Answers go to the
+    // active backend.
+    static tools::Registry tool_registry;
+    tool_registry.setClock([]() { return uint32_t(esp_timer_get_time() / 1000); });
+    tool_registry.setResponder([](const char* id, const char* json, void*) {
+        VoiceAgent::active().sendToolResponse(id, json);
     }, nullptr);
-    VoiceAgent::setRemoteToolsDeclarationsSource([](JsonArray& functionDeclarations, bool builtin_search, void* ctx) {
-        // With Google Search in the setup, the MCP search would be a second
-        // tool for the same thing.
-        Mcp::McpService::instance().populateGeminiDeclarations(functionDeclarations,
-                                                              builtin_search ? "web_search" : nullptr);
-    }, nullptr);
+    registerMusicTools(tool_registry);
+    Services::registerDeviceTools(tool_registry);
+    Services::registerAlarmTools(tool_registry);
+    Services::Weather::registerTool(tool_registry);
+    Services::Profiles::registerTool(tool_registry);
+    Mcp::McpService::instance().registerWith(tool_registry);
+    VoiceAgent::setToolRegistry(&tool_registry);
     static VoiceUplinkPump&     uplink_pump = VoiceUplinkPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
@@ -215,7 +220,7 @@ extern "C" void app_main(void) {
     MusicPlaybackService::getInstance().setTrackSource(&track_source);
     MusicPlaybackService::getInstance().begin();
     uplink_pump.start();
-    app_ctrl.begin();
+    app_ctrl.begin(tool_registry);
     Services::TimeSyncHelper::instance().begin();
     Services::openRecordingsDbAsync();  // after the timezone: file times are local
     Services::AlarmService::getInstance().begin();

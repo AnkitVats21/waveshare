@@ -228,4 +228,14 @@ void switchTool(const std::string& name, JsonDocument& response) {
                           "profile's voice.";
 }
 
+void registerTool(tools::Registry& registry) {
+    registry.add({"switch_profile", tools::Kind::Device,
+                  [](const tools::Call& call, JsonDocument& reply, void*) {
+                      const auto* args = call.skill->args.switch_profile;
+                      switchTool(args ? args->name : "", reply);
+                      return tools::Answer::Now;
+                  },
+                  nullptr});
+}
+
 } // namespace Services::Profiles

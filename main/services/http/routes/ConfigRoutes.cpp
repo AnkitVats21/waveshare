@@ -5,7 +5,7 @@
 #include "services/time/TimeSyncHelper.h"
 #include "credentials/Credentials.h"
 #include "app/audio/AudioService.h"
-#include "gemini_live/gemini_skills_generated.h"
+#include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/GeminiProtocol.h"
 #include "media_player/TlsConfig.h"
 
@@ -46,11 +46,9 @@ esp_err_t setSettingsHandler(httpd_req_t* req) {
 
 // Model and voice compiled into the firmware, used when the config sets none.
 void addDefaults(JsonDocument& doc) {
-    JsonDocument setup;
-    if (deserializeJson(setup, GeminiSkills::SETUP_HANDSHAKE_JSON)) return;
     JsonObject defaults = doc["defaults"].to<JsonObject>();
-    defaults["model"] = setup["setup"]["model"];
-    defaults["voice"] = setup["setup"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"];
+    defaults["model"] = std::string("models/") + GeminiProtocol::DEFAULT_MODEL;
+    defaults["voice"] = GeminiProtocol::DEFAULT_VOICE;
 }
 
 // Model, voice, system prompt and the transcript and session options live in

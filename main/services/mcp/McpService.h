@@ -3,6 +3,7 @@
 #include "nexus_db/PsramAllocator.h"
 #include "services/mcp/McpClient.h"
 #include "services/mcp/McpUtil.h"
+#include "tool_registry/ToolRegistry.h"
 
 #include <ArduinoJson.h>
 #include <esp_timer.h>
@@ -36,7 +37,12 @@ public:
     std::vector<ConvertedTool> tools() const;
     bool hasTool(const std::string& name) const;
 
-    bool executeToolAsync(const char* call_id, const std::string& name, const std::string& args_json);
+    bool executeToolAsync(tools::Registry& registry, const char* call_id, const std::string& name,
+                          const std::string& args_json);
+
+    // The server's tools become the registry's remote tools: called for any
+    // name no feature registered, and declared after the board's own.
+    void registerWith(tools::Registry& registry);
 
     // Calls a device-only tool (one the server marks _meta "nexus/device_only")
     // and blocks for its structuredContent. False, with the reason, when MCP

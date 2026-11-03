@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gemini_live/gemini_skills_generated.h"
+#include "tool_registry/ToolRegistry.h"
 #include <ArduinoJson.h>
 #include <atomic>
 #include <cstddef>
@@ -63,6 +63,12 @@ public:
     // speech heard, a tool answered): the silence timeout must not end the
     // session meanwhile.
     virtual bool awaitingReply() = 0;
+    // A tool the model called hasn't answered yet (the board's, MCP, or one
+    // the hub runs), for at most TOOL_WAIT_MS: the session stays open
+    // through it even if the model spoke and ended its turn meanwhile ("let
+    // me check"). Its answer then makes a reply owed.
+    bool toolRunning();
+    static constexpr uint32_t TOOL_WAIT_MS = 60000;
     // The person talked over the reply: stop it now.
     virtual void interruptReply() = 0;
     // Barge-in: mic audio goes up while a reply plays.
@@ -87,48 +93,20 @@ public:
     static void noteInputWords();
     static int64_t lastInputWordsUs();
 
-    // Tools. The board's own skills (gemini_skills_schema.json) go to the
-    // tool handler; any other name to the remote handler (MCP), whose
-    // declarations come from the declarations source. Shared by every
-    // backend.
-    typedef void (*ToolCallHandlerFn)(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx);
-    // True if the call was accepted (it answers through sendToolResponse).
-    typedef bool (*RemoteToolCallHandlerFn)(const char* call_id, const char* name, JsonObjectConst args, void* ctx);
-    // builtin_search: the backend has a search of its own, so a remote search
-    // tool would duplicate it.
-    typedef void (*RemoteToolsDeclarationsFn)(JsonArray& functionDeclarations, bool builtin_search, void* ctx);
-
-    static void setToolCallHandler(ToolCallHandlerFn handler, void* ctx) {
-        s_tool_handler = handler;
-        s_tool_ctx = ctx;
-    }
-    static void setRemoteToolCallHandler(RemoteToolCallHandlerFn handler, void* ctx) {
-        s_remote_tool_handler = handler;
-        s_remote_tool_ctx = ctx;
-    }
-    static void setRemoteToolsDeclarationsSource(RemoteToolsDeclarationsFn source, void* ctx) {
-        s_remote_decls_source = source;
-        s_remote_decls_ctx = ctx;
-    }
+    // Tools: every call goes to the registry (main wires it, before the
+    // first session). Shared by every backend.
+    static void setToolRegistry(tools::Registry* registry) { s_tools = registry; }
+    static tools::Registry* toolRegistry() { return s_tools; }
 
 protected:
-    // One tool call from the model. Every call gets a response, or the model
-    // waits on it: an unknown name or bad arguments is answered with an
-    // error here. True if a handler took the call (its answer, and then the
-    // model's reply, are owed). One task at a time (the backend's parser).
+    // A tool the backend's far side runs (the hub's own tools).
+    virtual bool remoteToolRunning() { return false; }
+    // One tool call from the model (tools::Registry::dispatch): every call
+    // gets an answer. True if a handler took the call (its answer, and then
+    // the model's reply, are owed).
     bool dispatchToolCall(const char* call_id, const char* name, JsonObjectConst args);
-    // The remote (MCP) tools' declarations, for the backend's setup.
-    void addRemoteToolDeclarations(JsonArray& functionDeclarations, bool builtin_search) {
-        if (s_remote_decls_source) s_remote_decls_source(functionDeclarations, builtin_search, s_remote_decls_ctx);
-    }
 
 private:
     static inline std::atomic<uint32_t> s_conversation{0};
-    static inline ToolCallHandlerFn s_tool_handler = nullptr;
-    static inline void* s_tool_ctx = nullptr;
-    static inline RemoteToolCallHandlerFn s_remote_tool_handler = nullptr;
-    static inline void* s_remote_tool_ctx = nullptr;
-    static inline RemoteToolsDeclarationsFn s_remote_decls_source = nullptr;
-    static inline void* s_remote_decls_ctx = nullptr;
-    GeminiSkills::DecodedSkillCall m_skill_slot;   // the call being dispatched
+    static inline tools::Registry* s_tools = nullptr;
 };

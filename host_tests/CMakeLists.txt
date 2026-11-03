@@ -15,11 +15,13 @@ list(APPEND CMAKE_PREFIX_PATH "${nanobind_DIR}")
 find_package(nanobind CONFIG REQUIRED)
 
 include_directories(
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_CURRENT_SOURCE_DIR}/shims
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/core_sysdb/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/audio_core/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/nexus_db/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/media_player/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/tool_registry/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/bblanchon__arduinojson/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -33,6 +35,18 @@ add_custom_command(
     OUTPUT "${NDB_GEN_DIR}/TestdbDb.generated.h" "${NDB_GEN_DIR}/TestdbDb.generated.cpp" "${NDB_GEN_DIR}/ndb_schema.js"
     COMMAND python3 "${NDB_STARC}" db "${NDB_TEST_SCHEMA}" --out-dir "${NDB_GEN_DIR}" --js "${NDB_GEN_DIR}/ndb_schema.js"
     DEPENDS "${NDB_TEST_SCHEMA}" "${NDB_STARC}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/starc/ndb_gen.py"
+    VERBATIM
+)
+
+# The tool schema's declarations and decoders, as the firmware build makes them
+set(SKILLS_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/tool_registry")
+set(SKILLS_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../components/tool_registry/scripts/generate_gemini_skills.py")
+set(SKILLS_SCHEMA "${CMAKE_CURRENT_SOURCE_DIR}/../components/tool_registry/schema/gemini_skills_schema.json")
+add_custom_command(
+    OUTPUT "${SKILLS_GEN_DIR}/skills_generated.h" "${SKILLS_GEN_DIR}/skills_generated.cpp"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${SKILLS_GEN_DIR}"
+    COMMAND python3 "${SKILLS_SCRIPT}" "${SKILLS_SCHEMA}" "${SKILLS_GEN_DIR}/skills_generated.h" "${SKILLS_GEN_DIR}/skills_generated.cpp"
+    DEPENDS "${SKILLS_SCRIPT}" "${SKILLS_SCHEMA}"
     VERBATIM
 )
 
@@ -71,6 +85,9 @@ nanobind_add_module(waveshare_host
     bindings/bind_session_guard.cpp
     bindings/bind_tone.cpp
     ../main/services/hub/UplinkFraming.cpp
+    bindings/bind_tools.cpp
+    ../components/tool_registry/src/ToolRegistry.cpp
+    ${SKILLS_GEN_DIR}/skills_generated.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)

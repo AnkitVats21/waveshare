@@ -1,33 +1,26 @@
 #pragma once
 
 #include "core_sysdb/ReactorTask.h"
-#include "gemini_live/gemini_skills_generated.h"
-#include "gemini_live/IDeviceCommandDelegate.h"
+#include "tool_registry/ToolRegistry.h"
 #include <string>
 
-class AppController : public ReactorTask, public IDeviceCommandDelegate {
+class AppController : public ReactorTask {
 public:
     static AppController& getInstance();
 
-    bool begin();
+    bool begin(tools::Registry& tools);
 
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
-
-    // IDeviceCommandDelegate interface
-    bool handleAlarmTool(const GeminiSkills::DecodedSkillCall& call, JsonDocument& response) override;
-
-protected:
 
 private:
     AppController();
     ~AppController() override = default;
 
-    static void handleGeminiToolCall(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx);
-    void executeToolCall(const GeminiSkills::DecodedSkillCall& skill_call);
+    // A music tool answered: the session ends once the reply is spoken.
+    static void onToolEvent(const tools::Event& event, void* ctx);
 
     bool m_wifi_connected = false;
-
 
     static constexpr const char* TAG = "AppCtrl";
 };

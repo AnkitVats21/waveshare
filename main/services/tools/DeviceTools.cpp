@@ -1,8 +1,6 @@
-#include "gemini_live/DeviceCommandHandler.h"
-#include "gemini_live/gemini_skills_generated.h"
+#include "services/tools/DeviceTools.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "esp_log.h"
-#include "freertos/task.h"
 #include "sd_storage/Fs.h"
 #include "sd_storage/File.h"
 #include "gemini_live/VoiceAgent.h"
@@ -10,7 +8,10 @@
 #include <cstring>
 #include <ctime>
 
-static const char* TAG = "DeviceCmd";
+// Notes, the long-term memory file and the LED colour: the voice model's
+// device tools.
+
+static const char* TAG = "DeviceTools";
 
 namespace {
 
@@ -186,116 +187,86 @@ void deleteNotes(const std::vector<std::string>& names, bool confirmed, JsonDocu
     response_doc["message"] = std::to_string(deleted) + " of " + std::to_string(paths.size()) + " deleted";
 }
 
+
+tools::Answer notesTool(const tools::Call& call, JsonDocument& reply, void*) {
+    auto args = call.skill->args.notes;
+    if (args == nullptr) {
+        reply["status"] = "error";
+        reply["message"] = "Missing arguments";
+        return tools::Answer::Now;
+    }
+    const std::string& action = args->action;
+    if (action == "list") {
+        listNotes(reply);
+    } else if (action == "read") {
+        readNote(args->name, reply);
+    } else if (action == "write") {
+        writeNote(args->name, args->content, reply);
+    } else if (action == "append") {
+        appendNote(args->name, args->content, reply);
+    } else if (action == "delete") {
+        std::vector<std::string> names = args->names;
+        if (names.empty() && !args->name.empty()) names.push_back(args->name);
+        deleteNotes(names, args->confirmed, reply);
+    } else {
+        reply["status"] = "error";
+        reply["message"] = "action must be list, read, write, append or delete";
+    }
+    return tools::Answer::Now;
+}
+
+tools::Answer ledTool(const tools::Call& call, JsonDocument& reply, void*) {
+    auto args = call.skill->args.set_led_strip;
+    if (args == nullptr) {
+        reply["status"] = "error";
+        reply["message"] = "Null LED color arguments";
+        return tools::Answer::Now;
+    }
+    uint8_t r = (uint8_t)args->r;
+    uint8_t g = (uint8_t)args->g;
+    uint8_t b = (uint8_t)args->b;
+    EmbeddedSysDb::getInstance().mutate([r, g, b](SystemState& s) {
+        s.led.mode = LedMode::SOLID;
+        s.led.color = {r, g, b};
+    });
+    reply["status"] = "success";
+    reply["message"] = "RGB LED solid color updated";
+    return tools::Answer::Now;
+}
+
+tools::Answer memoryTool(const tools::Call& call, JsonDocument& reply, void*) {
+    auto args = call.skill->args.save_to_memory;
+    if (args == nullptr) {
+        reply["status"] = "error";
+        reply["message"] = "Null save to memory arguments";
+        return tools::Answer::Now;
+    }
+
+    const char* path = "/sdcard/gemini_memory.txt";
+    sd_storage::PathInfo info;
+    bool too_large = sd_storage::Fs::stat(path, info) && info.size >= 16384;
+
+    if (too_large) {
+        reply["status"] = "error";
+        reply["message"] = "Memory file is full (limit 16 KB). Please request the user to manage or clear memory.";
+        return tools::Answer::Now;
+    }
+
+    std::string line = args->text + "\n";
+    bool ok = sd_storage::Fs::append(path, line.data(), line.size());
+    reply["status"] = ok ? "success" : "error";
+    reply["message"] = ok ? "Information successfully saved to long-term memory." : "Failed to write to memory file.";
+    return tools::Answer::Now;
+}
+
 } // namespace
 
-IDeviceCommandDelegate* DeviceCommandHandler::s_delegate = nullptr;
+namespace Services {
 
-void DeviceCommandHandler::setDelegate(IDeviceCommandDelegate* delegate) {
-    s_delegate = delegate;
+void registerDeviceTools(tools::Registry& registry) {
+    registry.add({"notes", tools::Kind::Device, notesTool, nullptr});
+    registry.add({"set_led_strip", tools::Kind::Device, ledTool, nullptr});
+    registry.add({"save_to_memory", tools::Kind::Device, memoryTool, nullptr});
 }
 
-IDeviceCommandDelegate* DeviceCommandHandler::getDelegate() {
-    return s_delegate;
-}
-
-bool DeviceCommandHandler::handle(const GeminiSkills::DecodedSkillCall& skill_call, JsonDocument& response_doc) {
-    using namespace GeminiSkills;
-
-    switch (skill_call.type) {
-        case SkillType::NOTES: {
-            auto args = skill_call.args.notes;
-            if (args == nullptr) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Missing arguments";
-                return true;
-            }
-            const std::string& action = args->action;
-            if (action == "list") {
-                listNotes(response_doc);
-            } else if (action == "read") {
-                readNote(args->name, response_doc);
-            } else if (action == "write") {
-                writeNote(args->name, args->content, response_doc);
-            } else if (action == "append") {
-                appendNote(args->name, args->content, response_doc);
-            } else if (action == "delete") {
-                std::vector<std::string> names = args->names;
-                if (names.empty() && !args->name.empty()) names.push_back(args->name);
-                deleteNotes(names, args->confirmed, response_doc);
-            } else {
-                response_doc["status"] = "error";
-                response_doc["message"] = "action must be list, read, write, append or delete";
-            }
-            return true;
-        }
-
-        case SkillType::SET_LED_STRIP: {
-            auto args = skill_call.args.set_led_strip;
-            if (args == nullptr) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Null LED color arguments";
-                return true;
-            }
-            uint8_t r = (uint8_t)args->r;
-            uint8_t g = (uint8_t)args->g;
-            uint8_t b = (uint8_t)args->b;
-            EmbeddedSysDb::getInstance().mutate([r, g, b](SystemState& s) {
-                s.led.mode = LedMode::SOLID;
-                s.led.color = {r, g, b};
-            });
-            response_doc["status"] = "success";
-            response_doc["message"] = "RGB LED solid color updated";
-            return true;
-        }
-            
-        case SkillType::SAVE_TO_MEMORY: {
-            auto args = skill_call.args.save_to_memory;
-            if (args == nullptr) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Null save to memory arguments";
-                return true;
-            }
-
-            const char* path = "/sdcard/gemini_memory.txt";
-            sd_storage::PathInfo info;
-            bool too_large = sd_storage::Fs::stat(path, info) && info.size >= 16384;
-
-            if (too_large) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Memory file is full (limit 16 KB). Please request the user to manage or clear memory.";
-                return true;
-            }
-
-            std::string line = args->text + "\n";
-            bool ok = sd_storage::Fs::append(path, line.data(), line.size());
-            response_doc["status"] = ok ? "success" : "error";
-            response_doc["message"] = ok ? "Information successfully saved to long-term memory." : "Failed to write to memory file.";
-            return true;
-        }
-
-        case SkillType::RINGING_ALARM:
-        case SkillType::SET_ALARM:
-        case SkillType::LIST_SCHEDULE:
-        case SkillType::CANCEL_SCHEDULED:
-        case SkillType::SET_TIMER:
-        case SkillType::SCHEDULE:
-        case SkillType::ACKNOWLEDGE_REMINDERS: {
-            if (!s_delegate || !s_delegate->handleAlarmTool(skill_call, response_doc)) {
-                response_doc["status"] = "error";
-                response_doc["message"] = "Alarm service unavailable";
-            }
-            return true;
-        }
-
-        case SkillType::UNKNOWN: {
-            ESP_LOGW(TAG, "Received unrecognized tool call.");
-            response_doc["status"] = "error";
-            response_doc["message"] = "Tool not supported on this firmware version.";
-            return true;
-        }
-
-        default:
-            // Forward to the Media command handler
-            return false;
-    }
-}
+} // namespace Services

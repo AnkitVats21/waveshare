@@ -1,16 +1,9 @@
-#include "services/weather/Weather.h"
-#include "services/profiles/Profiles.h"
 #include "AppController.h"
 #include "app/audio/AudioService.h"
-#include "gemini_live/VoiceAgent.h"
-#include "gemini_live/gemini_skills_generated.h"
 #include "app/led/LedService.h"
 #include "gemini_live/AssistantService.h"
-#include "gemini_live/MediaCommandHandler.h"
-#include "gemini_live/DeviceCommandHandler.h"
 #include "services/time/TimeSyncHelper.h"
 #include "services/alarm/AlarmService.h"
-#include "services/alarm/AlarmTools.h"
 #include "services/mcp/McpService.h"
 
 #include "core_sysdb/AppLogger.h"
@@ -40,12 +33,8 @@ AppController &AppController::getInstance() {
     return instance;
 }
 
-bool AppController::begin() {
-    // Register platform delegate for local device commands
-    DeviceCommandHandler::setDelegate(this);
-
-    // The board's own tools, for every voice backend
-    VoiceAgent::setToolCallHandler(handleGeminiToolCall, this);
+bool AppController::begin(tools::Registry& tools) {
+    tools.addObserver(onToolEvent, this);
 
     m_wifi_connected = EmbeddedSysDb::getInstance().snapshot().system.wifi_connected;
 
@@ -86,59 +75,12 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
     }
 }
 
-void AppController::handleGeminiToolCall(const GeminiSkills::DecodedSkillCall& skill_call, void* ctx) {
-    auto self = static_cast<AppController*>(ctx);
-    if (self) {
-        self->executeToolCall(skill_call);
-    }
+void AppController::onToolEvent(const tools::Event& event, void*) {
+    // A music command on the board: close the session once the reply has
+    // played (the media_pending_idle flag skips the follow-up window).
+    if (event.type != tools::Event::Type::Ended || event.remote || event.kind != tools::Kind::Music) return;
+    LOGI_SYSTEM("Media command handled. Setting pending idle flag to bypass VAD delay after speech confirmation.");
+    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
+        s.assistant.media_pending_idle = true;
+    });
 }
-
-void AppController::executeToolCall(const GeminiSkills::DecodedSkillCall& skill_call) {
-    JsonDocument response_doc;
-    bool is_media_command = false;
-
-    // get_weather answers from a worker task once the lookup is done.
-    if (skill_call.type == GeminiSkills::SkillType::GET_WEATHER) {
-        const auto* args = skill_call.args.get_weather;
-        if (Services::Weather::fetchAsync(skill_call.call_id, args ? args->location : "", args ? args->days : 1)) {
-            return;
-        }
-        response_doc["status"] = "error";
-        response_doc["message"] = "Weather lookup unavailable (out of memory)";
-    } else if (skill_call.type == GeminiSkills::SkillType::SWITCH_PROFILE) {
-        const auto* args = skill_call.args.switch_profile;
-        Services::Profiles::switchTool(args ? args->name : "", response_doc);
-    } else if (!DeviceCommandHandler::handle(skill_call, response_doc)) {
-        // Not a device/local command: try the media commands.
-        if (MediaCommandHandler::handle(skill_call, response_doc)) {
-            is_media_command = true;
-        } else {
-            response_doc["status"] = "error";
-            response_doc["message"] = "Unsupported tool skill";
-        }
-    }
-
-    std::string feedback_string;
-    serializeJson(response_doc, feedback_string);
-
-    LOGI_SYSTEM("Uplinking tool response: %s", feedback_string.c_str());
-    VoiceAgent::active().sendToolResponse(skill_call.call_id, feedback_string.c_str());
-
-    // If it was a media command, set the media_pending_idle flag to trigger immediate session termination once speaking finishes
-    if (is_media_command) {
-        LOGI_SYSTEM("Media command handled. Setting pending idle flag to bypass VAD delay after speech confirmation.");
-        auto& sysdb = EmbeddedSysDb::getInstance();
-        sysdb.mutate([](SystemState& s) {
-            s.assistant.media_pending_idle = true;
-        });
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// IDeviceCommandDelegate Implementation
-// ─────────────────────────────────────────────────────────────────────────────
-
-bool AppController::handleAlarmTool(const GeminiSkills::DecodedSkillCall& call, JsonDocument& response) {
-    return Services::handleAlarmTool(call, response);
-}
-

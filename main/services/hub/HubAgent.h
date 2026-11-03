@@ -64,6 +64,9 @@ private:
     void replyStarted();
     void replyEnded(const char* how);
     void expectReply();
+    // A hub tool runs from reply_owed until reply audio starts after the
+    // turn that called it has ended.
+    bool remoteToolRunning() override;
     bool sendJson(const std::string& text);
     void sendPcmMicChunk(const uint8_t* pcm, size_t len);
     bool sendFrame(const uint8_t* frame, size_t len);
@@ -94,6 +97,8 @@ private:
     std::mutex m_turn_mutex;
     std::string m_pending_turn;           // sent at session_ready
     int64_t m_reply_wait_us = 0;          // when the owed reply was asked for; 0 = none
+    int64_t m_hub_tool_us = 0;            // when a hub tool started (reply_owed); 0 = none
+    bool m_hub_tool_turn_ended = false;   // the turn that called it has ended
 
     // Mic frames: header + one chunk (MIC_TX_BUF items are up to 1024 bytes).
     uint8_t* m_mic_frame = nullptr;

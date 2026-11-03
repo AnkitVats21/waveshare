@@ -1,4 +1,6 @@
 #pragma once
+
+#include "tool_registry/ToolRegistry.h"
 // Assistant profiles: named personas (voice, instructions, optional model)
 // in system.ndb. One is active, and every session is set up from it. Its
 // voice and instructions are mirrored into the old settings fields
@@ -49,5 +51,7 @@ std::string instructionsLine();
 // The switch_profile tool: activates the profile `name` means and, from a
 // live session, restarts the session once the reply is spoken.
 void switchTool(const std::string& name, JsonDocument& response);
+// Registers switch_profile.
+void registerTool(tools::Registry& registry);
 
 } // namespace Services::Profiles

@@ -198,6 +198,14 @@ bool AudioService::mayEndOnSilence() {
         return false;
     }
     const int64_t now_ms = esp_timer_get_time() / 1000;
+    // A running tool (a search, a song lookup, a speaker connecting) holds
+    // the session without the reply-hold limit: its own cap is
+    // VoiceAgent::TOOL_WAIT_MS.
+    if (VoiceAgent::active().toolRunning()) {
+        m_guard.holdExpired(now_ms, false);   // the reply hold starts after it
+        LOGI_AUDIO("VAD timeout held (a tool is running).");
+        return false;
+    }
     const bool holding = snap.assistant.media_pending_idle || VoiceAgent::active().awaitingReply();
     if (m_guard.holdExpired(now_ms, holding)) {
         LOGW_AUDIO("Ending: no reply for %d s (the hold on the silence timeout expired).",
@@ -249,6 +257,10 @@ bool AudioService::mustEndOnSpeech() {
     }
     const int64_t listening_us = AssistantService::listeningSinceUs();
     if (!listening_us) return false;
+    if (VoiceAgent::active().toolRunning()) {
+        m_guard.check(now_ms, now_ms, true, false);   // sound without words while a tool runs is fine
+        return false;
+    }
     const bool holding = snap.assistant.media_pending_idle || VoiceAgent::active().awaitingReply();
     const bool busy = holding || snap.audio.assistant_speaking || snap.audio.turn_complete_pending;
     const int64_t words_us = VoiceAgent::lastInputWordsUs();

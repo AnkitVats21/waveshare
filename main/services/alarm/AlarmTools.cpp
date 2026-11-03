@@ -287,6 +287,8 @@ bool scheduledTurnRefusal(JsonDocument& r) {
 
 } // namespace
 
+namespace {
+
 bool handleAlarmTool(const DecodedSkillCall& call, JsonDocument& r) {
     auto& svc = AlarmService::getInstance();
     switch (call.type) {
@@ -345,6 +347,23 @@ bool handleAlarmTool(const DecodedSkillCall& call, JsonDocument& r) {
     }
     default:
         return false;
+    }
+}
+
+tools::Answer alarmTool(const tools::Call& call, JsonDocument& reply, void*) {
+    if (!handleAlarmTool(*call.skill, reply)) {
+        reply["status"] = "error";
+        reply["message"] = "Not an alarm tool";
+    }
+    return tools::Answer::Now;
+}
+
+} // namespace
+
+void registerAlarmTools(tools::Registry& registry) {
+    for (const char* name : {"ringing_alarm", "set_alarm", "list_schedule", "cancel_scheduled", "set_timer",
+                             "schedule", "acknowledge_reminders"}) {
+        registry.add({name, tools::Kind::Device, alarmTool, nullptr});
     }
 }
 

@@ -32,8 +32,9 @@ def generate_gemini_framework(schema_path, output_h, output_cpp):
 
 namespace GeminiSkills {
 
-// Raw Handshake Setup Payload compiled down to Flash memory
-extern const char* const SETUP_HANDSHAKE_JSON;
+// The function declarations of every tool in the schema (a JSON array).
+// tools::Registry declares the ones that are registered.
+extern const char* const TOOL_DECLARATIONS_JSON;
 
 enum class SkillType {
     UNKNOWN,
@@ -97,36 +98,13 @@ bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, 
 """
 
     # 2. Generate C++ Source Layout
-    setup_native = {
-        "setup": {
-            "model": "models/gemini-3.1-flash-live-preview",
-            "generationConfig": {
-                "responseModalities": ["AUDIO"],
-                "speechConfig": {
-                    "voiceConfig": {
-                        "prebuiltVoiceConfig": {
-                            "voiceName": "Sulafat" 
-                        }
-                    }
-                }
-            },
-            # Text of both sides of the conversation, for logs and /api/assistant/transcript.
-            "inputAudioTranscription": {},
-            "outputAudioTranscription": {},
-            "tools": [
-                { "functionDeclarations": tools,},
-            ]
-        }
-    }
+    raw_json_escaped = json.dumps(tools).replace('\\', '\\\\').replace('"', '\\"')
 
-    raw_json_escaped = json.dumps(setup_native).replace('"', '\\"')
-
-    cpp_content = f"""#include "gemini_live/gemini_skills_generated.h"
-#include "core_sysdb/AppLogger.h"
+    cpp_content = f"""#include "tool_registry/skills_generated.h"
 
 namespace GeminiSkills {{
 
-const char* const SETUP_HANDSHAKE_JSON = "{raw_json_escaped}";
+const char* const TOOL_DECLARATIONS_JSON = "{raw_json_escaped}";
 
 void DecodedSkillCall::reset() {{
     switch(type) {{

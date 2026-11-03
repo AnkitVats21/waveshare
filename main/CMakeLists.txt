@@ -71,6 +71,7 @@ set(srcs
             "services/profiles/Profiles.cpp"
             "services/profiles/ProfileMatch.cpp"
             "services/alarm/AlarmTools.cpp"
+            "services/tools/DeviceTools.cpp"
             "services/alarm/ToneDownload.cpp"
             "services/alerts/AlertLibrary.cpp"
             "services/mcp/McpUtil.cpp"
@@ -124,6 +125,7 @@ idf_component_register(
             "services/network"
             "common"
         REQUIRES
+            tool_registry
             core_sysdb
             audio_core
             media_player

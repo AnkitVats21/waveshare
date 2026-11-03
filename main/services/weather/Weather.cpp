@@ -2,7 +2,6 @@
 #include "services/weather/WeatherText.h"
 #include "services/storage/SystemDatabase.h"
 #include "core_sysdb/thread_config.h"
-#include "gemini_live/VoiceAgent.h"
 #include "media_player/TlsConfig.h"
 
 #include <ArduinoJson.h>
@@ -26,6 +25,7 @@ constexpr size_t MAX_BODY = 32 * 1024;
 constexpr uint32_t WORKER_STACK = 8 * 1024;   // TLS handshake + ArduinoJson; PSRAM
 
 struct Job {
+    tools::Registry* registry;
     char call_id[64];
     std::string location;
     int days;
@@ -178,26 +178,37 @@ void worker(void* arg) {
         serializeJson(out, result);
         ESP_LOGI(TAG, "get_weather in %lld ms (stack left %u B): %.200s", (esp_timer_get_time() - t0) / 1000,
                  (unsigned)uxTaskGetStackHighWaterMark(nullptr), result.c_str());
-        VoiceAgent::active().sendToolResponse(job->call_id, result.c_str());
+        job->registry->answer(job->call_id, result.c_str());
         delete job;
     }
     vTaskDeleteWithCaps(nullptr);
 }
 
-} // namespace
 
-bool fetchAsync(const char* call_id, const std::string& location, int days) {
+// The lookup runs on a worker task, which answers the call.
+tools::Answer weatherTool(const tools::Call& call, JsonDocument& reply, void*) {
+    const auto* args = call.skill->args.get_weather;
     Job* job = new Job{};
-    strncpy(job->call_id, call_id, sizeof(job->call_id) - 1);
-    job->location = location;
+    job->registry = call.registry;
+    strncpy(job->call_id, call.id, sizeof(job->call_id) - 1);
+    job->location = args ? args->location : "";
+    int days = args ? args->days : 1;
     job->days = std::clamp(days <= 0 ? 1 : days, 1, 7);
     if (xTaskCreatePinnedToCoreWithCaps(worker, "weather", WORKER_STACK, job, ThreadConfig::NORMAL, nullptr,
                                         ThreadConfig::CORE_NETWORK, MALLOC_CAP_SPIRAM) != pdPASS) {
         ESP_LOGW(TAG, "Could not start the weather worker");
         delete job;
-        return false;
+        reply["status"] = "error";
+        reply["message"] = "Weather lookup unavailable (out of memory)";
+        return tools::Answer::Now;
     }
-    return true;
+    return tools::Answer::Later;
+}
+
+} // namespace
+
+void registerTool(tools::Registry& registry) {
+    registry.add({"get_weather", tools::Kind::Info, weatherTool, nullptr});
 }
 
 } // namespace Services::Weather

@@ -22,12 +22,13 @@ built into a bundle and uploaded to the device.
 |---|---|
 | `main/main.cpp` | Startup order (below) |
 | `main/app/` | App logic: `AppController` (keys, modes), `audio/` (`AudioService`, recorder), `input/`, `led/` |
-| `main/services/` | `alarm/`, `alerts/` (chimes), `http/` (server, routes, `/api/ws`), `hub/` (`HubLink`, the link to a LAN hub; `CONFIG_WAVESHARE_VOICE_HUB`), `mcp/`, `network/` (Wi-Fi, captive portal), `storage/` (system.ndb, recordings.ndb), `time/` |
+| `main/services/` | `tools/` (device tools), `alarm/`, `alerts/` (chimes), `http/` (server, routes, `/api/ws`), `hub/` (`HubLink`, the link to a LAN hub; `CONFIG_WAVESHARE_VOICE_HUB`), `mcp/`, `network/` (Wi-Fi, captive portal), `storage/` (system.ndb, recordings.ndb), `time/` |
 | `main/hal/` | Board bring-up: codec, I2C, IO expander, keys, LEDs, LCD |
 | `components/audio_core/` | Mic capture, speaker mixer, wake word + AFE, alert mixer, `AudioOrchestrator` (who owns the speaker) |
 | `components/core_sysdb/` | `EmbeddedSysDb`: in-RAM system state with change bits, generated from `schema/sysdb.star`; `BufferManager` ring buffers; task priorities (`thread_config.h`) |
 | `components/media_player/` | `MusicPlaybackService` (queue, commands), `NexusPlayer` (playback), decoders, WebM/Ogg seeking, `TrackSource` (song lookup: over MCP, Invidious client as the optional fallback), `RemoteOutput` (Orbit satellites), `CatalogDB` (library) |
-| `components/gemini_live/` | `AssistantService` (session state machine), `VoiceAgent` (the voice backend: `GeminiProtocol` direct, `HubAgent` through a hub; tool routing), mic uplink pump, tool handlers (generated from `schema/gemini_skills_schema.json`) |
+| `components/gemini_live/` | `AssistantService` (session state machine), `VoiceAgent` (the voice backend: `GeminiProtocol` direct, `HubAgent` through a hub), mic uplink pump |
+| `components/tool_registry/` | The tools the model can call: `tools::Registry` (routing, answers, start/end events), the tool schema; each feature registers its own tools |
 | `components/nexus_db/` | Append-only document database on the SD card |
 | `components/sd_storage/` | SD mount, `File`/`Fs` wrappers, path policy (what the file API may touch) |
 | `components/http_server/` | App-agnostic HTTP server, JSON helpers, web bundle from flash |
@@ -69,8 +70,9 @@ Generated at build time from schemas; edit the schema, not the output:
   (system, recordings) and `components/media_player/generated/` (music)
   (starc; the outputs are committed). The dashboard's `src/lib/ndb_schema.js`
   comes from the same schemas (`npm run ndb` there).
-- `components/gemini_live/schema/gemini_skills_schema.json` →
-  `gemini_skills_generated.{h,cpp}` (the tools Gemini can call).
+- `components/tool_registry/schema/gemini_skills_schema.json` →
+  `tool_registry/skills_generated.{h,cpp}` (declarations and typed
+  arguments of the board's tools).
 
 ## Build, flash, test
 

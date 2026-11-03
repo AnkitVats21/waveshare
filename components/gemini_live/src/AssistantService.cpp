@@ -163,6 +163,13 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
     }
     if (m_idle_timeout_pending) {
         m_idle_timeout_pending = false;
+        if (VoiceAgent::active().toolRunning() && m_idle_timer) {
+            // A slow tool (capped by VoiceAgent::TOOL_WAIT_MS): its answer
+            // is still to be spoken.
+            ESP_LOGI(TAG, "Idle timeout held: a tool is running.");
+            esp_timer_start_once(m_idle_timer, 10LL * 1000 * 1000);
+            return;
+        }
         ESP_LOGW(TAG, "Idle timeout elapsed.");
         transitionTo(AssistantState::Closing, &snap);
         return;

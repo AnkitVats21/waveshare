@@ -2,7 +2,6 @@
 #include "services/storage/SystemDatabase.h"
 #include "credentials/Credentials.h"
 #include "core_sysdb/thread_config.h"
-#include "gemini_live/VoiceAgent.h"
 #include "gemini_live/PsramAllocator.h"
 
 #include <esp_heap_caps.h>
@@ -20,6 +19,7 @@ namespace {
 const char* TAG = "McpService";
 
 struct McpCallJob {
+    tools::Registry* registry;
     char call_id[64];
     std::string name;
     std::string args_json;
@@ -47,7 +47,7 @@ void mcpToolWorker(void* arg) {
                  job->name.c_str(), (esp_timer_get_time() - t0) / 1000,
                  (unsigned)uxTaskGetStackHighWaterMark(nullptr), gemini_formatted.c_str());
 
-        VoiceAgent::active().sendToolResponse(job->call_id, gemini_formatted.c_str());
+        job->registry->answer(job->call_id, gemini_formatted.c_str());
         delete job;
     }
     vTaskDeleteWithCaps(nullptr);
@@ -223,12 +223,14 @@ bool McpService::hasTool(const std::string& name) const {
     return false;
 }
 
-bool McpService::executeToolAsync(const char* call_id, const std::string& name, const std::string& args_json) {
+bool McpService::executeToolAsync(tools::Registry& registry, const char* call_id, const std::string& name,
+                                  const std::string& args_json) {
     if (!hasTool(name)) {
         return false;
     }
 
     auto* job = new McpCallJob{};
+    job->registry = &registry;
     strncpy(job->call_id, call_id, sizeof(job->call_id) - 1);
     job->name = name;
     job->args_json = args_json;
@@ -256,6 +258,28 @@ void McpService::populateGeminiDeclarations(JsonArray& functionDeclarations, con
         // meanwhile can't leave it pointing at freed text.
         functionDeclarations.add(serialized(std::string(t.declaration_json.c_str(), t.declaration_json.size())));
     }
+}
+
+void McpService::registerWith(tools::Registry& registry) {
+    tools::Remote remote;
+    remote.call = [](tools::Registry& reg, const char* id, const char* name, JsonObjectConst args, void* ctx) {
+        std::string args_json = "{}";
+        if (!args.isNull() && args.size() > 0) {
+            args_json.clear();
+            serializeJson(args, args_json);
+        }
+        return static_cast<McpService*>(ctx)->executeToolAsync(reg, id, name, args_json);
+    };
+    remote.declare = [](JsonArray& out, const char* skip, void* ctx) {
+        static_cast<McpService*>(ctx)->populateGeminiDeclarations(out, skip);
+    };
+    remote.kind = [](const char* name, void*) {
+        if (strstr(name, "search") || strstr(name, "news")) return tools::Kind::Search;
+        if (strstr(name, "weather")) return tools::Kind::Info;
+        return tools::Kind::Other;
+    };
+    remote.ctx = this;
+    registry.setRemote(remote);
 }
 
 void McpService::updateConfig(const std::string& url, uint8_t max_tools, const std::string& token) {

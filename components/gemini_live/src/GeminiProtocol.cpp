@@ -1,5 +1,4 @@
 #include "gemini_live/GeminiProtocol.h"
-#include "gemini_live/gemini_skills_generated.h"
 #include "core_sysdb/AppLogger.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/thread_config.h"
@@ -399,20 +398,29 @@ void GeminiProtocol::connect() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool GeminiProtocol::buildSessionSetup(JsonDocument& doc, const SessionSettings& cfg) {
-    // Start from the compiled-in setup (model, voice, tool declarations), then
-    // apply the saved settings and the long-term memory.
-    DeserializationError err = deserializeJson(doc, GeminiSkills::SETUP_HANDSHAKE_JSON);
-    if (err) {
-        LOGE_NET("Failed to parse SETUP_HANDSHAKE_JSON (%s)", err.c_str());
-        return false;
-    }
-    JsonObject setup = doc["setup"];
+    doc.clear();
+    JsonObject setup = doc["setup"].to<JsonObject>();
+    const std::string model = cfg.model.empty() ? DEFAULT_MODEL : cfg.model;
+    setup["model"] = model.rfind("models/", 0) == 0 ? model : "models/" + model;
+    JsonObject generation = setup["generationConfig"].to<JsonObject>();
+    generation["responseModalities"].to<JsonArray>().add("AUDIO");
+    generation["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] =
+        cfg.voice.empty() ? DEFAULT_VOICE : cfg.voice.c_str();
+    // Text of both sides of the conversation, for logs and
+    // /api/assistant/transcript.
+    setup["inputAudioTranscription"].to<JsonObject>();
+    setup["outputAudioTranscription"].to<JsonObject>();
 
-    if (!cfg.model.empty()) {
-        setup["model"] = cfg.model.rfind("models/", 0) == 0 ? cfg.model : "models/" + cfg.model;
+    // The board's own tools, as registered.
+    JsonArray decls = setup["tools"].to<JsonArray>().add<JsonObject>()["functionDeclarations"].to<JsonArray>();
+    if (tools::Registry* registry = toolRegistry()) {
+        PsramAllocator psram;
+        JsonDocument scratch(&psram);
+        if (!registry->declareLocal(decls, scratch)) return false;
     }
-    if (!cfg.voice.empty()) {
-        setup["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] = cfg.voice;
+    if (doc.overflowed()) {
+        LOGE_NET("Session setup: out of memory");
+        return false;
     }
     // Input transcription stays on even with transcripts off: it is how the
     // device knows Gemini heard the person and a reply is owed (the silence
@@ -466,9 +474,12 @@ void GeminiProtocol::transmitSetupHandshake() {
     JsonDocument doc(&psramAlloc);
     SessionSettings cfg = settings();
     if (!buildSessionSetup(doc, cfg)) {
-        LOGE_NET("Sending the compiled-in setup unmodified");
-        m_client.sendLargeText(GeminiSkills::SETUP_HANDSHAKE_JSON, strlen(GeminiSkills::SETUP_HANDSHAKE_JSON),
-                               pdMS_TO_TICKS(2000));
+        // Out of memory: a bare setup (no tools, prompt or settings) still
+        // gives a session.
+        LOGE_NET("Sending a bare setup");
+        std::string bare = std::string("{\"setup\":{\"model\":\"models/") + DEFAULT_MODEL +
+                           "\",\"generationConfig\":{\"responseModalities\":[\"AUDIO\"]}}}";
+        m_client.sendLargeText(bare.c_str(), bare.size(), pdMS_TO_TICKS(2000));
         return;
     }
     JsonObject setup = doc["setup"];
@@ -535,9 +546,11 @@ void GeminiProtocol::transmitSetupHandshake() {
         setup["tools"].add<JsonObject>()["googleSearch"].to<JsonObject>();
     }
 
-    {
+    if (tools::Registry* registry = toolRegistry()) {
+        // With Google Search in the setup, the MCP search would be a second
+        // tool for the same thing.
         JsonArray decls = setup["tools"][0]["functionDeclarations"];
-        addRemoteToolDeclarations(decls, search);
+        registry->declareRemote(decls, search ? "web_search" : nullptr);
     }
 
     std::string payload;
@@ -555,7 +568,8 @@ void GeminiProtocol::transmitSetupHandshake() {
 
 void GeminiProtocol::sendToolResponse(const char* call_id, const char* json_result) {
     if (!m_client.isConnected() || !call_id) return;
-    
+    expectReply();   // the model speaks about the result next
+
     JsonDocument doc;
     JsonObject toolResponse = doc["toolResponse"].to<JsonObject>();
     JsonArray functionResponses = toolResponse["functionResponses"].to<JsonArray>();

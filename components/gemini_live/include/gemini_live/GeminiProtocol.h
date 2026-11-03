@@ -3,7 +3,6 @@
 #include "core_sysdb/ReactorTask.h"
 #include "gemini_live/WssClient.h"
 #include "gemini_live/VoiceAgent.h"
-#include "gemini_live/gemini_skills_generated.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"
@@ -41,11 +40,15 @@ public:
     void setSettingsSource(SettingsSourceFn source) { m_settings_source = source; }
     SessionSettings settings() const { return m_settings_source ? m_settings_source() : SessionSettings{}; }
 
-    // The setup every backend starts from: the compiled-in setup (model,
-    // voice, the board's tool declarations) with the settings, the system
-    // prompt and the long-term memory applied, and context compression. Not
-    // added: Google Search, remote (MCP) tools, the resumption handle. Also
-    // sets TranscriptLog's logging from the settings.
+    // Model and voice when neither the settings nor the profile set one.
+    static constexpr const char* DEFAULT_MODEL = "gemini-3.1-flash-live-preview";
+    static constexpr const char* DEFAULT_VOICE = "Sulafat";
+
+    // The setup every backend starts from: model, voice, transcriptions, the
+    // registered tools' declarations (VoiceAgent::toolRegistry()), the
+    // settings, the system prompt and the long-term memory, and context
+    // compression. Not added: Google Search, remote (MCP) tools, the
+    // resumption handle. Also sets TranscriptLog's logging from the settings.
     static bool buildSessionSetup(JsonDocument& doc, const SessionSettings& cfg);
 
     // VoiceAgent

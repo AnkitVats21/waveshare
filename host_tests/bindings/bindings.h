@@ -16,3 +16,4 @@ void init_mcp(nb::module_& m);
 void init_framing(nb::module_& m);
 void init_session_guard(nb::module_& m);
 void init_tone(nb::module_& m);
+void init_tools(nb::module_& m);

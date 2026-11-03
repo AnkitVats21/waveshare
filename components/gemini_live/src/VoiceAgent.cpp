@@ -51,33 +51,12 @@ void VoiceAgent::selectForSession() {
 }
 
 bool VoiceAgent::dispatchToolCall(const char* call_id, const char* name, JsonObjectConst args) {
-    auto& slot = m_skill_slot;
-    slot.reset();
-    if (!GeminiSkills::decode_incoming_arguments(name, args, slot)) {
-        if (s_remote_tool_handler && s_remote_tool_handler(call_id, name, args, s_remote_tool_ctx)) {
-            LOGI_NET("Remote MCP tool dispatched: %s", name);
-            slot.reset();
-            return true;
-        }
-        LOGW_NET("Rejected tool call '%s': %s", name, slot.error);
-        JsonDocument err;
-        err["status"] = "error";
-        err["message"] = slot.error;
-        std::string out;
-        serializeJson(err, out);
-        sendToolResponse(call_id, out.c_str());
-        slot.reset();
-        return false;
-    }
-    std::strncpy(slot.call_id, call_id, sizeof(slot.call_id) - 1);
+    if (s_tools) return s_tools->dispatch(call_id, name, args);
+    LOGW_NET("Tool call '%s' with no tool registry", name ? name : "?");
+    sendToolResponse(call_id, "{\"status\":\"error\",\"message\":\"No tools\"}");
+    return false;
+}
 
-    LOGI_NET("Tool request: %s", name);
-    bool taken = s_tool_handler != nullptr;
-    if (taken) {
-        s_tool_handler(slot, s_tool_ctx);
-    } else {
-        sendToolResponse(call_id, "{\"status\":\"error\",\"message\":\"No tool handler\"}");
-    }
-    slot.reset();
-    return taken;
+bool VoiceAgent::toolRunning() {
+    return (s_tools && s_tools->busy(TOOL_WAIT_MS)) || remoteToolRunning();
 }
