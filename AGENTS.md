@@ -27,7 +27,8 @@ built into a bundle and uploaded to the device.
 | `components/audio_core/` | Mic capture, speaker mixer, wake word + AFE, alert mixer, `AudioOrchestrator` (who owns the speaker) |
 | `components/core_sysdb/` | `EmbeddedSysDb`: in-RAM system state with change bits, generated from `schema/sysdb.star`; `BufferManager` ring buffers; task priorities (`thread_config.h`) |
 | `components/media_player/` | `MusicPlaybackService` (queue, commands), `NexusPlayer` (playback), decoders, WebM/Ogg seeking, `TrackSource` (song lookup: over MCP, Invidious client as the optional fallback), `RemoteOutput` (Orbit satellites), `CatalogDB` (library) |
-| `components/gemini_live/` | `AssistantService` (session state machine), `VoiceAgent` (the voice backend: `GeminiProtocol` direct, `HubAgent` through a hub), mic uplink pump |
+| `components/gemini_live/` | `VoiceAgent` (the voice backend: `GeminiProtocol` direct, `HubAgent` through a hub), mic uplink pump |
+| `components/voice_session/` | `AssistantService` (session state machine), `VoiceSession` (the one owner of what follows a reply), `SessionRules` (host-tested) |
 | `components/tool_registry/` | The tools the model can call: `tools::Registry` (routing, answers, start/end events), the tool schema; each feature registers its own tools |
 | `components/nexus_db/` | Append-only document database on the SD card |
 | `components/sd_storage/` | SD mount, `File`/`Fs` wrappers, path policy (what the file API may touch) |

@@ -1,7 +1,7 @@
 # gemini_live
 
-The voice assistant: the session state machine and the voice backends
-(Gemini Live directly, or through a hub). The tools themselves live in
+The voice backends (Gemini Live directly, or through a hub) and the
+protocol. The session state machine lives in `voice_session`. The tools themselves live in
 `tool_registry` and in the features that register them.
 
 ## What's here
@@ -28,9 +28,6 @@ The voice assistant: the session state machine and the voice backends
   24 kHz and is resampled to 32 kHz by `audio_core`.
 - **`VoiceUplinkPump`** — Core 0 task sending the session's mic audio
   (16 kHz PCM from `MIC_TX_BUF`) to the backend.
-- **`AssistantService`** — the assistant state machine (idle / listening /
-  speaking / tool-executing), triggered by `WakeWordEngine` detections
-  from `audio_core`.
 - **`TranscriptLog`** — the last few turns of the conversation as text
   (from Gemini's input and output transcriptions), for
   `/api/assistant/transcript` and the dashboard.

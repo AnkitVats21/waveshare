@@ -91,9 +91,10 @@ statements spread over files:
 
 Each decision has one component that makes it; others send it events or
 read the state it publishes. Shared flags that several components set to
-steer one behaviour (as `media_pending_idle`, `turn_complete_pending` and
-`assistant_speaking` steer the end of a session today) are replaced by
-events to the owner.
+steer one behaviour are replaced by events to the owner. (The end of a
+session was steered by a `media_pending_idle` flag that three components
+set and cleared; it is now `end_after_reply`, written by `voice_session`
+only.)
 
 | Decision | Owner |
 |---|---|

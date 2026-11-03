@@ -1,4 +1,4 @@
-#include "gemini_live/AssistantService.h"
+#include "voice_session/AssistantService.h"
 #include "audio_core/AlertPlayer.h"
 #include "audio_core/WakeWordEngine.h"
 #include "audio_core/AudioOrchestrator.h"
@@ -91,7 +91,8 @@ AssistantService::~AssistantService() {
     }
 }
 
-bool AssistantService::begin() {
+bool AssistantService::begin(VoiceSession& session) {
+    m_session = &session;
     // 1. Create ESP-IDF timers
     if (!m_idle_timer) {
         esp_timer_create_args_t idle_args = {};
@@ -248,7 +249,7 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
 
         case AssistantState::AssistantSpeaking:
             if (!snap.audio.assistant_speaking && !snap.audio.turn_complete_pending) {
-                if (snap.assistant.media_pending_idle) {
+                if (snap.assistant.end_after_reply) {
                     ESP_LOGI(TAG, "Media command was executed and speech playback completed. Transitioning directly to Closing to bypass VAD.");
                     transitionTo(AssistantState::Closing, &snap);
                 } else {
@@ -261,7 +262,7 @@ void AssistantService::onStateChanged(ComponentMask changed, const SystemState& 
             break;
 
         case AssistantState::WaitingForFollowup:
-            if (snap.assistant.media_pending_idle) {
+            if (snap.assistant.end_after_reply) {
                 ESP_LOGI(TAG, "Media command was executed. Transitioning directly to Closing from WaitingForFollowup.");
                 transitionTo(AssistantState::Closing, &snap);
             } else if (ws == WsState::DISCONNECTED || ws == WsState::GOING_AWAY || ws == WsState::ERROR_STATE) {
@@ -457,7 +458,8 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             micEnabled = false;
             connectRequested = false;
             if (m_idle_timer) {
-                esp_timer_start_once(m_idle_timer, SESSION_FOLLOWUP_TIMEOUT_US);
+                const uint64_t window_us = uint64_t(m_session ? m_session->decision().window_ms : 60000) * 1000;
+                esp_timer_start_once(m_idle_timer, window_us);
             }
             break;
 
@@ -494,13 +496,17 @@ void AssistantService::executeTransition(AssistantState newState, const SystemSt
             s.audio.assistant_speaking = true;
         }
         if (newState == AssistantState::Idle) {
-            s.assistant.media_pending_idle = false;
+            s.assistant.end_after_reply = false;
             s.audio.turn_complete_pending  = false;
             s.audio.assistant_speaking     = false;
         }
     });
 
     m_current_state = newState;
+    // A session starts or is over: the next one starts from no facts.
+    if (m_session && (newState == AssistantState::StartingSession || newState == AssistantState::Idle)) {
+        m_session->reset();
+    }
 
     // 4. Play audio alerts asynchronously
     switch (newState) {

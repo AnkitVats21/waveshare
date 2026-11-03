@@ -7,7 +7,7 @@
 #include "media_player/CatalogDB.h"
 #include "audio_core/WakeWordEngine.h"
 #include "gemini_live/VoiceAgent.h"
-#include "gemini_live/AssistantService.h"
+#include "voice_session/AssistantService.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
 #include "services/storage/SystemDatabase.h"

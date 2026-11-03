@@ -17,4 +17,5 @@ NB_MODULE(waveshare_host, m) {
     init_session_guard(m);
     init_tone(m);
     init_tools(m);
+    init_session_rules(m);
 }

@@ -179,6 +179,6 @@ direct_dependencies:
 - espressif/led_strip
 - espressif/mdns
 - idf
-manifest_hash: 33f07cdcf6208d6c9b3fa93dde979b570758f949ce02ab68b8dc2b507e129eab
+manifest_hash: 371afaa3fe69162f7fc3b53fdbc73b1319aa99eeafb29a36032e6eddc078f091
 target: esp32s3
 version: 3.0.0

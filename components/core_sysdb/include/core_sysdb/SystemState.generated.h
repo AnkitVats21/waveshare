@@ -145,7 +145,7 @@ namespace BIT_MEDIA {
     X(AssistantVisualState, visual_state, AssistantVisualState::Offline, BIT_ASSISTANT::VISUAL_STATE, FieldAccess::ReadOnly) \
     X(bool, connect_requested, false, BIT_ASSISTANT::CONNECT_REQ, FieldAccess::Writable) \
     X(WsState, ws_state, WsState::DISCONNECTED, BIT_ASSISTANT::WS_STATE, FieldAccess::ReadOnly) \
-    X(bool, media_pending_idle, false, 0, FieldAccess::ReadOnly) \
+    X(bool, end_after_reply, false, 0, FieldAccess::ReadOnly) \
     X_STR(profile, 33, "", BIT_ASSISTANT::PROFILE, FieldAccess::ReadOnly)
 
 #define LED_FIELDS \

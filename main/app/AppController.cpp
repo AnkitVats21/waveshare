@@ -1,7 +1,7 @@
 #include "AppController.h"
 #include "app/audio/AudioService.h"
 #include "app/led/LedService.h"
-#include "gemini_live/AssistantService.h"
+#include "voice_session/AssistantService.h"
 #include "services/time/TimeSyncHelper.h"
 #include "services/alarm/AlarmService.h"
 #include "services/mcp/McpService.h"
@@ -33,8 +33,7 @@ AppController &AppController::getInstance() {
     return instance;
 }
 
-bool AppController::begin(tools::Registry& tools) {
-    tools.addObserver(onToolEvent, this);
+bool AppController::begin() {
 
     m_wifi_connected = EmbeddedSysDb::getInstance().snapshot().system.wifi_connected;
 
@@ -73,14 +72,4 @@ void AppController::onStateChanged(ComponentMask changed, const SystemState& sna
         //     AsyncNetLogger::getInstance().stopWorker();
         // }
     }
-}
-
-void AppController::onToolEvent(const tools::Event& event, void*) {
-    // A music command on the board: close the session once the reply has
-    // played (the media_pending_idle flag skips the follow-up window).
-    if (event.type != tools::Event::Type::Ended || event.remote || event.kind != tools::Kind::Music) return;
-    LOGI_SYSTEM("Media command handled. Setting pending idle flag to bypass VAD delay after speech confirmation.");
-    EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
-        s.assistant.media_pending_idle = true;
-    });
 }

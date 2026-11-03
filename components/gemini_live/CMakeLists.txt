@@ -1,6 +1,5 @@
 idf_component_register(
     SRCS
-        "src/AssistantService.cpp"
         "src/VoiceUplinkPump.cpp"
         "src/VoiceAgent.cpp"
         "src/GeminiProtocol.cpp"

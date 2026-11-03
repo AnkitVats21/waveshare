@@ -8,6 +8,8 @@
 #include <mutex>
 #include <string>
 
+class VoiceSession;
+
 namespace Services {
 
 class UplinkEncoder;
@@ -31,6 +33,8 @@ class OpusFrameBuilder;
 class HubAgent : public ReactorTask, public VoiceAgent {
 public:
     static HubAgent& getInstance();
+    // Where the hub's reports go (a music command it ran). main wires it.
+    void setVoiceSession(VoiceSession* session) { m_voice_session = session; }
 
     // The voice_backend setting (0 direct, 1 hub, 2 auto), cached for the
     // selector, which runs on the wake word task. Set at boot and by
@@ -97,6 +101,7 @@ private:
     std::mutex m_turn_mutex;
     std::string m_pending_turn;           // sent at session_ready
     int64_t m_reply_wait_us = 0;          // when the owed reply was asked for; 0 = none
+    VoiceSession* m_voice_session = nullptr;
     int64_t m_hub_tool_us = 0;            // when a hub tool started (reply_owed); 0 = none
     bool m_hub_tool_turn_ended = false;   // the turn that called it has ended
 

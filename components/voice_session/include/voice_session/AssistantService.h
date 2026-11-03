@@ -2,6 +2,7 @@
 
 #include "core_sysdb/ReactorTask.h"
 #include "core_sysdb/app_types.h"
+#include "voice_session/VoiceSession.h"
 #include "esp_timer.h"
 #include <atomic>
 
@@ -10,7 +11,9 @@ public:
     AssistantService();
     ~AssistantService() override;
 
-    bool begin();
+    // session: what happens after each reply (VoiceSession decides; this
+    // carries it out).
+    bool begin(VoiceSession& session);
 
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
@@ -32,7 +35,6 @@ public:
 protected:
 
 private:
-    static constexpr uint64_t SESSION_FOLLOWUP_TIMEOUT_US = 60ULL * 1000 * 1000;
     static constexpr uint64_t CONNECT_TIMEOUT_US          = 10ULL * 1000 * 1000;
     static constexpr uint64_t COOLDOWN_TIMEOUT_US         = 5ULL * 1000 * 1000;
 
@@ -50,6 +52,7 @@ private:
     void maybeRestart(const SystemState& snap);
     void restartWake();
 
+    VoiceSession* m_session = nullptr;
     AssistantState m_current_state = AssistantState::Idle;
 
     esp_timer_handle_t m_idle_timer = nullptr;

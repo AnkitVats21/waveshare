@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "src/AssistantService.cpp"
+        "src/VoiceSession.cpp"
+        "src/SessionRules.cpp"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        gemini_live
+        tool_registry
+        audio_core
+        core_sysdb
+        freertos
+        esp_timer
+        log
+)

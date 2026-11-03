@@ -22,6 +22,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/nexus_db/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/media_player/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/tool_registry/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/voice_session/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/bblanchon__arduinojson/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -88,6 +89,8 @@ nanobind_add_module(waveshare_host
     bindings/bind_tools.cpp
     ../components/tool_registry/src/ToolRegistry.cpp
     ${SKILLS_GEN_DIR}/skills_generated.cpp
+    bindings/bind_session_rules.cpp
+    ../components/voice_session/src/SessionRules.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)

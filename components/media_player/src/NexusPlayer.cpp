@@ -166,7 +166,6 @@ void NexusPlayer::playAt(const char* songId, const char* downloadUrl, uint32_t s
             _streamManager.hold(false);
             EmbeddedSysDb::getInstance().mutate([](SystemState& s) {
                 s.assistant.session_state = AssistantState::Idle;
-                s.assistant.media_pending_idle = false;
             });
         } else {
             ESP_LOGI(TAG, "Play requested during active session. Deferring songId: %s until session ends.", songId);

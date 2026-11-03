@@ -125,6 +125,7 @@ idf_component_register(
             "services/network"
             "common"
         REQUIRES
+            voice_session
             tool_registry
             core_sysdb
             audio_core

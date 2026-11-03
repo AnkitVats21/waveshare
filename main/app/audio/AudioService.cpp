@@ -7,7 +7,7 @@
 #include "core_sysdb/AppLogger.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/thread_config.h"
-#include "gemini_live/AssistantService.h"
+#include "voice_session/AssistantService.h"
 #include "gemini_live/VoiceAgent.h"
 #include "esp_timer.h"
 #include "hal/Board.h"
@@ -175,7 +175,6 @@ void AudioService::onWakeWord(uint8_t channel) {
     VoiceAgent::selectForSession();
     m_guard.reset();
     sysdb.mutate([](SystemState& s) {
-        s.assistant.media_pending_idle = false;   // never carried into a new session
         s.assistant.session_state  = AssistantState::StartingSession;
         s.assistant.visual_state   = AssistantVisualState::Thinking;
         s.assistant.connect_requested = true;
@@ -206,15 +205,15 @@ bool AudioService::mayEndOnSilence() {
         LOGI_AUDIO("VAD timeout held (a tool is running).");
         return false;
     }
-    const bool holding = snap.assistant.media_pending_idle || VoiceAgent::active().awaitingReply();
+    const bool holding = snap.assistant.end_after_reply || VoiceAgent::active().awaitingReply();
     if (m_guard.holdExpired(now_ms, holding)) {
         LOGW_AUDIO("Ending: no reply for %d s (the hold on the silence timeout expired).",
                    (int)(App::SessionLimits::REPLY_HOLD_MAX_MS / 1000));
         return true;
     }
-    if (snap.assistant.media_pending_idle || snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
-        LOGI_AUDIO("VAD timeout held (media_pending=%d, speaking=%d, turn_pending=%d).",
-                   (int)snap.assistant.media_pending_idle, (int)snap.audio.assistant_speaking, (int)snap.audio.turn_complete_pending);
+    if (snap.assistant.end_after_reply || snap.audio.assistant_speaking || snap.audio.turn_complete_pending) {
+        LOGI_AUDIO("VAD timeout held (end_after_reply=%d, speaking=%d, turn_pending=%d).",
+                   (int)snap.assistant.end_after_reply, (int)snap.audio.assistant_speaking, (int)snap.audio.turn_complete_pending);
         return false;
     }
     // Gemini heard a question (or a reminder's text turn, or a tool result)
@@ -261,7 +260,7 @@ bool AudioService::mustEndOnSpeech() {
         m_guard.check(now_ms, now_ms, true, false);   // sound without words while a tool runs is fine
         return false;
     }
-    const bool holding = snap.assistant.media_pending_idle || VoiceAgent::active().awaitingReply();
+    const bool holding = snap.assistant.end_after_reply || VoiceAgent::active().awaitingReply();
     const bool busy = holding || snap.audio.assistant_speaking || snap.audio.turn_complete_pending;
     const int64_t words_us = VoiceAgent::lastInputWordsUs();
     const int64_t words_ms = words_us ? words_us / 1000 : App::SessionGuard::kNone;

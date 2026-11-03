@@ -9,7 +9,8 @@
 #include "audio_core/AudioOrchestrator.h"
 #include "audio_core/AlertPlayer.h"
 #include "app/led/LedService.h"
-#include "gemini_live/AssistantService.h"
+#include "voice_session/AssistantService.h"
+#include "voice_session/VoiceSession.h"
 #include "app/input/KeyService.h"
 #include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/VoiceUplinkPump.h"
@@ -193,6 +194,13 @@ extern "C" void app_main(void) {
     Services::Profiles::registerTool(tool_registry);
     Mcp::McpService::instance().registerWith(tool_registry);
     VoiceAgent::setToolRegistry(&tool_registry);
+    // What a session does after each reply: one owner, told about tool
+    // ends (the registry) and the hub's reports.
+    static VoiceSession voice_session(EmbeddedSysDb::getInstance());
+    voice_session.attach(tool_registry);
+#if CONFIG_WAVESHARE_VOICE_HUB
+    Services::HubAgent::getInstance().setVoiceSession(&voice_session);
+#endif
     static VoiceUplinkPump&     uplink_pump = VoiceUplinkPump::getInstance();
     static AppController&       app_ctrl = AppController::getInstance();
     static Services::SysDbSyncReactor& sync_reactor = Services::SysDbSyncReactor::getInstance();
@@ -212,7 +220,7 @@ extern "C" void app_main(void) {
     // tones play until each one is ready.
     Services::AlertLibrary::getInstance().start();
     Mcp::McpService::instance().start();
-    assistant_svc.begin();
+    assistant_svc.begin(voice_session);
     NexusPlayer::getInstance().begin();
     // Songs are looked up through the MCP server, with the board's own
     // Invidious client (if built) as the fallback.
@@ -220,7 +228,7 @@ extern "C" void app_main(void) {
     MusicPlaybackService::getInstance().setTrackSource(&track_source);
     MusicPlaybackService::getInstance().begin();
     uplink_pump.start();
-    app_ctrl.begin(tool_registry);
+    app_ctrl.begin();
     Services::TimeSyncHelper::instance().begin();
     Services::openRecordingsDbAsync();  // after the timezone: file times are local
     Services::AlarmService::getInstance().begin();

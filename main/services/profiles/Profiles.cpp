@@ -2,7 +2,7 @@
 
 #include "services/profiles/ProfileMatch.h"
 #include "core_sysdb/EmbeddedSysDb.h"
-#include "gemini_live/AssistantService.h"
+#include "voice_session/AssistantService.h"
 #include "gemini_live/VoiceAgent.h"
 #include "esp_log.h"
 
