@@ -28,7 +28,7 @@ public:
         bool transcript_log = true;   // print each finished turn to the log
         uint8_t resume_min = 60;      // resume the last conversation if younger; 0 = never
         uint8_t keepalive_s = 60;     // keep the connection after a session; 0 = close
-        bool web_search = true;       // add Google Search on models that support it
+        bool web_search = false;      // add Google Search on the models that have it (some 2.5 Live)
         // Gemini's voice detection: sensitivity 0 = its default, 1 = low,
         // 2 = high; ms 0 = its default.
         uint8_t vad_start = 1;

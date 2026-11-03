@@ -39,7 +39,7 @@ database system path="/sdcard/db/system.ndb" flush=every_commit sysdb_include="c
         field vad_prefix_ms:        u16            tag=15  // speech needed before a start counts
         field vad_silence_ms:       u16            tag=16  // silence that ends the user's turn
         field weather_location:     string         tag=17  // home city for get_weather, e.g. "Pune"
-        field web_search:           bool = true    tag=12  // give Gemini Google Search (2.5 Live models; 3.x refuses it on the free tier)
+        field web_search:           bool = false   tag=12  // give Gemini Google Search (some 2.5 Live models only; off: the MCP web_search tool, which shows progress)
         field mcp_url:              string         tag=18  // MCP server endpoint (e.g. "http://192.168.1.10:8788/mcp")
         field mcp_max_tools:        u8 = 32        tag=19  // maximum tools to import from MCP server
         field briefing_music:       string         tag=20  // file in /sdcard/media/alarm played under the briefing; "" = none

@@ -99,7 +99,7 @@ struct Settings {
     uint16_t vad_prefix_ms = 0;
     uint16_t vad_silence_ms = 0;
     std::string weather_location{};
-    bool web_search = true;
+    bool web_search = false;
     std::string mcp_url{};
     uint8_t mcp_max_tools = 32;
     std::string briefing_music{};
