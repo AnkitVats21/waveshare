@@ -22,12 +22,13 @@ built into a bundle and uploaded to the device.
 |---|---|
 | `main/main.cpp` | Startup order (below) |
 | `main/app/` | App logic: `AppController` (keys, modes), `audio/` (`AudioService`, recorder), `input/`, `led/` |
-| `main/services/` | `tools/` (device tools), `alarm/`, `alerts/` (chimes), `http/` (server, routes, `/api/ws`), `hub/` (`HubLink`, the link to a LAN hub; `CONFIG_WAVESHARE_VOICE_HUB`), `mcp/`, `network/` (Wi-Fi, captive portal), `storage/` (system.ndb, recordings.ndb), `time/` |
+| `main/services/` | `tools/` (device tools), `alarm/`, `alerts/` (chimes), `http/` (server, routes, `/api/ws`), `mcp/`, `network/` (Wi-Fi, captive portal), `storage/` (system.ndb, recordings.ndb), `time/` |
 | `main/hal/` | Board bring-up: codec, I2C, IO expander, keys, LEDs, LCD |
 | `components/audio_core/` | Mic capture, speaker mixer, wake word + AFE, alert mixer, `AudioOrchestrator` (who owns the speaker) |
 | `components/core_sysdb/` | `EmbeddedSysDb`: in-RAM system state with change bits, generated from `schema/sysdb.star`; `BufferManager` ring buffers; task priorities (`thread_config.h`) |
 | `components/media_player/` | `MusicPlaybackService` (queue, commands), `NexusPlayer` (playback), decoders, WebM/Ogg seeking, `TrackSource` (song lookup: over MCP, Invidious client as the optional fallback), `RemoteOutput` (Orbit satellites), `CatalogDB` (library) |
 | `components/gemini_live/` | `VoiceAgent` (the voice backend: `GeminiProtocol` direct, `HubAgent` through a hub), mic uplink pump |
+| `components/hub_link/` | The link to a LAN hub (`HubLink`), the voice backend through it (`HubAgent`), music through it (`HubMusic`); built with `CONFIG_WAVESHARE_VOICE_HUB`. Settings and the dashboard relay come from main (`IHubRelay`) |
 | `components/voice_session/` | `AssistantService` (session state machine), `VoiceSession` (the one owner of what follows a reply), `SessionRules` (host-tested) |
 | `components/tool_registry/` | The tools the model can call: `tools::Registry` (routing, answers, start/end events), the tool schema; each feature registers its own tools |
 | `components/nexus_db/` | Append-only document database on the SD card |

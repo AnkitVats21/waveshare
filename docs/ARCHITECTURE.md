@@ -6,7 +6,7 @@ each part has one owner, its dependencies are visible, and new capabilities
 are added by registering them, not by editing a central `switch`.
 
 Status (2026-11): sections 1 and 2 describe what exists and stays. Sections
-3 to 5 are the target; section 6 is the order of work. Section 7 (loadable
+3 to 5 are the target; section 6 is the order of work (steps 1 to 4 done). Section 7 (loadable
 modules) is a later step that depends on a feasibility test.
 
 ## 1. What stays
@@ -129,13 +129,13 @@ first (section 6).
 
 ### 4.1 Components
 
-| Component | Holds | Today |
+| Component | Holds | Status |
 |---|---|---|
-| `gemini_live` | the Gemini Live protocol only: `GeminiProtocol`, `WssClient`, uplink pump, the `VoiceAgent` interface | also holds the session state machine and tool handlers |
-| `voice_session` (new) | `AssistantService` (the state machine), the rules, the follow-up window, tool progress, error kinds and fallback | spread over `AssistantService`, `AppController`, `AudioService`, `HubAgent` |
-| `tool_registry` (new) | the tool list, declarations for the session setup, routing a call to its handler | generated `switch` over `SkillType` in four files, plus the MCP hook |
-| `hub_link` (from `main/services/hub`) | `HubLink`, `HubAgent`, `HubMusic` | in `main/` |
-| tool handlers | where their feature lives (`DeviceCommandHandler` beside the device code, alarm tools in `services/alarm`, …) | `DeviceCommandHandler` and `MediaCommandHandler` sit in `gemini_live` |
+| `gemini_live` | the Gemini Live protocol only: `GeminiProtocol`, `WssClient`, uplink pump, the `VoiceAgent` interface | done |
+| `voice_session` | `AssistantService` (the state machine), the rules, the follow-up window, tool progress, error kinds and fallback | state machine, rules and follow-up window done; tool progress and errors to come |
+| `tool_registry` | the tool list, declarations for the session setup, routing a call to its handler | done |
+| `hub_link` | `HubLink`, `HubAgent`, `HubMusic`; settings and the dashboard relay injected by main | done |
+| tool handlers | where their feature lives (music tools in `media_player`, device tools in `services/tools`, alarm tools in `services/alarm`, …) | done |
 
 ### 4.2 Tool registry
 

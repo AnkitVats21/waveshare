@@ -3,8 +3,8 @@
 #include "services/storage/SystemDatabase.h"
 #include "credentials/Credentials.h"
 #if CONFIG_WAVESHARE_VOICE_HUB
-#include "services/hub/HubAgent.h"
-#include "services/hub/HubLink.h"
+#include "hub_link/HubAgent.h"
+#include "hub_link/HubLink.h"
 #endif
 
 #include <ArduinoJson.h>

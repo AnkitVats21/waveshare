@@ -1,4 +1,4 @@
-#include "services/hub/UplinkEncoder.h"
+#include "hub_link/UplinkEncoder.h"
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include "opus.h"

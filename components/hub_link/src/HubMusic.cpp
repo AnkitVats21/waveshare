@@ -1,5 +1,5 @@
-#include "services/hub/HubMusic.h"
-#include "services/hub/HubLink.h"
+#include "hub_link/HubMusic.h"
+#include "hub_link/HubLink.h"
 #include "media_player/MusicPlaybackService.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/thread_config.h"

@@ -1,5 +1,5 @@
 #include "bindings.h"
-#include "services/hub/UplinkFraming.h"
+#include "hub_link/UplinkFraming.h"
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/string.h>
 

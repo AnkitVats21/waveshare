@@ -23,6 +23,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/media_player/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/tool_registry/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../components/voice_session/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../components/hub_link/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/bblanchon__arduinojson/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../main
     ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -85,7 +86,7 @@ nanobind_add_module(waveshare_host
     bindings/bind_framing.cpp
     bindings/bind_session_guard.cpp
     bindings/bind_tone.cpp
-    ../main/services/hub/UplinkFraming.cpp
+    ../components/hub_link/src/UplinkFraming.cpp
     bindings/bind_tools.cpp
     ../components/tool_registry/src/ToolRegistry.cpp
     ${SKILLS_GEN_DIR}/skills_generated.cpp

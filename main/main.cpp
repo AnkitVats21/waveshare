@@ -37,9 +37,9 @@
 #include "services/http/HttpService.h"
 #include "services/http/ControlChannel.h"
 #if CONFIG_WAVESHARE_VOICE_HUB
-#include "services/hub/HubAgent.h"
-#include "services/hub/HubLink.h"
-#include "services/hub/HubMusic.h"
+#include "hub_link/HubAgent.h"
+#include "hub_link/HubLink.h"
+#include "hub_link/HubMusic.h"
 #endif
 #include "services/http/OrbitChannel.h"
 #include "services/mcp/McpTrackSource.h"
@@ -262,7 +262,21 @@ extern "C" void app_main(void) {
 #if CONFIG_WAVESHARE_VOICE_HUB
     hub_agent.start();
     hub_music.start();
-    Services::HubLink::getInstance().start();
+    {
+        auto& link = Services::HubLink::getInstance();
+#if CONFIG_WAVESHARE_HTTP_FILE_SERVER_ENABLE
+        link.setRelay(&Services::ControlChannel::getInstance());
+#endif
+        link.setSettingsSource([]() {
+            ndb::system::Settings s = Services::loadSettings();
+            Services::HubSettings h;
+            h.url = s.hub_url;
+            h.uplink_opus_kbps = s.uplink_opus_kbps;
+            h.uplink_opus_complexity = s.uplink_opus_complexity;
+            return h;
+        });
+        link.start();
+    }
 #endif
 
     // 7. Confirm healthy boot for OTA rollback protection

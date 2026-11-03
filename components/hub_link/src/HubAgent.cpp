@@ -1,9 +1,9 @@
-#include "services/hub/HubAgent.h"
+#include "hub_link/HubAgent.h"
 #include "voice_session/VoiceSession.h"
 
-#include "services/hub/HubLink.h"
-#include "services/hub/UplinkFraming.h"
-#include "services/hub/UplinkEncoder.h"
+#include "hub_link/HubLink.h"
+#include "hub_link/UplinkFraming.h"
+#include "hub_link/UplinkEncoder.h"
 #include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/PsramAllocator.h"
 #include "gemini_live/TranscriptLog.h"
@@ -12,7 +12,6 @@
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/thread_config.h"
 #include "core_sysdb/BufferManager.h"
-#include "services/storage/SystemDatabase.h"
 #include "audio_core/AudioOrchestrator.h"
 #include "audio_core/SpeakerPlayback.h"
 
@@ -114,7 +113,7 @@ void HubAgent::startSession() {
     if (m_accumulator) m_accumulator->reset();
     if (m_frame_builder) m_frame_builder->reset();
 
-    auto sys_settings = Services::loadSettings();
+    const HubSettings sys_settings = HubLink::getInstance().settings();
     if (HubLink::getInstance().opusUplinkAllowed()) {
         if (!m_encoder) {
             void* mem = heap_caps_malloc(sizeof(UplinkEncoder), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

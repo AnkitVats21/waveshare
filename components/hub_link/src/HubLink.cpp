@@ -1,7 +1,5 @@
-#include "services/hub/HubLink.h"
+#include "hub_link/HubLink.h"
 
-#include "services/http/ControlChannel.h"
-#include "services/storage/SystemDatabase.h"
 #include "credentials/Credentials.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/thread_config.h"
@@ -126,8 +124,10 @@ void HubLink::drainRx() {
 }
 
 void HubLink::run() {
-    ControlChannel::getInstance().setRelay(
-        [](const std::string& text, void* ctx) { return static_cast<HubLink*>(ctx)->sendText(text); }, this);
+    if (m_relay) {
+        m_relay->setRelay([](const std::string& text, void* ctx) { return static_cast<HubLink*>(ctx)->sendText(text); },
+                          this);
+    }
 
     int64_t retry_at_us = 0;
     for (;;) {
@@ -178,7 +178,7 @@ void HubLink::run() {
         }
         if (now < retry_at_us || !EmbeddedSysDb::getInstance().wifiConnected()) continue;
 
-        std::string url = loadSettings().hub_url;
+        std::string url = settings().url;
         bool from_mdns = url.empty();
         if (from_mdns) url = discover();
         {
@@ -244,7 +244,7 @@ void HubLink::close() {
     m_up = false;
     m_connected = false;
     m_ws_task = nullptr;
-    ControlChannel::getInstance().setRelayUp(false);
+    if (m_relay) m_relay->setRelayUp(false);
     reportLink();
     esp_websocket_client_destroy(m_client);
     m_client = nullptr;
@@ -255,7 +255,7 @@ void HubLink::close() {
 
 void HubLink::setDown() {
     if (!m_down_since_us) m_down_since_us = esp_timer_get_time();
-    ControlChannel::getInstance().setRelayUp(m_up.load());
+    if (m_relay) m_relay->setRelayUp(m_up.load());
 }
 
 std::string HubLink::discover() {
@@ -332,7 +332,7 @@ void HubLink::handleMessage(const std::string& text) {
     const char* type = doc["type"] | "";
     if (type[0] == '\0') {
         if (doc["cmd"].is<const char*>()) {
-            ControlChannel::getInstance().handleRelayCommand(text.data(), text.size());
+            if (m_relay) m_relay->handleRelayCommand(text.data(), text.size());
         }
         return;
     }
@@ -351,7 +351,7 @@ void HubLink::handleMessage(const std::string& text) {
         m_hub_voice_opus = voice && strcmp(up_codec, "opus") == 0 && (s_uplink_codec.load() != 1);
         m_hub_music = (doc["music"] | false) && s_music_control.load() != 1;
         m_up = true;
-        ControlChannel::getInstance().setRelayUp(true);
+        if (m_relay) m_relay->setRelayUp(true);
 
         TaskHandle_t ws_task = m_ws_task ? m_ws_task : xTaskGetHandle("hub_ws");
         unsigned ws_hwm = ws_task ? (unsigned)uxTaskGetStackHighWaterMark(ws_task) : 0;

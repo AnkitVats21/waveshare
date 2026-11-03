@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hub_link/IHubRelay.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -36,6 +37,10 @@ namespace Services {
 class HubLink {
 public:
     static HubLink& getInstance();
+    // main wires these before start(): the dashboard relay and the settings.
+    void setRelay(IHubRelay* relay) { m_relay = relay; }
+    void setSettingsSource(HubSettingsFn source) { m_settings_source = source; }
+    HubSettings settings() const { return m_settings_source ? m_settings_source() : HubSettings{}; }
 
     void start();
     // hub_url or the token changed: drop the link and connect again.
@@ -99,6 +104,8 @@ public:
     Status status();
 
 private:
+    IHubRelay* m_relay = nullptr;
+    HubSettingsFn m_settings_source = nullptr;
     HubLink() = default;
     HubLink(const HubLink&) = delete;
     HubLink& operator=(const HubLink&) = delete;

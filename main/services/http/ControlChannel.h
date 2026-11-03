@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hub_link/IHubRelay.h"
+
 #include "core_sysdb/ReactorTask.h"
 #include "esp_http_server.h"
 #include <atomic>
@@ -25,7 +27,7 @@ namespace Services {
  * handled like the client's. The hub fans them out to its own browsers, so
  * the device keeps one protocol however a client reaches it.
  */
-class ControlChannel : public ReactorTask {
+class ControlChannel : public ReactorTask, public Services::IHubRelay {
 public:
     static ControlChannel& getInstance();
 
@@ -41,12 +43,12 @@ public:
 
     // The relay. send() returns false if the frame didn't go out; it is
     // called on this channel's task, and must not block for long.
-    typedef bool (*RelaySendFn)(const std::string& text, void* ctx);
-    void setRelay(RelaySendFn send, void* ctx) { m_relay_send = send; m_relay_ctx = ctx; }
+    typedef IHubRelay::SendFn RelaySendFn;
+    void setRelay(RelaySendFn send, void* ctx) override { m_relay_send = send; m_relay_ctx = ctx; }
     // The relay is up (full state and transcript follow) or down.
-    void setRelayUp(bool up);
+    void setRelayUp(bool up) override;
     // A {"cmd"} frame from the relay.
-    void handleRelayCommand(const char* json, size_t len);
+    void handleRelayCommand(const char* json, size_t len) override;
 
 protected:
     void run() override;
