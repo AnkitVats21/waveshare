@@ -26,5 +26,5 @@ void init_session_rules(nb::module_& m) {
           },
           nb::arg("music_ok") = 0, nb::arg("music_failed") = 0, nb::arg("tools_ok") = 0,
           nb::arg("tools_failed") = 0, nb::arg("hub_music_done") = false,
-          nb::arg("followup_ms") = 60000, nb::arg("end_after_failed_music") = true);
+          nb::arg("followup_ms") = 60000, nb::arg("end_after_failed_music") = false);
 }

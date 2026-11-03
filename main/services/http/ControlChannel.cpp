@@ -412,6 +412,14 @@ void ControlChannel::buildState(std::string& out) {
     assistant["state"] = assistantStateToString(snap.assistant.session_state);
     assistant["connection"] = wsStateToString(snap.assistant.ws_state);
     assistant["profile"] = snap.assistant.profile;
+    // A tool running for over 400 ms (voice_session), else null.
+    if (snap.assistant.tool[0]) {
+        JsonObject tool = assistant["tool"].to<JsonObject>();
+        tool["name"] = snap.assistant.tool;
+        tool["kind"] = snap.assistant.tool_kind;
+    } else {
+        assistant["tool"] = nullptr;
+    }
 
     JsonObject alarm = doc["alarm"].to<JsonObject>();
     alarm["ringing"] = snap.alarm.playing;

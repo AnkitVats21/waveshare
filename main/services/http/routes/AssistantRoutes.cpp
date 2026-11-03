@@ -86,6 +86,10 @@ esp_err_t statusHandler(httpd_req_t* req) {
     doc["connection"] = wsStateToString(snap.assistant.ws_state);
     doc["mic_streaming"] = WakeWordEngine::getInstance().isStreamingActive();
     doc["profile"] = snap.assistant.profile;
+    if (snap.assistant.tool[0]) {
+        doc["tool"]["name"] = snap.assistant.tool;
+        doc["tool"]["kind"] = snap.assistant.tool_kind;
+    }
     return Http::sendJson(req, 200, doc);
 }
 

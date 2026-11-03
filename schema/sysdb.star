@@ -54,6 +54,8 @@ component Assistant id=3 mask=0x00080000 {
     field ws_state: WsState = WsState::DISCONNECTED [readonly, bit=2:WS_STATE]
     field end_after_reply: bool = false [readonly]   // voice_session: close once the reply has played
     field profile: string[33] = "" [readonly, bit=4:PROFILE]   // the active assistant profile's name
+    field tool: string[33] = "" [readonly, bit=5:TOOL]   // voice_session: a tool running for over 400 ms ("" = none; "tool" for a hub tool)
+    field tool_kind: string[12] = "" [readonly]          // its kind: search, music, bluetooth, info, device, other
 }
 
 component Led id=4 mask=0x00100000 {

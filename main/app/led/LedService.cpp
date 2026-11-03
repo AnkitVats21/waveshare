@@ -5,6 +5,7 @@
 #include "hal/Board_defs.h"
 #include "esp_log.h"
 #include <cmath>
+#include <cstring>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -60,8 +61,29 @@ void LedService::onStateChanged(ComponentMask changed, const SystemState& snap) 
     }
 }
 
+// The colour of a running tool, by kind (assistant.tool_kind).
+static RgbColor toolColor(const char* kind) {
+    if (strcmp(kind, "search") == 0) return CYAN_LED;
+    if (strcmp(kind, "music") == 0) return PURPLE_LED;
+    if (strcmp(kind, "bluetooth") == 0) return BLUE_LED;
+    return WHITE_LED;
+}
+
 void LedService::applyVisualState(AssistantVisualState state, const SystemState& snap) {
     if (m_cmd_mutex && xSemaphoreTake(m_cmd_mutex, portMAX_DELAY) == pdTRUE) {
+        // A tool is running (voice_session): the ring spins in its colour,
+        // except while the assistant speaks ("let me check").
+        const bool tool = snap.assistant.tool[0] != '\0' &&
+                          (state == AssistantVisualState::Listening || state == AssistantVisualState::Thinking);
+        if (tool) {
+            const LedEventData spin{LedMode::SPIN, toolColor(snap.assistant.tool_kind), 90, 0};
+            if (m_current_command.mode != LedMode::SPIN) {
+                ESP_LOGI(TAG, "LED State: Working (%s, spinning)", snap.assistant.tool_kind);
+            }
+            m_current_command = spin;
+            xSemaphoreGive(m_cmd_mutex);
+            return;
+        }
         switch (state) {
             case AssistantVisualState::Idle:
                 // Retain/restore the custom color set by tool calling when Idle
@@ -229,6 +251,20 @@ void LedService::run() {
                 break;
             }
 
+            case LedMode::SPIN: {
+                // One bright LED going round with a two-LED fading tail.
+                const int head = step % LED_STRIP_LED_COUNT;
+                for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+                    const int behind = (head - i + LED_STRIP_LED_COUNT) % LED_STRIP_LED_COUNT;
+                    const int div = behind == 0 ? 1 : behind == 1 ? 4 : behind == 2 ? 12 : 0;
+                    if (div) m_leds.setPixel(i, cmd.color.r / div, cmd.color.g / div, cmd.color.b / div);
+                    else m_leds.setPixel(i, 0, 0, 0);
+                }
+                m_leds.refresh();
+                step++;
+                break;
+            }
+
             default:
                 break;
         }
@@ -241,6 +277,7 @@ void LedService::run() {
             case LedMode::BLINK:      delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 500; break;
             case LedMode::BREATH:     delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30; break;
             case LedMode::RAINBOW:    delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 30; break;
+            case LedMode::SPIN:       delay_ms = (cmd.speed_ms > 0) ? cmd.speed_ms : 90; break;
             default: break;
         }
 

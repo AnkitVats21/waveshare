@@ -415,6 +415,7 @@ bool HubAgent::remoteToolRunning() {
     if (m_hub_tool_us == 0) return false;
     if (esp_timer_get_time() - m_hub_tool_us >= int64_t(TOOL_WAIT_MS) * 1000) {
         m_hub_tool_us = 0;   // the answer never came
+        if (m_voice_session) m_voice_session->onHubToolEnded();
         return false;
     }
     return true;
@@ -506,6 +507,7 @@ void HubAgent::replyStarted() {
             // The hub tool's answer is playing.
             LOGI_NET("Hub tool answered after %lld ms", (esp_timer_get_time() - m_hub_tool_us) / 1000);
             m_hub_tool_us = 0;
+            if (m_voice_session) m_voice_session->onHubToolEnded();
         }
     }
     if (!m_accept_audio || sysdb.assistantSpeaking()) return;
@@ -599,6 +601,7 @@ void HubAgent::handleMessage(const std::string& text) {
             m_hub_tool_us = esp_timer_get_time();
             m_hub_tool_turn_ended = false;
         }
+        if (m_voice_session) m_voice_session->onHubToolStarted();
     } else if (strcmp(type, "tool_call") == 0) {
         const char* id = doc["id"] | "";
         const char* tool = doc["name"] | "";

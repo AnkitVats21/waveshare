@@ -9,7 +9,9 @@
 
 #include <cstdint>
 
-enum class LedMode : uint8_t { OFF, SOLID, BLINK, BREATH, RAINBOW };
+// SPIN: one lit LED going round with a fading tail (a tool is running;
+// voice_session's assistant.tool, drawn by LedService).
+enum class LedMode : uint8_t { OFF, SOLID, BLINK, BREATH, RAINBOW, SPIN };
 
 struct RgbColor {
   uint8_t r;
@@ -39,4 +41,5 @@ struct LedEventData {
 #define PINK_LED   RgbColor{80,  0,   40}
 #define BROWN_LED  RgbColor{80,  60,  0}
 #define WHITE_LED  RgbColor{80,  80,  80}
+#define CYAN_LED   RgbColor{80,  0,   80}
 #define OFF_LED    RgbColor{0,   0,   0}

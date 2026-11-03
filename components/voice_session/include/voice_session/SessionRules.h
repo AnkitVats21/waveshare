@@ -33,9 +33,11 @@ struct SessionFacts {
 // The tunables. Defaults are compiled in; later they come from the settings.
 struct Rules {
     uint32_t followup_ms = 60000;
-    // A music tool ends the session even when it failed (today's behaviour:
-    // "play X" closes the session whatever happened).
-    bool end_after_failed_music = true;
+    // A music command that failed (not found, ambiguous, an error) also
+    // ends the session. Off: the session stays open so the person can
+    // answer ("which one?", "try another song"), as with the hub's music
+    // tools, which end the session only on success.
+    bool end_after_failed_music = false;
 };
 
 AfterReply decide(const SessionFacts& facts, const Rules& rules);

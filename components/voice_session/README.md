@@ -23,11 +23,18 @@ after each reply. Built on `gemini_live` (the voice backends) and
 
 | After... | Then |
 |---|---|
-| a music command on the board (any status) or on the hub | close once the reply has played |
-| anything else | wait 60 s for a follow-up, paused music stays paused |
+| a music command that succeeded, on the board or the hub | close once the reply has played |
+| a music command that failed (not found, ambiguous, error) | stay open for the answer |
+| anything else | wait for a follow-up (up to 60 s; the silence timeout usually ends it a few seconds after the reply), paused music stays paused |
+
+While a tool runs for more than 400 ms, `VoiceSession` publishes
+`assistant.tool` / `assistant.tool_kind`: the LED ring spins in the tool's
+colour (search cyan, music purple, Bluetooth blue, other white; not while
+the assistant speaks) and the dashboard can say what is happening. A hub
+tool shows as `tool` / `other` (the hub doesn't say which).
 
 `voice::Rules` holds the tunables (follow-up window, whether a failed music
-command also closes); defaults are compiled in.
+command also closes, off by default); defaults are compiled in.
 
 A running tool holds the session whatever the rules say: see
 `VoiceAgent::toolRunning()` in `gemini_live`.
