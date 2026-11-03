@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/TaskBase.h"
-#include "common/app_types.h"
+#include "core_sysdb/TaskBase.h"
+#include "core_sysdb/app_types.h"
 
 // Sends the session's mic audio (MIC_TX_BUF) to the voice backend
 // (VoiceAgent::active()). Core 0: the send is network work.

@@ -10,7 +10,6 @@ idf_component_register(
         "src/gemini_skills_generated.cpp"
     INCLUDE_DIRS
         "include"
-        "include/gemini_live"
     REQUIRES
         core_sysdb
         audio_core

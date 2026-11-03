@@ -1,5 +1,5 @@
 #include "services/http/OrbitChannel.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "media_player/MusicPlaybackService.h"
 #include <esp_log.h>
 #include <algorithm>

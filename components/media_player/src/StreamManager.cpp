@@ -4,7 +4,7 @@
 #include "esp_timer.h"
 #include "PlayerTypes.h"
 #include "freertos/idf_additions.h"
-#include "common/thread_config.h"
+#include "core_sysdb/thread_config.h"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>

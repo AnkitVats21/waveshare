@@ -121,8 +121,8 @@ bool decode_incoming_arguments(const char* func_name, JsonObjectConst args_obj, 
 
     raw_json_escaped = json.dumps(setup_native).replace('"', '\\"')
 
-    cpp_content = f"""#include "gemini_skills_generated.h"
-#include "common/AppLogger.h"
+    cpp_content = f"""#include "gemini_live/gemini_skills_generated.h"
+#include "core_sysdb/AppLogger.h"
 
 namespace GeminiSkills {{
 

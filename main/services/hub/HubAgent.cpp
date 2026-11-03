@@ -7,13 +7,13 @@
 #include "gemini_live/PsramAllocator.h"
 #include "gemini_live/TranscriptLog.h"
 #include "gemini_live/VoiceUplinkPump.h"
-#include "common/AppLogger.h"
-#include "common/sysdb/EmbeddedSysDb.h"
-#include "common/thread_config.h"
-#include "services/BufferManager.h"
+#include "core_sysdb/AppLogger.h"
+#include "core_sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/thread_config.h"
+#include "core_sysdb/BufferManager.h"
 #include "services/storage/SystemDatabase.h"
-#include "app/audio/AudioOrchestrator.h"
-#include "app/audio/SpeakerPlayback.h"
+#include "audio_core/AudioOrchestrator.h"
+#include "audio_core/SpeakerPlayback.h"
 
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>

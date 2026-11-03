@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/ReactorTask.h"
+#include "core_sysdb/ReactorTask.h"
 #include "gemini_live/VoiceAgent.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"

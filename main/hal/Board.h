@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/AudioRates.h"
+#include "core_sysdb/AudioRates.h"
 #include "esp_err.h"
 #include "esp_io_expander.h"
 #include "hal/Board_defs.h"

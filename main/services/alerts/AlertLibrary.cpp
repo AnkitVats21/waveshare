@@ -2,7 +2,7 @@
 #include "audio_core/Resampler.h"
 #include "core_sysdb/AudioRates.h"
 #include "core_sysdb/thread_config.h"
-#include "app/media_player/AudioDecoderFactory.h"
+#include "media_player/AudioDecoderFactory.h"
 #include "sd_storage/Fs.h"
 #include "sd_storage/SdCard.h"
 #include "services/storage/SystemDatabase.h"

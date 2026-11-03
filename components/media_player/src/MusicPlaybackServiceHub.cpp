@@ -2,7 +2,7 @@
 // the hub; the board plays what the hub sends and keeps a copy of its queue.
 #include "MusicPlaybackService.h"
 #include "media_player/CatalogDB.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "esp_log.h"
 #include <cstdio>
 #include <cstring>

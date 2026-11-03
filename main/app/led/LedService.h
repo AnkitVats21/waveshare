@@ -1,9 +1,9 @@
 #pragma once
 
-#include "common/ReactorTask.h"
-#include "common/thread_config.h"
-#include "common/led_types.h"
-#include "common/app_types.h"
+#include "core_sysdb/ReactorTask.h"
+#include "core_sysdb/thread_config.h"
+#include "core_sysdb/led_types.h"
+#include "core_sysdb/app_types.h"
 #include <atomic>
 
 class LedStripManager;

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "common/ReactorTask.h"
-#include "WssClient.h"
-#include "VoiceAgent.h"
-#include "gemini_skills_generated.h"
+#include "core_sysdb/ReactorTask.h"
+#include "gemini_live/WssClient.h"
+#include "gemini_live/VoiceAgent.h"
+#include "gemini_live/gemini_skills_generated.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/ringbuf.h"

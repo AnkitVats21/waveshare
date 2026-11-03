@@ -1,6 +1,6 @@
 #include "services/alarm/AlarmTools.h"
 
-#include "app/media_player/NexusPlayer.h"
+#include "media_player/NexusPlayer.h"
 #include "media_player/CatalogDB.h"
 #include "services/alarm/AlarmSchedule.h"
 #include "services/alarm/AlarmService.h"

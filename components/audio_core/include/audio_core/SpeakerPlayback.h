@@ -1,14 +1,14 @@
 #pragma once
 
-#include "common/app_types.h"
-#include "common/AudioRates.h"
+#include "core_sysdb/app_types.h"
+#include "core_sysdb/AudioRates.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "services/BufferManager.h"
+#include "core_sysdb/BufferManager.h"
 
 // ---------------------------------------------------------------------------
 // Buffer declarations — dedicated ring buffers for Multi-Track Audio Mixing
@@ -19,8 +19,8 @@
 DECLARE_BUFFER(VOICE_RX_BUF, "spk_voice", 256 * 1024)
 DECLARE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 
-#include "common/TaskBase.h"
-#include "common/thread_config.h"
+#include "core_sysdb/TaskBase.h"
+#include "core_sysdb/thread_config.h"
 
 /**
  * @brief Output interface for mixed audio PCM samples.

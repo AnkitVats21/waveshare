@@ -1,7 +1,7 @@
 #include "services/alarm/ToneDownload.h"
 
-#include "app/media_player/NexusPlayer.h"
-#include "common/thread_config.h"
+#include "media_player/NexusPlayer.h"
+#include "core_sysdb/thread_config.h"
 #include "media_player/CatalogDB.h"
 #include "media_player/HttpClientStream.h"
 #include "media_player/MusicPlaybackService.h"

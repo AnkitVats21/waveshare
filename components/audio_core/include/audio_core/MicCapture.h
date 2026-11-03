@@ -1,10 +1,10 @@
 #pragma once
 
-#include "common/app_types.h"
+#include "core_sysdb/app_types.h"
 #include "driver/i2s_std.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "services/BufferManager.h"
+#include "core_sysdb/BufferManager.h"
 
 // ---------------------------------------------------------------------------
 // Buffer declaration — this subsystem owns the microphone→network ring buffer.
@@ -12,8 +12,8 @@
 // ---------------------------------------------------------------------------
 DECLARE_BUFFER(MIC_TX_BUF, "mic_tx", 128 * 1024)
 
-#include "common/TaskBase.h"
-#include "common/thread_config.h"
+#include "core_sysdb/TaskBase.h"
+#include "core_sysdb/thread_config.h"
 
 #include "audio_core/IAudioFeedSource.h"
 

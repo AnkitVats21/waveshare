@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/ReactorTask.h"
+#include "core_sysdb/ReactorTask.h"
 #include "hal/input/ExpanderKeyInput.h"
 
 class KeyService : public ReactorTask {

@@ -1,8 +1,8 @@
-#include "MediaCommandHandler.h"
-#include "app/media_player/MusicPlaybackService.h"
-#include "common/AppLogger.h"
-#include "common/sysdb/EmbeddedSysDb.h"
-#include "common/thread_config.h"
+#include "gemini_live/MediaCommandHandler.h"
+#include "media_player/MusicPlaybackService.h"
+#include "core_sysdb/AppLogger.h"
+#include "core_sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/thread_config.h"
 #include "freertos/idf_additions.h"
 #include <ArduinoJson.h>
 

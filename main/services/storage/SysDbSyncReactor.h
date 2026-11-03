@@ -2,8 +2,8 @@
 
 #include <atomic>
 
-#include "common/ReactorTask.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/ReactorTask.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 
 namespace Services {
 

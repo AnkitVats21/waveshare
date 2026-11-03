@@ -7,8 +7,8 @@
 #endif
 #include "RemoteOutput.h"
 #include "MusicHub.h"
-#include "app/media_player/NexusPlayer.h"
-#include "app/media_player/IPlaybackObserver.h"
+#include "media_player/NexusPlayer.h"
+#include "media_player/IPlaybackObserver.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"

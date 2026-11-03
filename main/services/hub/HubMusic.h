@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/ReactorTask.h"
+#include "core_sysdb/ReactorTask.h"
 #include "media_player/MusicHub.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"

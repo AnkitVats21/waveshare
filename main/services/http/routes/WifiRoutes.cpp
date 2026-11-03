@@ -1,6 +1,6 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>

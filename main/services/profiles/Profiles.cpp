@@ -1,7 +1,7 @@
 #include "services/profiles/Profiles.h"
 
 #include "services/profiles/ProfileMatch.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "gemini_live/AssistantService.h"
 #include "gemini_live/VoiceAgent.h"
 #include "esp_log.h"

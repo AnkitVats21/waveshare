@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/ReactorTask.h"
-#include "common/app_types.h"
+#include "core_sysdb/ReactorTask.h"
+#include "core_sysdb/app_types.h"
 #include "esp_timer.h"
 #include <atomic>
 

@@ -9,8 +9,8 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/idf_additions.h"
-#include "common/sysdb/EmbeddedSysDb.h"
-#include "common/thread_config.h"
+#include "core_sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/thread_config.h"
 #include <algorithm>
 #include <random>
 #include <cstring>

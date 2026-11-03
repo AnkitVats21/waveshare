@@ -1,8 +1,8 @@
 #pragma once
 
-#include "common/ReactorTask.h"
-#include "common/sysdb/EmbeddedSysDb.h"
-#include "app/media_player/IPlaybackObserver.h"
+#include "core_sysdb/ReactorTask.h"
+#include "core_sysdb/EmbeddedSysDb.h"
+#include "media_player/IPlaybackObserver.h"
 #include "services/alarm/AlarmRing.h"
 #include "services/alarm/AlarmSchedule.h"
 #include "services/storage/SystemDatabase.h"

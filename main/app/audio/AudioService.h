@@ -1,8 +1,8 @@
 #pragma once
 
-#include "common/ReactorTask.h"
+#include "core_sysdb/ReactorTask.h"
 #include "common/hw_types.h"
-#include "app/wake_word/IWakeWordListener.h"
+#include "audio_core/IWakeWordListener.h"
 #include "app/audio/SessionGuard.h"
 #include <memory>
 

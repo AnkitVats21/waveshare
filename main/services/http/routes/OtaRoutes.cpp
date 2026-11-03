@@ -2,7 +2,7 @@
 #include "services/http/FlashUpload.h"
 #include "http_server/HttpUtil.h"
 #include "http_server/WebBundle.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/led_types.h"
 #include "media_player/MusicPlaybackService.h"
 #include "services/storage/SysDbSyncReactor.h"

@@ -1,6 +1,6 @@
 #include "services/http/routes/Routes.h"
 #include "services/http/routes/MusicStatus.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "http_server/HttpUtil.h"
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/CatalogDB.h"

@@ -4,7 +4,7 @@
 #include "audio_codec_data_if.h"
 #include "audio_codec_gpio_if.h"
 #include "audio_codec_if.h"
-#include "common/AudioRates.h"
+#include "core_sysdb/AudioRates.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"

@@ -9,9 +9,9 @@
 #include <memory>
 #include <algorithm>
 #include <cstdlib>
-#include "app/audio/SpeakerPlayback.h"
-#include "app/audio/AudioOrchestrator.h"
-#include "common/thread_config.h"
+#include "audio_core/SpeakerPlayback.h"
+#include "audio_core/AudioOrchestrator.h"
+#include "core_sysdb/thread_config.h"
 
 namespace {
 // The EBML magic that starts every WebM file: enough for the decoder factory

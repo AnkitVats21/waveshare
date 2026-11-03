@@ -1,6 +1,6 @@
 #pragma once
 #include "HttpClientStream.h"
-#include "services/BufferManager.h"
+#include "core_sysdb/BufferManager.h"
 #include "media_player/WebmSeek.h"
 #include <functional>
 #include <string>

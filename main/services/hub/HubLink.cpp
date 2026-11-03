@@ -4,7 +4,7 @@
 #include "services/storage/SystemDatabase.h"
 #include "credentials/Credentials.h"
 #include "core_sysdb/EmbeddedSysDb.h"
-#include "common/thread_config.h"
+#include "core_sysdb/thread_config.h"
 
 #include <ArduinoJson.h>
 #include <esp_app_desc.h>

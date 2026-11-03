@@ -7,7 +7,7 @@
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/NexusPlayer.h"
 #include "gemini_live/TranscriptLog.h"
-#include "common/thread_config.h"
+#include "core_sysdb/thread_config.h"
 #include "core_sysdb/led_types.h"
 #include <ArduinoJson.h>
 #include <esp_log.h>

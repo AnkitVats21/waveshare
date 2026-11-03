@@ -1,7 +1,7 @@
 #include "services/weather/Weather.h"
 #include "services/weather/WeatherText.h"
 #include "services/storage/SystemDatabase.h"
-#include "common/thread_config.h"
+#include "core_sysdb/thread_config.h"
 #include "gemini_live/VoiceAgent.h"
 #include "media_player/TlsConfig.h"
 

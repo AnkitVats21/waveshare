@@ -27,7 +27,7 @@ built into a bundle and uploaded to the device.
 | `components/audio_core/` | Mic capture, speaker mixer, wake word + AFE, alert mixer, `AudioOrchestrator` (who owns the speaker) |
 | `components/core_sysdb/` | `EmbeddedSysDb`: in-RAM system state with change bits, generated from `schema/sysdb.star`; `BufferManager` ring buffers; task priorities (`thread_config.h`) |
 | `components/media_player/` | `MusicPlaybackService` (queue, commands), `NexusPlayer` (playback), decoders, WebM/Ogg seeking, `TrackSource` (song lookup: over MCP, Invidious client as the optional fallback), `RemoteOutput` (Orbit satellites), `CatalogDB` (library) |
-| `components/gemini_live/` | `AssistantService` (session state machine), `VoiceAgent` (the voice backend: `GeminiProtocol` direct today, a hub later; tool routing), mic uplink pump, tool handlers (generated from `schema/gemini_skills_schema.json`) |
+| `components/gemini_live/` | `AssistantService` (session state machine), `VoiceAgent` (the voice backend: `GeminiProtocol` direct, `HubAgent` through a hub; tool routing), mic uplink pump, tool handlers (generated from `schema/gemini_skills_schema.json`) |
 | `components/nexus_db/` | Append-only document database on the SD card |
 | `components/sd_storage/` | SD mount, `File`/`Fs` wrappers, path policy (what the file API may touch) |
 | `components/http_server/` | App-agnostic HTTP server, JSON helpers, web bundle from flash |
@@ -38,9 +38,13 @@ built into a bundle and uploaded to the device.
 | `host_tests/` | Portable code built natively and tested with pytest |
 | `docs/` | Design docs (nexus_db, alarms), `known-issues.md`, `plans/` |
 
-Old include paths (`app/media_player/NexusPlayer.h`, `common/...`) are
-one-line forwarding headers. New code includes the component path
-(`media_player/NexusPlayer.h`, `core_sysdb/...`).
+Headers are included by their component path (`media_player/NexusPlayer.h`,
+`core_sysdb/EmbeddedSysDb.h`, `gemini_live/VoiceAgent.h`); the old
+forwarding paths (`app/...`, `common/...`) are gone.
+
+Target design and its rules (visible dependencies, extend by registering,
+one owner per decision): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+New code follows them.
 
 ## Startup order (`app_main`)
 

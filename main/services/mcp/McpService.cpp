@@ -1,7 +1,7 @@
 #include "services/mcp/McpService.h"
 #include "services/storage/SystemDatabase.h"
 #include "credentials/Credentials.h"
-#include "common/thread_config.h"
+#include "core_sysdb/thread_config.h"
 #include "gemini_live/VoiceAgent.h"
 #include "gemini_live/PsramAllocator.h"
 

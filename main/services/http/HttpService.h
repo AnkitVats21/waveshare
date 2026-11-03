@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/ReactorTask.h"
+#include "core_sysdb/ReactorTask.h"
 #include "http_server/HttpServer.h"
 
 namespace Services {

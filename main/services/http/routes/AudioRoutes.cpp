@@ -1,6 +1,6 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
 #include "audio_core/ToneControl.h"

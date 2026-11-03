@@ -2,7 +2,7 @@
 #include "services/http/routes/MusicStatus.h"
 #include "services/http/SystemInfo.h"
 #include "http_server/HttpUtil.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/LogRouter.h"
 #include "core_sysdb/led_types.h"
 #include "app/audio/recording/AudioRecorder.h"

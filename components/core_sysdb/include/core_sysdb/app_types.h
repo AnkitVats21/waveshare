@@ -17,7 +17,7 @@
  * Event bases            → common/events/event_bases.h  (legacy, being removed)
  */
 
-#include "common/led_types.h"
+#include "core_sysdb/led_types.h"
 #include <cstdint>
 
 // ── Assistant conversation state machine ─────────────────────────────────────

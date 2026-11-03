@@ -1,6 +1,6 @@
 #include "app/led/LedService.h"
-#include "common/AppLogger.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/AppLogger.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "hal/led/LedStripManager.h"
 #include "hal/Board_defs.h"
 #include "esp_log.h"

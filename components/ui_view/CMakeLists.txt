@@ -20,7 +20,7 @@ if(CONFIG_DISPLAY_ENABLE)
     idf_component_register(
         SRCS ${UI_SRCS}
         INCLUDE_DIRS "include" "src/ui" "src"
-        REQUIRES core_sysdb media_player lvgl esp_lvgl_port
+        REQUIRES core_sysdb media_player lvgl esp_lvgl_port esp_timer
     )
 else()
     idf_component_register()

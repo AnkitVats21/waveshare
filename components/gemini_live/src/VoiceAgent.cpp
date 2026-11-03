@@ -1,6 +1,6 @@
 #include "gemini_live/VoiceAgent.h"
-#include "common/AppLogger.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/AppLogger.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include <atomic>
 #include "esp_timer.h"
 #include <cassert>

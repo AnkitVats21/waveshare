@@ -4,8 +4,8 @@
 #include "services/http/routes/Routes.h"
 #include "http_server/HttpUtil.h"
 #include "http_server/WebBundle.h"
-#include "common/sysdb/EmbeddedSysDb.h"
-#include "common/thread_config.h"
+#include "core_sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/thread_config.h"
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>

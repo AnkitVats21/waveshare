@@ -1,5 +1,5 @@
 #include "services/network/NetStats.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "esp_netif_net_stack.h"
 #include "esp_timer.h"
 #include "lwip/netif.h"

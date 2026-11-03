@@ -1,7 +1,7 @@
 #pragma once
 
-#include "gemini_skills_generated.h"
-#include "IDeviceCommandDelegate.h"
+#include "gemini_live/gemini_skills_generated.h"
+#include "gemini_live/IDeviceCommandDelegate.h"
 #include <ArduinoJson.h>
 
 class DeviceCommandHandler {

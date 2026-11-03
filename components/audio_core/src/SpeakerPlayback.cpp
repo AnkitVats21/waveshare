@@ -12,8 +12,8 @@
 DEFINE_BUFFER(VOICE_RX_BUF, "spk_voice", 256 * 1024)
 DEFINE_BUFFER(MEDIA_RX_BUF, "spk_media", 512 * 1024)
 
-#include "common/thread_config.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/thread_config.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 
 namespace {
 

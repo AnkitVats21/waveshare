@@ -7,7 +7,7 @@
 #include <algorithm>
 #include "PlayerTypes.h"
 #include "media_player/CatalogDB.h"
-#include "common/thread_config.h"
+#include "core_sysdb/thread_config.h"
 #include "freertos/idf_additions.h"
 
 static const char* TAG = "StorageManager";

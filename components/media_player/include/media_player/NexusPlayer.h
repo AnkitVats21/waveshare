@@ -1,19 +1,19 @@
 #pragma once
-#include "services/BufferManager.h"
+#include "core_sysdb/BufferManager.h"
 #include "StorageManager.h"
 #include "StreamManager.h"
 #include "AudioEngine.h"
 #include "CatalogDB.h"
 #include "WebmSeek.h"
 #include "IPlaybackObserver.h"
-#include "common/ReactorTask.h"
+#include "core_sysdb/ReactorTask.h"
 #include "freertos/semphr.h"
 #include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
 
-#include "app/audio/AudioOrchestrator.h"
+#include "audio_core/AudioOrchestrator.h"
 
 // Declare the playback and storage buffers for NexusPlayer
 DECLARE_BUFFER(PLAYER_BUF, "player_buf", 512 * 1024)

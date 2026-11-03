@@ -3,7 +3,7 @@
 #include "services/http/web/CaptivePortalHtml.h"
 #include "http_server/HttpUtil.h"
 #include "http_server/WebBundle.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 
 #include <cstring>
 

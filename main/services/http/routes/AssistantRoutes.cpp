@@ -4,12 +4,12 @@
 #include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/VoiceAgent.h"
 #include "gemini_live/TranscriptLog.h"
-#include "common/sysdb/EmbeddedSysDb.h"
+#include "core_sysdb/EmbeddedSysDb.h"
 #include "services/http/StateNames.h"
 #include "services/storage/SystemDatabase.h"
 #include "services/profiles/Profiles.h"
-#include "services/BufferManager.h"
-#include "app/audio/SpeakerPlayback.h"
+#include "core_sysdb/BufferManager.h"
+#include "audio_core/SpeakerPlayback.h"
 
 #include <cstdlib>
 
