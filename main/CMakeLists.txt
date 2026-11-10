@@ -25,6 +25,7 @@ set(srcs
             "app/audio/recording/PolyphaseResampler.cpp"
             "app/audio/recording/AudioRecorder.cpp"
             "app/audio/recording/RecordingProbe.cpp"
+            "app/input/KeyGesture.cpp"
             "app/input/KeyService.cpp"
 
             # Event and LED Services

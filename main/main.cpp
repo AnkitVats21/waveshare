@@ -12,6 +12,7 @@
 #include "voice_session/AssistantService.h"
 #include "voice_session/VoiceSession.h"
 #include "app/input/KeyService.h"
+#include "app/audio/recording/AudioRecorder.h"
 #include "gemini_live/GeminiProtocol.h"
 #include "gemini_live/VoiceUplinkPump.h"
 #include "media_player/NexusPlayer.h"
@@ -244,8 +245,7 @@ extern "C" void app_main(void) {
 
     // 6. Initialize Key Input service
     static ExpanderKeyInput key_input(io_exp);
-    static KeyService key_svc(key_input);
-    key_svc.begin();
+    static KeyService key_svc(key_input, MusicPlaybackService::getInstance(), AudioRecorder::getInstance());
 
     // 6.5 Spawn ReactorTask background threads
     if (!usb_net) wifi.start();

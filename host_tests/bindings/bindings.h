@@ -18,3 +18,4 @@ void init_session_guard(nb::module_& m);
 void init_tone(nb::module_& m);
 void init_tools(nb::module_& m);
 void init_session_rules(nb::module_& m);
+void init_keys(nb::module_& m);

@@ -37,7 +37,10 @@ the follow-up window.
 
 ## input/ — keys
 
-`KeyService` polls the five keys every 20 ms (long press = 500 ms):
+`KeyService` polls keys 2-5 every 20 ms. `KeyGesture` (host-tested) turns
+each key's level into a press, a click (released before 500 ms) or a long
+press (at 500 ms, while still held); the `BINDINGS` table in `KeyService.cpp`
+says what each one does:
 
 | Key | Press | Long press |
 |---|---|---|
@@ -46,8 +49,10 @@ the follow-up window.
 | 4 | play / pause | |
 | 5 | volume down | previous track |
 
-While an alarm rings or is snoozed, key 2 stops it and the others snooze.
-Key 1 has no action.
+Volume and play/pause act on release; key 2's stop acts on the press and
+takes it (no recording starts on that release). While an alarm rings or is
+snoozed, the press belongs to the alarm: key 2 stops it, the others snooze,
+nothing else runs. Key 1 is the chip's reset line and can't be read.
 
 ## led/
 

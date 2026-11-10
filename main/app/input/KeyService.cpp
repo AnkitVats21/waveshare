@@ -1,8 +1,8 @@
-#include "KeyService.h"
+#include "app/input/KeyService.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "core_sysdb/EmbeddedSysDb.h"
 #include "core_sysdb/thread_config.h"
-#include "media_player/NexusPlayer.h"
 #include "media_player/MusicPlaybackService.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "freertos/idf_additions.h"
@@ -11,8 +11,17 @@
 static auto& sysdb = EmbeddedSysDb::getInstance();
 
 static constexpr uint32_t POLL_MS = 20;
+static constexpr int VOLUME_STEP = 5;
 
-KeyService::KeyService(ExpanderKeyInput &input)
+//                                    down                         click                                   long press
+const KeyService::Binding KeyService::BINDINGS[KEY_COUNT] = {
+    {KeyId::KEY_2, &KeyService::stopRecording, &KeyService::startProcessedRecording, &KeyService::startStereoRecording},
+    {KeyId::KEY_3, nullptr,                    &KeyService::volumeUp,                &KeyService::nextTrack},
+    {KeyId::KEY_4, nullptr,                    &KeyService::togglePlay,              nullptr},
+    {KeyId::KEY_5, nullptr,                    &KeyService::volumeDown,              &KeyService::previousTrack},
+};
+
+KeyService::KeyService(ExpanderKeyInput& input, MusicPlaybackService& music, AudioRecorder& recorder)
     : ReactorTask({
           "key_svc",
           ThreadConfig::StackSize::STACK_MEDIUM,
@@ -21,115 +30,88 @@ KeyService::KeyService(ExpanderKeyInput &input)
           0 // Pure writer, does not watch any state components
       })
     , m_input(input)
+    , m_music(music)
+    , m_recorder(recorder)
 {}
 
-bool KeyService::begin() {
-    ESP_LOGI(TAG, "KeyService operational.");
+void KeyService::run() {
+    ESP_LOGI(TAG, "KeyService polling loop active.");
+    while (m_running) {
+        const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        for (size_t i = 0; i < KEY_COUNT; ++i) {
+            const Event e = m_keys[i].gesture.update(m_input.isPressed(BINDINGS[i].key), now_ms);
+            if (e != Event::None) handle(BINDINGS[i], m_keys[i], e);
+        }
+        vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+    }
+}
+
+void KeyService::handle(const Binding& b, Key& k, Event e) {
+    const int n = (int)b.key + 1;
+    if (e == Event::Down) {
+        ESP_LOGI(TAG, "Key %d pressed", n);
+        k.taken = alarmTakes(b.key) || (b.down && (this->*b.down)());
+        return;
+    }
+    if (k.taken) return;
+    if (e == Event::Click && b.click) (this->*b.click)();
+    if (e == Event::LongPress && b.longPress) (this->*b.longPress)();
+}
+
+// While an alarm rings or is snoozed, the keys belong to it: key 2 stops it,
+// any other key snoozes it.
+bool KeyService::alarmTakes(KeyId key) {
+    if (sysdb.snapshot().alarm.state == AlarmRingState::IDLE) return false;
+    const bool stop = key == KeyId::KEY_2;
+    ESP_LOGI(TAG, "Key %d: %s the alarm", (int)key + 1, stop ? "stopping" : "snoozing");
+    sysdb.mutate([stop](SystemState& s) {
+        if (stop) s.alarm.stop_requested = true;
+        else s.alarm.snooze_requested = true;
+    });
     return true;
 }
 
-void KeyService::onStateChanged(ComponentMask changed, const SystemState& snap) {
-    // Pure writer, nothing to react to
+// ── Actions ─────────────────────────────────────────────────────────────────
+
+bool KeyService::stopRecording() {
+    if (!m_recorder.isRecording()) return false;
+    ESP_LOGI(TAG, "Stopping the recording");
+    m_recorder.stopRecording(AudioRecorder::StopReason::MANUAL);
+    return true;
 }
 
-void KeyService::run() {
-    using KeyId = ExpanderKeyInput::KeyId;
+void KeyService::startProcessedRecording() {
+    ESP_LOGI(TAG, "Starting a PROCESSED recording");
+    m_recorder.startRecording(AudioRecorder::RecordMode::PROCESSED);
+}
 
-    const KeyId keys[5] = {
-        KeyId::KEY_1, KeyId::KEY_2, KeyId::KEY_3, KeyId::KEY_4, KeyId::KEY_5,
-    };
+void KeyService::startStereoRecording() {
+    ESP_LOGI(TAG, "Starting a STEREO recording");
+    m_recorder.startRecording(AudioRecorder::RecordMode::STEREO);
+}
 
-    ESP_LOGI(TAG, "KeyService polling loop active.");
+void KeyService::volumeUp() { stepVolume(VOLUME_STEP); }
+void KeyService::volumeDown() { stepVolume(-VOLUME_STEP); }
 
-    while (m_running) {
-        for (int i = 0; i < 5; ++i) {
-            bool pressed = m_input.isPressed(keys[i]);
+void KeyService::stepVolume(int delta) {
+    sysdb.mutate([delta](SystemState& s) {
+        const int old_vol = s.audio.speaker_volume;
+        s.audio.speaker_volume = std::clamp(old_vol + delta, 0, 100);
+        ESP_LOGI(TAG, "Volume %d -> %d", old_vol, s.audio.speaker_volume);
+    });
+}
 
-            if (pressed) {
-                if (!m_prevState[i]) {
-                    m_prevState[i] = true;
-                    m_pressCount[i] = 0;
-                    m_longPressedTriggered[i] = false;
-                    if (keys[i] == KeyId::KEY_2) {
-                        m_key2StopConsumedThisPress = false;
-                    }
-                    ESP_LOGI(TAG, "KEY_%d PRESSED", i + 1);
+void KeyService::togglePlay() {
+    ESP_LOGI(TAG, "Toggling playback");
+    m_music.postCommand(MediaCmdType::TOGGLE_PLAY_PAUSE);
+}
 
-                    // While an alarm rings or is snoozed, the keys belong to it:
-                    // Key 2 stops it, any other key snoozes it.
-                    m_alarmPress[i] = sysdb.snapshot().alarm.state != AlarmRingState::IDLE;
-                    if (m_alarmPress[i]) {
-                        const bool stop = keys[i] == KeyId::KEY_2;
-                        ESP_LOGI(TAG, "Key %d: %s the alarm", i + 1, stop ? "stopping" : "snoozing");
-                        sysdb.mutate([stop](SystemState& s) {
-                            if (stop) s.alarm.stop_requested = true;
-                            else s.alarm.snooze_requested = true;
-                        });
-                    }
-                    // Key 4: toggle Play/Pause on press down
-                    else if (keys[i] == KeyId::KEY_4) {
-                        ESP_LOGI("KeySvc", "Key 4: toggling playback");
-                        MusicPlaybackService::getInstance().postCommand(MediaCmdType::TOGGLE_PLAY_PAUSE);
-                    }
-                    // Key 2: stop any active recording on press down
-                    else if (keys[i] == KeyId::KEY_2) {
-                        if (AudioRecorder::getInstance().isRecording()) {
-                            ESP_LOGI("KeySvc", "Key 2 press: stopping active recording");
-                            AudioRecorder::getInstance().stopRecording(AudioRecorder::StopReason::MANUAL);
-                            m_key2StopConsumedThisPress = true;
-                        }
-                    }
-                } else {
-                    m_pressCount[i]++;
-                    // Standard long press threshold (500ms / 25 ticks of 20ms)
-                    if (m_pressCount[i] >= 25 && !m_longPressedTriggered[i] && !m_alarmPress[i]) {
-                        m_longPressedTriggered[i] = true;
-                        ESP_LOGI(TAG, "KEY_%d LONG PRESSED (500ms)", i + 1);
+void KeyService::nextTrack() {
+    ESP_LOGI(TAG, "Next track");
+    m_music.postCommand(MediaCmdType::NEXT);
+}
 
-                        if (keys[i] == KeyId::KEY_3) {
-                            ESP_LOGI(TAG, "Key 3 long press: requesting next track");
-                            MusicPlaybackService::getInstance().postCommand(MediaCmdType::NEXT);
-                        } else if (keys[i] == KeyId::KEY_5) {
-                            ESP_LOGI(TAG, "Key 5 long press: requesting previous track");
-                            MusicPlaybackService::getInstance().postCommand(MediaCmdType::PREVIOUS);
-                        } else if (keys[i] == KeyId::KEY_2) {
-                            if (!m_key2StopConsumedThisPress) {
-                                ESP_LOGI(TAG, "Key 2 long press: starting STEREO recording");
-                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::STEREO);
-                            }
-                        }
-                    }
-                }
-            } else {
-                if (m_prevState[i]) {
-                    m_prevState[i] = false;
-                    ESP_LOGI(TAG, "KEY_%d RELEASED", i + 1);
-
-                    // Short press logic: volume up/down if long press was NOT triggered
-                    if (!m_longPressedTriggered[i] && !m_alarmPress[i]) {
-                        if (keys[i] == KeyId::KEY_3) {
-                            sysdb.mutate([](SystemState& s) {
-                                int old_vol = s.audio.speaker_volume;
-                                s.audio.speaker_volume = std::min(old_vol + 5, 100);
-                                ESP_LOGI("KeySvc", "Volume increase request: %d -> %d", old_vol, s.audio.speaker_volume);
-                            });
-                        } else if (keys[i] == KeyId::KEY_5) {
-                            sysdb.mutate([](SystemState& s) {
-                                int old_vol = s.audio.speaker_volume;
-                                s.audio.speaker_volume = std::max(old_vol - 5, 0);
-                                ESP_LOGI("KeySvc", "Volume decrease request: %d -> %d", old_vol, s.audio.speaker_volume);
-                            });
-                        } else if (keys[i] == KeyId::KEY_2) {
-                            if (!m_key2StopConsumedThisPress) {
-                                ESP_LOGI(TAG, "Key 2 short press: starting PROCESSED recording");
-                                AudioRecorder::getInstance().startRecording(AudioRecorder::RecordMode::PROCESSED);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(POLL_MS));
-    }
+void KeyService::previousTrack() {
+    ESP_LOGI(TAG, "Previous track");
+    m_music.postCommand(MediaCmdType::PREVIOUS);
 }

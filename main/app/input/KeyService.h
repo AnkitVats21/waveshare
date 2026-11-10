@@ -2,28 +2,67 @@
 
 #include "core_sysdb/ReactorTask.h"
 #include "hal/input/ExpanderKeyInput.h"
+#include "app/input/KeyGesture.h"
 
+class MusicPlaybackService;
+class AudioRecorder;
+
+/**
+ * @brief Polls the keys and runs their actions (app/README.md, "Keys").
+ *
+ * Each key's gestures come from a KeyGesture; what they do is the BINDINGS
+ * table. While an alarm rings or is snoozed, a press belongs to it: key 2
+ * stops the alarm, the others snooze it, and nothing else runs for that press.
+ * Key 1 is the chip's reset line and can't be read, so it isn't polled.
+ */
 class KeyService : public ReactorTask {
 public:
-    explicit KeyService(ExpanderKeyInput &input);
-    ~KeyService() override = default;
+    KeyService(ExpanderKeyInput& input, MusicPlaybackService& music, AudioRecorder& recorder);
 
-    bool begin();
-
-    // ReactorTask interface
-    void onStateChanged(ComponentMask changed, const SystemState& snap) override;
+    // Pure writer: watches no state.
+    void onStateChanged(ComponentMask, const SystemState&) override {}
 
 protected:
     void run() override;
 
 private:
-    ExpanderKeyInput &m_input;
-    bool m_prevState[5] = {false};
-    uint32_t m_pressCount[5] = {0};
-    bool m_longPressedTriggered[5] = {false};
-    bool m_key2StopConsumedThisPress = false;
-    // Press taken by a ringing or snoozed alarm: no normal key action for it.
-    bool m_alarmPress[5] = {false};
+    using KeyId = ExpanderKeyInput::KeyId;
+    using Event = Input::KeyGesture::Event;
 
-    static constexpr const char *TAG = "KeySvc";
+    // A key's actions; nullptr for none. A down action that returns true
+    // takes the whole press: no click or long press follows it.
+    struct Binding {
+        KeyId key;
+        bool (KeyService::*down)();
+        void (KeyService::*click)();
+        void (KeyService::*longPress)();
+    };
+    static constexpr size_t KEY_COUNT = 4;   // keys 2-5
+    static const Binding BINDINGS[KEY_COUNT];
+
+    struct Key {
+        Input::KeyGesture gesture;
+        bool taken = false;   // by the alarm or the down action, until release
+    };
+
+    void handle(const Binding& b, Key& k, Event e);
+    bool alarmTakes(KeyId key);
+
+    // Actions
+    bool stopRecording();
+    void startProcessedRecording();
+    void startStereoRecording();
+    void volumeUp();
+    void volumeDown();
+    void stepVolume(int delta);
+    void togglePlay();
+    void nextTrack();
+    void previousTrack();
+
+    ExpanderKeyInput& m_input;
+    MusicPlaybackService& m_music;
+    AudioRecorder& m_recorder;
+    Key m_keys[KEY_COUNT];
+
+    static constexpr const char* TAG = "KeySvc";
 };

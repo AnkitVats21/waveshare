@@ -92,6 +92,8 @@ nanobind_add_module(waveshare_host
     ${SKILLS_GEN_DIR}/skills_generated.cpp
     bindings/bind_session_rules.cpp
     ../components/voice_session/src/SessionRules.cpp
+    bindings/bind_keys.cpp
+    ../main/app/input/KeyGesture.cpp
 )
 
 target_compile_options(waveshare_host PRIVATE -Wall -Wextra)
