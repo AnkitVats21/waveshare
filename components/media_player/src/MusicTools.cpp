@@ -82,7 +82,7 @@ Answer musicOutputTool(const Call& call, JsonDocument& reply, void*) {
             // Say what there is, from the hub's last music_state.
             const MusicHub::Speakers sp = music.hubSpeakers();
             JsonArray names = reply["satellites"].to<JsonArray>();
-            for (const auto& n : sp.names) names.add(n);
+            for (const auto& s : sp.list) names.add(s.name);
             reply["status"] = "success";
             reply["now_playing_on"] = sp.here ? std::string("board")
                                            : sp.playing_on.empty() ? std::string("nothing") : sp.playing_on;

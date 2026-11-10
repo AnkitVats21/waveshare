@@ -17,7 +17,7 @@ public:
     struct Action {
         const char* action;              // play, play_next, queue, next, previous, pause, resume,
                                          // toggle, stop, replay, seek, remove, clear, shuffle,
-                                         // repeat, autoplay, output
+                                         // repeat, autoplay, output, volume
         const char* query = nullptr;
         const char* id = nullptr;
         bool cached = false;             // with id: the song is saved on this board's card
@@ -25,7 +25,8 @@ public:
         int index = -1;
         const char* mode = nullptr;      // repeat: off, one, all
         int on = -1;                     // autoplay: 0 or 1
-        const char* target = nullptr;    // output
+        const char* target = nullptr;    // output, volume: a speaker's id or name
+        int delta = 0;                   // volume: step for the target's level
     };
 
     virtual ~MusicHub() = default;
@@ -39,8 +40,13 @@ public:
 
     // The hub's other speakers (its players but this board) and where the
     // music is, from its last music_state.
+    struct Speaker {
+        std::string id;
+        std::string name;
+        int volume = -1;          // 0-100, -1 if it reported none
+    };
     struct Speakers {
-        std::vector<std::string> names;
+        std::vector<Speaker> list;
         std::string playing_on;   // a speaker's name; "" with here false: nowhere
         bool here = false;        // on this board
     };

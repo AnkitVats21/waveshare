@@ -23,6 +23,10 @@ class LedService : public ReactorTask {
 public:
     explicit LedService(LedStripManager& leds);
 
+    // Shows a level (0-100) on the ring in `color` for a moment, over
+    // whatever the ring shows (the volume keys). Any task.
+    static void showLevel(int percent, RgbColor color);
+
     // ReactorTask interface
     void onStateChanged(ComponentMask changed, const SystemState& snap) override;
 
@@ -36,6 +40,17 @@ private:
     LedEventData      m_current_command{};
 
     void applyVisualState(AssistantVisualState state, const SystemState& snap);
+
+    // showLevel's, under m_cmd_mutex; shown until until_us.
+    struct Level {
+        int percent = 0;
+        RgbColor color{};
+        int64_t until_us = 0;
+    };
+    Level m_level;
+
+    static LedService* s_instance;
+    static constexpr int64_t LEVEL_SHOW_US = 1500 * 1000;
 
     static constexpr const char* TAG = "LedSvc";
 };

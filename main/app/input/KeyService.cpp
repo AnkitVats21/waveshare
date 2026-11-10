@@ -5,6 +5,7 @@
 #include "core_sysdb/thread_config.h"
 #include "media_player/MusicPlaybackService.h"
 #include "app/audio/recording/AudioRecorder.h"
+#include "app/led/LedService.h"
 #include "freertos/idf_additions.h"
 #include <algorithm>
 
@@ -17,7 +18,7 @@ static constexpr int VOLUME_STEP = 5;
 const KeyService::Binding KeyService::BINDINGS[KEY_COUNT] = {
     {KeyId::KEY_2, &KeyService::stopRecording, &KeyService::startProcessedRecording, &KeyService::startStereoRecording},
     {KeyId::KEY_3, nullptr,                    &KeyService::volumeUp,                &KeyService::nextTrack},
-    {KeyId::KEY_4, nullptr,                    &KeyService::togglePlay,              nullptr},
+    {KeyId::KEY_4, nullptr,                    &KeyService::togglePlay,              &KeyService::nextVolumeTarget},
     {KeyId::KEY_5, nullptr,                    &KeyService::volumeDown,              &KeyService::previousTrack},
 };
 
@@ -93,12 +94,58 @@ void KeyService::startStereoRecording() {
 void KeyService::volumeUp() { stepVolume(VOLUME_STEP); }
 void KeyService::volumeDown() { stepVolume(-VOLUME_STEP); }
 
+// The hub speaker with this id, from the hub's last music_state; nullptr if
+// it isn't there (or the hub doesn't run the music).
+static const MusicHub::Speaker* findSpeaker(const MusicHub::Speakers& sp, const std::string& id) {
+    for (const MusicHub::Speaker& s : sp.list) {
+        if (s.id == id) return &s;
+    }
+    return nullptr;
+}
+
 void KeyService::stepVolume(int delta) {
-    sysdb.mutate([delta](SystemState& s) {
+    if (!m_volume_target.empty()) {
+        const MusicHub::Speakers sp = m_music.hubActive() ? m_music.hubSpeakers() : MusicHub::Speakers{};
+        const MusicHub::Speaker* s = findSpeaker(sp, m_volume_target);
+        if (s && m_music.hubVolume(s->id.c_str(), delta)) {
+            ESP_LOGI(TAG, "Volume of %s %+d", s->name.c_str(), delta);
+            // The level it will report back (unknown: the step alone).
+            if (s->volume >= 0) LedService::showLevel(s->volume + delta, BLUE_LED);
+            return;
+        }
+        ESP_LOGI(TAG, "Speaker %s gone: the volume keys are the board's again", m_volume_target.c_str());
+        m_volume_target.clear();
+    }
+    int level = 0;
+    sysdb.mutate([delta, &level](SystemState& s) {
         const int old_vol = s.audio.speaker_volume;
         s.audio.speaker_volume = std::clamp(old_vol + delta, 0, 100);
-        ESP_LOGI(TAG, "Volume %d -> %d", old_vol, s.audio.speaker_volume);
+        level = s.audio.speaker_volume;
+        ESP_LOGI(TAG, "Volume %d -> %d", old_vol, level);
     });
+    LedService::showLevel(level, WHITE_LED);
+}
+
+// Board, then each hub speaker in turn, then the board again. With no
+// speakers it stays on the board (the ring shows the board's level).
+void KeyService::nextVolumeTarget() {
+    const MusicHub::Speakers sp = m_music.hubActive() ? m_music.hubSpeakers() : MusicHub::Speakers{};
+    size_t at = 0;   // 0: the board; i + 1: sp.list[i]
+    for (size_t i = 0; i < sp.list.size(); ++i) {
+        if (sp.list[i].id == m_volume_target) at = i + 1;
+    }
+    at = (at + 1) % (sp.list.size() + 1);
+    if (at == 0) {
+        m_volume_target.clear();
+        ESP_LOGI(TAG, "Volume keys: the board");
+        LedService::showLevel(sysdb.snapshot().audio.speaker_volume, WHITE_LED);
+        return;
+    }
+    const MusicHub::Speaker& s = sp.list[at - 1];
+    m_volume_target = s.id;
+    ESP_LOGI(TAG, "Volume keys: %s", s.name.c_str());
+    // A speaker that hasn't said its level: one LED, so the colour still shows.
+    LedService::showLevel(s.volume >= 0 ? s.volume : 1, BLUE_LED);
 }
 
 void KeyService::togglePlay() {

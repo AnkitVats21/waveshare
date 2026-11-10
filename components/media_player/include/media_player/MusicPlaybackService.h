@@ -116,6 +116,8 @@ public:
     MusicHub::Speakers hubSpeakers() const { return _hub ? _hub->speakers() : MusicHub::Speakers{}; }
     // Asks the hub to move the music to another speaker (music_output).
     bool hubOutput(const char* target);
+    // Steps a hub speaker's volume (target: its id) by delta.
+    bool hubVolume(const char* target, int delta);
     void hubPlay(const InvidiousTrack& track, const std::string& url, uint32_t positionMs, bool paused, uint32_t seq);
     void hubPause();
     void hubResume();

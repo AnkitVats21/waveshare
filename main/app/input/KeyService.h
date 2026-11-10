@@ -3,6 +3,7 @@
 #include "core_sysdb/ReactorTask.h"
 #include "hal/input/ExpanderKeyInput.h"
 #include "app/input/KeyGesture.h"
+#include <string>
 
 class MusicPlaybackService;
 class AudioRecorder;
@@ -14,6 +15,11 @@ class AudioRecorder;
  * table. While an alarm rings or is snoozed, a press belongs to it: key 2
  * stops the alarm, the others snooze it, and nothing else runs for that press.
  * Key 1 is the chip's reset line and can't be read, so it isn't polled.
+ *
+ * The volume keys step the board's volume, or a hub speaker's (an Orbit
+ * speaker) after a long press of key 4 picks it; the ring shows the level,
+ * white for the board, blue for a speaker. A speaker that leaves the hub
+ * gives the keys back to the board.
  */
 class KeyService : public ReactorTask {
 public:
@@ -56,6 +62,7 @@ private:
     void volumeDown();
     void stepVolume(int delta);
     void togglePlay();
+    void nextVolumeTarget();
     void nextTrack();
     void previousTrack();
 
@@ -63,6 +70,7 @@ private:
     MusicPlaybackService& m_music;
     AudioRecorder& m_recorder;
     Key m_keys[KEY_COUNT];
+    std::string m_volume_target;   // a hub speaker's id; empty: the board
 
     static constexpr const char* TAG = "KeySvc";
 };

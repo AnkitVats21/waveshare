@@ -350,7 +350,8 @@ bool OrbitChannel::select(const std::string& target, std::string& chosen) {
             chosen = "local";
             return music.hubOutput("here");
         }
-        for (const std::string& name : music.hubSpeakers().names) {
+        for (const MusicHub::Speaker& s : music.hubSpeakers().list) {
+            const std::string& name = s.name;
             if (strcasecmp(name.c_str(), target.c_str()) == 0 ||
                 (!target.empty() && containsNoCase(name, target))) {
                 chosen = name;
@@ -419,7 +420,8 @@ void OrbitChannel::toJson(JsonObject out) {
         out["active_target"] = remote ? sp.playing_on : "local";
         out["source"] = "hub";
         JsonArray list = out["satellites"].to<JsonArray>();
-        for (const std::string& name : sp.names) {
+        for (const MusicHub::Speaker& s : sp.list) {
+            const std::string& name = s.name;
             JsonObject o = list.add<JsonObject>();
             o["id"] = name;
             o["name"] = name;

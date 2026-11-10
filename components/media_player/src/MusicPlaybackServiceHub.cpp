@@ -49,6 +49,14 @@ bool MusicPlaybackService::hubOutput(const char* target) {
     return _hub->sendAction(a);
 }
 
+bool MusicPlaybackService::hubVolume(const char* target, int delta) {
+    if (!hubActive() || !target) return false;
+    MusicHub::Action a{"volume"};
+    a.target = target;
+    a.delta = delta;
+    return _hub->sendAction(a);
+}
+
 void MusicPlaybackService::hubPlay(const InvidiousTrack& track, const std::string& url, uint32_t positionMs,
                                    bool paused, uint32_t seq) {
     if (track.videoId.empty()) return;

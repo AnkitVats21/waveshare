@@ -4,6 +4,8 @@
 #include "hal/led/LedStripManager.h"
 #include "hal/Board_defs.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -25,11 +27,25 @@ LedService::LedService(LedStripManager& leds)
       })
     , m_leds(leds)
 {
+    s_instance = this;
     m_cmd_mutex = xSemaphoreCreateMutex();
     m_current_command.mode         = LedMode::OFF;
     m_current_command.color        = OFF_LED;
     m_current_command.speed_ms     = 0;
     m_current_command.repeat_count = 0;
+}
+
+LedService* LedService::s_instance = nullptr;
+
+void LedService::showLevel(int percent, RgbColor color) {
+    LedService* self = s_instance;
+    if (!self || !self->m_cmd_mutex) return;
+    if (xSemaphoreTake(self->m_cmd_mutex, portMAX_DELAY) == pdTRUE) {
+        self->m_level = {std::clamp(percent, 0, 100), color, esp_timer_get_time() + LEVEL_SHOW_US};
+        xSemaphoreGive(self->m_cmd_mutex);
+    }
+    // The loop may be waiting with no timeout (solid or off).
+    if (self->getHandle()) xTaskNotify(self->getHandle(), 0, eNoAction);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,9 +160,28 @@ void LedService::run() {
         }
 
         LedEventData cmd;
+        Level level;
         if (m_cmd_mutex && xSemaphoreTake(m_cmd_mutex, portMAX_DELAY) == pdTRUE) {
             cmd = m_current_command;
+            level = m_level;
             xSemaphoreGive(m_cmd_mutex);
+        }
+
+        // A level from showLevel: lit in proportion; nothing else is drawn.
+        if (level.until_us > esp_timer_get_time()) {
+            const int lit = (level.percent * LED_STRIP_LED_COUNT + 99) / 100;
+            for (int i = 0; i < LED_STRIP_LED_COUNT; i++) {
+                if (i < lit) m_leds.setPixel(i, level.color.r, level.color.g, level.color.b);
+                else m_leds.setPixel(i, 0, 0, 0);
+            }
+            m_leds.refresh();
+            last_mode = LedMode::OFF;   // redraw the normal state afterwards
+            uint32_t bits = 0;
+            if (xTaskNotifyWait(0, 0xFFFFFFFF, &bits, pdMS_TO_TICKS(50)) == pdTRUE && bits) {
+                m_last_changed = bits;
+                onStateChanged(bits, EmbeddedSysDb::getInstance().snapshot());
+            }
+            continue;
         }
 
         if (cmd.mode != last_mode) {

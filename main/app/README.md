@@ -46,8 +46,17 @@ says what each one does:
 |---|---|---|
 | 2 | start a processed recording, or stop the active one | start a stereo recording |
 | 3 | volume up | next track |
-| 4 | play / pause | |
+| 4 | play / pause | pick what the volume keys control |
 | 5 | volume down | previous track |
+
+**Volume target.** A long press of key 4 moves the volume keys to the
+next hub speaker (an Orbit speaker, while the hub runs the music) and back
+to the board: board → each speaker → board. The ring shows the level for a
+moment, white for the board and blue for a speaker, on each switch and each
+step (`LedService::showLevel`). A speaker's step goes to the hub as
+`music_action` `volume` with a `delta`; if the speaker has left the hub, the
+keys go back to the board. Moving the music between speakers stays a voice
+command.
 
 Volume and play/pause act on release; key 2's stop acts on the press and
 takes it (no recording starts on that release). While an alarm rings or is

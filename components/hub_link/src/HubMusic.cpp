@@ -107,6 +107,7 @@ bool HubMusic::sendAction(const Action& a) {
     if (a.mode) doc["mode"] = a.mode;
     if (a.on >= 0) doc["on"] = a.on == 1;
     if (a.target) doc["target"] = a.target;
+    if (a.delta) doc["delta"] = a.delta;
     auto* msg = new std::string();
     serializeJson(doc, *msg);
     ESP_LOGI(TAG, "Action to the hub: %s", a.action);
@@ -319,7 +320,7 @@ void HubMusic::handleMessage(const std::string& text) {
             const char* pid = p["id"] | "";
             const char* name = p["name"] | pid;
             if (m_id == pid) continue;
-            sp.names.emplace_back(name);
+            sp.list.push_back({pid, name, p["volume"] | -1});
             if (strcmp(pid, output) == 0) sp.playing_on = name;
         }
         {
