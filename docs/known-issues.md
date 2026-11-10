@@ -7,6 +7,15 @@ commit.
 
 ## Bugs
 
+### A board reboot empties the hub's queue while music plays on a speaker
+With the music on a hub speaker (an Orbit), rebooting the board (an OTA)
+clears the hub's queue: when the link comes up the board sends
+`music_sync` with its own song and queue, and after a reboot it has none
+(`HubMusic` logs "Sync: nothing playing"). The song on the speaker carries
+on; the queued songs are lost. Seen 2026-11-10. The board should not sync
+an empty state over music the hub plays elsewhere. Workaround: note the
+queue before an OTA and queue the songs again.
+
 ### Stream seeks take about 3 seconds
 Seeking in a song that is streaming (not saved on the card) resumes about
 3 s later; seeks in saved songs and recordings take well under a second.
