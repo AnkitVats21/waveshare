@@ -117,3 +117,15 @@ CONFIG_TINYUSB_NCM_OUT_NTB_BUFFS_COUNT=2
 CONFIG_TINYUSB_NCM_IN_NTB_BUFFS_COUNT=2
 CONFIG_TINYUSB_NCM_OUT_NTB_BUFF_MAX_SIZE=3200
 CONFIG_TINYUSB_NCM_IN_NTB_BUFF_MAX_SIZE=2048
+
+# Opus scratch ("pseudostack"): every task that encodes or decodes Opus gets
+# its own buffer of this size in PSRAM on first use and keeps it until the
+# task exits (the chime loader and the mic uplink never exit). 240000 left
+# too little PSRAM for the music decoder after a voice session: songs went
+# silent and the uplink encoder crashed on a NULL buffer. Measured peaks
+# (2026-11-24): music decode 17.8 KB, mic uplink 18.9 KB, chimes 21.6 KB,
+# 48 kHz stereo recorder 47.7 KB; 96 KB is twice the largest. Too small
+# aborts with "pseudostack overflow", so measure again before lowering.
+CONFIG_OPUS_THREADSAFE_PSEUDOSTACK=y
+CONFIG_OPUS_PSEUDOSTACK_SIZE=98304
+CONFIG_OPUS_PSEUDOSTACK_PREFER_PSRAM=y

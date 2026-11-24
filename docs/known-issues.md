@@ -1,11 +1,35 @@
 # Known issues and limitations
 
-What doesn't work, or works with a catch, as of 2026-10-03. Each entry
+What doesn't work, or works with a catch, as of 2026-11-24. Each entry
 gives the symptom, the cause if known, and a workaround if there is one.
 Fix something here, or find something new: update this file in the same
 commit.
 
 ## Bugs
+
+### Silent music and a crash at the wake word after a voice session (fixed)
+After one voice session, songs played silent and ended early (the log
+filled with `WebMOpus: SimpleBlock decode warning: 4`), and a wake word
+over music crashed the board: `StoreProhibited` at address 0 in
+`opus_encode` (`UplinkEncoder::encode`), once also a NULL read in the
+Wi-Fi driver's receive path. **Cause:** micro-opus gives every task that
+runs Opus its own scratch "pseudostack" of `CONFIG_OPUS_PSEUDOSTACK_SIZE`
+in PSRAM on first use, kept until the task exits, and doesn't check the
+allocation. At 240000 bytes, the chime loader and the mic uplink (tasks
+that never exit) held 480 KB, the largest free PSRAM block fell to
+~120-140 KB, and the next task to need one got NULL and wrote through it.
+Measured peaks (2026-11-24, a link-time wrapper on the allocation): music
+decode 17.8 KB, mic uplink 18.9 KB, chimes 21.6 KB, 48 kHz stereo recorder
+47.7 KB, 16 kHz recorder 36.6 KB. **Fix (2026-11-24):** 96 KB
+(`sdkconfig.defaults`; `sdkconfig` must say the same, it wins). Voice,
+then music, then two sessions over music and a recording over music: no
+failed allocation, no decode error, PSRAM free 460 KB while playing (was
+160-340 KB). **Still open:** a failed allocation is still not handled, so
+running out of PSRAM another way would crash the same way; a check before
+the first Opus call on a task would turn it into an error. Moving code
+back to flash (no XIP) frees ~2.5 MB but boot-loops: tasks on PSRAM
+stacks read NVS (`esp_task_stack_is_sane_cache_disabled`), and the AFE
+falls behind ("ring full" at idle).
 
 ### A board reboot empties the hub's queue while music plays on a speaker
 With the music on a hub speaker (an Orbit), rebooting the board (an OTA)
