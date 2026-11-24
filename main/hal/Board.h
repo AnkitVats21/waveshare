@@ -105,7 +105,7 @@ private:
 
     // Pre-init settings (forwarded to AudioHal::Config on begin())
     uint32_t m_sample_rate    = LOCAL_SAMPLE_RATE;
-    int      m_record_volume  = 70;
+    int      m_record_volume  = 37;
     int      m_play_volume    = 80;
     float    m_current_mic_gain = -999.0f;
     bool     m_initialized    = false;

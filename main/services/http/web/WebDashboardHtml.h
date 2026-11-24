@@ -191,7 +191,7 @@ audio { outline: none; height: 36px; width: 340px; max-width: 60%; }
         </div>
         <div class="form-group">
           <label><span>Mic Gain</span><span id="val-mic-gain">60.0 dB</span></label>
-          <input type="range" id="slider-mic-gain" min="0" max="60" step="1" value="60" oninput="onMicGainChange(this.value)">
+          <input type="range" id="slider-mic-gain" min="0" max="100" step="0.5" value="60" oninput="onMicGainChange(this.value)">
         </div>
         <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;">
           <button class="btn btn-secondary" id="btn-mute" onclick="toggleMicMute()">🎙 Mic Enabled</button>

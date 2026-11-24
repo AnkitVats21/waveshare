@@ -162,7 +162,7 @@ public:
 
   uint32_t getSampleRate() const { return m_sample_rate; }
   int getPlayVolume() const { return m_play_volume; }
-  float getRecordGain() const { return (float)m_record_volume; }
+  float getRecordGain() const { return m_record_gain_db; }
 
   // --- Handle accessors (for Board to satisfy HardwareAudioHandles) ----------
 
@@ -183,7 +183,9 @@ private:
   esp_codec_dev_handle_t m_play_dev = nullptr;
   esp_codec_dev_handle_t m_record_dev = nullptr;
   uint32_t m_sample_rate = LOCAL_SAMPLE_RATE;
-  int m_record_volume = 70;
+  float m_record_volume = 37.5f;    // analog part, applied by the ES7210
+  float m_record_gain_db = 37.5f;   // what was asked for (0-100 dB)
+  volatile float m_mic_factor = 1.0f;  // digital part above 37.5 dB
   int m_play_volume = 80;
   int m_play_previous_volume = 80;
   bool m_initialized = false;

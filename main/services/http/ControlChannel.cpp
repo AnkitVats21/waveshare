@@ -4,6 +4,7 @@
 #include "services/http/OrbitChannel.h"
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/ToneControl.h"
+#include "app/audio/MicGain.h"
 #include "media_player/MusicPlaybackService.h"
 #include "media_player/NexusPlayer.h"
 #include "gemini_live/TranscriptLog.h"
@@ -202,7 +203,7 @@ void ControlChannel::handleCommand(const char* json, size_t len, bool from_relay
         sysdb.mutate([db, bass](SystemState& s) { (bass ? s.audio.bass_db : s.audio.treble_db) = db; });
 
     } else if (strcmp(cmd, "mic_gain") == 0) {
-        float gain = std::clamp(doc["value"] | 60.0f, 0.0f, 60.0f);
+        float gain = App::MicGain::clampDb(doc["value"] | App::MicGain::ANALOG_MAX_DB);
         sysdb.mutate([gain](SystemState& s) { s.audio.mic_gain_db = gain; });
 
     } else if (strcmp(cmd, "mic_mute") == 0) {

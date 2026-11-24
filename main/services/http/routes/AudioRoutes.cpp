@@ -4,6 +4,7 @@
 #include "app/audio/recording/AudioRecorder.h"
 #include "audio_core/AlertPlayer.h"
 #include "audio_core/ToneControl.h"
+#include "app/audio/MicGain.h"
 
 #include <cstdlib>
 
@@ -71,7 +72,8 @@ esp_err_t micGainHandler(httpd_req_t* req) {
     } else if (readJsonBody(req, body)) {
         gain = body["gain"] | body["value"] | -1.0f;
     }
-    if (gain < 0.0f || gain > 60.0f) return Http::sendError(req, 400, "Mic gain must be between 0 and 60.0 dB");
+    if (!(gain >= App::MicGain::MIN_DB && gain <= App::MicGain::MAX_DB))
+        return Http::sendError(req, 400, "Mic gain must be between 0 and 100 dB");
 
     EmbeddedSysDb::getInstance().mutate([gain](SystemState& s) { s.audio.mic_gain_db = gain; });
 

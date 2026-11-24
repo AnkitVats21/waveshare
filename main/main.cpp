@@ -70,7 +70,7 @@ extern "C" void app_main(void) {
         [](SystemState& s) {
             s.audio.sample_rate       = LOCAL_SAMPLE_RATE;
             s.audio.speaker_volume    = 80;
-            s.audio.mic_gain_db       = 60.0f;
+            s.audio.mic_gain_db       = 60.0f;  // 37.5 dB analog (PGA max) + 22.5 dB digital
         }
     );
 

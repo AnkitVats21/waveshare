@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "hal/Board_defs.h"
 #include "hal/Board.h"
+#include "app/audio/MicGain.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,7 +18,9 @@
 esp_err_t AudioHal::init(const Config &cfg) {
   m_i2c_bus = cfg.i2c_bus;
   m_sample_rate = cfg.sample_rate;
-  m_record_volume = cfg.record_volume;
+  m_record_gain_db = App::MicGain::clampDb((float)cfg.record_volume);
+  m_record_volume = App::MicGain::analogDb(m_record_gain_db);
+  m_mic_factor = App::MicGain::digitalFactor(m_record_gain_db);
   m_play_volume = cfg.play_volume;
 
   esp_err_t ret = initI2s(m_sample_rate);
@@ -346,6 +349,17 @@ esp_err_t AudioHal::getFeedData(bool is_get_raw_channel, int16_t *buffer,
 
   esp_err_t ret = esp_codec_dev_read(m_record_dev, (void *)buffer, buffer_len);
 
+  // Digital gain above the PGA's 37.5 dB, on the two mics only: the AEC
+  // reference (slot 0) stays as the codec delivers it.
+  const float factor = m_mic_factor;
+  if (ret == ESP_OK && factor != 1.0f) {
+    int frames = buffer_len / (sizeof(int16_t) * ADC_I2S_CHANNEL);
+    for (int i = 0; i < frames; i++) {
+      buffer[4 * i + 1] = App::MicGain::apply(buffer[4 * i + 1], factor);
+      buffer[4 * i + 3] = App::MicGain::apply(buffer[4 * i + 3], factor);
+    }
+  }
+
   if (ret == ESP_OK && !is_get_raw_channel) {
     // Remap from 4-ch raw to 3-ch [Mic1, Mic2, Ref]
     // Raw layout per frame: [Ref(0), Mic1(1), Unused(2), Mic2(3)]  ← RMNM
@@ -427,21 +441,14 @@ esp_err_t AudioHal::setRecordGain(float db_value) {
   if (!m_initialized || !m_record_dev)
     return ESP_FAIL;
 
-  // ? below I've verified its not working as written in comment below there for
-  // changing the max gain
-  // ES7210 gain range: 0–24 dB. Clamp to prevent caller values like 100.0
-  // (sent as a 0-100 percentage) from causing extreme
-  // clipping/distortion.
-  static constexpr float MAX_GAIN_DB = 80.0f;
-  static constexpr float MIN_GAIN_DB = 0.0f;
-  if (db_value > MAX_GAIN_DB)
-    db_value = MAX_GAIN_DB;
-  if (db_value < MIN_GAIN_DB)
-    db_value = MIN_GAIN_DB;
-
-  m_record_volume = (int)db_value;
-  ESP_LOGI(TAG, "Record gain set to %.1f dB", db_value);
-  return esp_codec_dev_set_in_gain(m_record_dev, db_value);
+  // 0-37.5 dB is the ES7210's analog PGA; above that the samples are
+  // multiplied in getFeedData (App::MicGain).
+  m_record_gain_db = App::MicGain::clampDb(db_value);
+  m_record_volume = App::MicGain::analogDb(m_record_gain_db);
+  m_mic_factor = App::MicGain::digitalFactor(m_record_gain_db);
+  ESP_LOGI(TAG, "Record gain set to %.1f dB (analog %.1f, digital x%.2f)",
+           m_record_gain_db, m_record_volume, m_mic_factor);
+  return esp_codec_dev_set_in_gain(m_record_dev, m_record_volume);
 }
 
 esp_err_t AudioHal::pauseRecord() {
