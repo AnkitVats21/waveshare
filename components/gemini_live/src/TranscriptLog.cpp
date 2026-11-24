@@ -25,7 +25,13 @@ TranscriptLog::Entry* TranscriptLog::open(Role role) {
         Entry& last = m_ring[(m_next + MAX_ENTRIES - 1) % MAX_ENTRIES];
         if (!last.done && last.role == role) return &last;
         // The other side started talking: the previous entry is finished.
-        last.done = true;
+        // Bump its seq so the change reaches clients that ask for updates
+        // since their last seq (/api/ws); without it the dashboard never
+        // saw it end and kept the live cursor on it.
+        if (!last.done) {
+            last.done = true;
+            last.seq = ++m_seq;
+        }
     }
     Entry& e = m_ring[m_next];
     m_next = (m_next + 1) % MAX_ENTRIES;
