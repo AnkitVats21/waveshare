@@ -30,7 +30,7 @@ from a web dashboard the device serves itself at `http://nexus.local`.
 - **Web dashboard** — player, library, queue, assistant, alarms,
   recordings, files and settings, served from flash with over-the-air
   updates for both the dashboard and the firmware
-  ([waveshare-dashboard](https://github.com/AnkitVats21/waveshare-dashboard)).
+  ([nexus-dashboard](https://github.com/AnkitVats21/nexus-dashboard)).
 - **On-device screen** (optional) — LVGL touchscreen UI.
 - **Robust storage** — settings, state, alarms and the recordings list live
   in small append-only databases on the card that survive power cuts.
@@ -129,7 +129,7 @@ restart is saved to `system.ndb` on the card.
 
 ## Related repositories
 
-- [waveshare-dashboard](https://github.com/AnkitVats21/waveshare-dashboard) —
+- [nexus-dashboard](https://github.com/AnkitVats21/nexus-dashboard) —
   the web dashboard (React/Vite).
 - [invidious-daemon](https://github.com/AnkitVats21/invidious-daemon) — a
   self-hosted Invidious-backed audio resolver, deployed separately.

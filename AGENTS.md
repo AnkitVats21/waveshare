@@ -13,7 +13,7 @@ Gemini Live), a music player (YouTube audio via Invidious, cached on the SD
 card), alarms, timers and reminders, a recorder, and a web dashboard served
 from flash. ESP-IDF v6.0.1, C++17.
 
-The dashboard is a separate repository (`waveshare-dashboard`, React/Vite),
+The dashboard is a separate repository (`nexus-dashboard`, React/Vite),
 built into a bundle and uploaded to the device.
 
 ## Code map
@@ -104,7 +104,7 @@ On a running device (`nexus.local`, or its IP):
 | OTA firmware | `curl -X POST --data-binary @build/waveshare.bin http://<device>/api/ota` (JSON reply, then reboot) |
 | Wait for the reboot | poll `/api/system/metrics` until `uptime_sec` is small |
 | Logs | `GET /api/logs?since=<seq>`; the buffer is ~80 lines, so boot lines scroll out; the serial monitor has everything |
-| Dashboard | in `waveshare-dashboard`: `NEXUS_HOST=<device> npm run deploy` |
+| Dashboard | in `nexus-dashboard`: `NEXUS_HOST=<device> npm run deploy` |
 | Is it busy? | `/api/assistant/status`, `/api/music/status`, `/api/alarms/status` before an OTA or anything audible |
 
 HTTP routes are in `main/services/http/routes/` (table in
