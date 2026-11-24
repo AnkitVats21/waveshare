@@ -110,7 +110,7 @@ esp_err_t recordHandler(httpd_req_t* req) {
     auto& recorder = AudioRecorder::getInstance();
     bool is_start = std::string(req->uri).find("/start") != std::string::npos;
     if (is_start) {
-        // ?mode=stereo (default: both mics; 24 kHz, or 16 kHz while music plays)
+        // ?mode=stereo (default: both mics; 48 kHz, or 16 kHz while music plays)
         // or ?mode=processed (AFE output, 16 kHz mono)
         std::string mode;
         Http::queryParam(req, "mode", mode);

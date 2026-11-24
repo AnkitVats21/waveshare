@@ -19,12 +19,15 @@ constexpr const char* RECORDINGS_DIR = "/sdcard/recordings";
 constexpr uint32_t STEREO_INPUT_RATE    = LOCAL_SAMPLE_RATE; // 32000, the mic feed
 constexpr uint32_t PROCESSED_INPUT_RATE = 16000;             // AFE output
 
-// 24 kHz keeps sound up to 12 kHz; the 32 kHz feed is resampled down.
+// Stereo is encoded at 48 kHz so nothing the 32 kHz feed carries is lost
+// (sound up to ~14 kHz, the resampler's cut-off); at 24 kHz it stopped at
+// 12 kHz. Opus takes no 32 kHz input, so the feed is resampled up.
 // Core 0 cost, measured (CELT only): processed ~16% at complexity 3. Stereo
-// at complexity 0 is ~41% at 24 kHz and ~33% at 16 kHz; with music playing
-// (core 0 ~57% alone) 24 kHz saturates the core and 16 kHz reaches ~78%, so
-// stereo drops to 16 kHz when music is playing at the start.
-constexpr OggOpusEncoder::Config STEREO_OPUS            = {24000, 48000, false, 0};
+// at complexity 0 is ~84% at 48 kHz (2026-11-24, 48 s idle test, nothing
+// dropped, little headroom left), ~41% at 24 kHz and ~33% at 16 kHz; with
+// music playing (core 0 ~57% alone) 24 kHz saturates the core and 16 kHz
+// reaches ~78%, so stereo drops to 16 kHz when music is playing at the start.
+constexpr OggOpusEncoder::Config STEREO_OPUS            = {48000, 96000, false, 0};
 constexpr OggOpusEncoder::Config STEREO_OPUS_WITH_MUSIC = {16000, 32000, false, 0};
 constexpr OggOpusEncoder::Config PROCESSED_OPUS         = {16000, 24000, true, 3};
 
