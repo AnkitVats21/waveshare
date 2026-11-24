@@ -1,4 +1,5 @@
 #include "hub_link/UplinkEncoder.h"
+#include "media_player/OpusScratch.h"
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include "opus.h"
@@ -70,6 +71,7 @@ bool UplinkEncoder::reset(int kbps, int complexity) {
 
 int UplinkEncoder::encode(const int16_t* pcm_320, uint8_t* out_packet, size_t max_packet_bytes) {
     if (!m_enc || !pcm_320 || !out_packet || max_packet_bytes == 0) return OPUS_BAD_ARG;
+    if (!Media::opusScratchReady()) return OPUS_ALLOC_FAIL;  // HubAgent falls back to PCM
     opus_int32 n = opus_encode(m_enc, pcm_320, static_cast<int>(FRAME_SAMPLES),
                                out_packet, static_cast<opus_int32>(max_packet_bytes));
     return static_cast<int>(n);

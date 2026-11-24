@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "opus.h"
 #include "sd_storage/File.h"
+#include "media_player/OpusScratch.h"
 
 namespace {
 const char* TAG = "OggOpusEncoder";
@@ -148,6 +149,10 @@ bool OggOpusEncoder::feed(const int16_t* pcm, size_t frames) {
 }
 
 bool OggOpusEncoder::encodeFrame() {
+    if (!Media::opusScratchReady()) {
+        m_frame_fill = 0;
+        return false;
+    }
     opus_int32 n = opus_encode(m_enc, m_frame, static_cast<int>(m_frame_size), m_packet, kMaxPacket);
     m_frame_fill = 0;
     if (n < 0) {

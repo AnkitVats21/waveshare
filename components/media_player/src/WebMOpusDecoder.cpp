@@ -1,5 +1,6 @@
 #include "WebMOpusDecoder.h"
 #include "media_player/WebmSeek.h"
+#include "media_player/OpusScratch.h"
 
 #include "opus.h"
 #include "esp_log.h"
@@ -351,6 +352,7 @@ DecodeResult WebMOpusDecoder::decodeSimpleBlockPayload(const uint8_t* payload, s
 
     if (lacing == 0) { // No lacing - single frame
         if (frameLen == 0) return DecodeResult::OK;
+        if (!Media::opusScratchReady()) return DecodeResult::ERROR_DECODE_FAILED;
 
         int samplesPerChannel = opus_decode(
             _opusDecoder,
@@ -368,6 +370,7 @@ DecodeResult WebMOpusDecoder::decodeSimpleBlockPayload(const uint8_t* payload, s
         }
     } else if (lacing == 1) { // Xiph lacing
         if (frameLen < 1) return DecodeResult::OK;
+        if (!Media::opusScratchReady()) return DecodeResult::ERROR_DECODE_FAILED;
         uint8_t numFrames = frameData[0] + 1;
         size_t lOffset = 1;
         std::vector<size_t> sizes(numFrames, 0);

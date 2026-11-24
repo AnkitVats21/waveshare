@@ -24,9 +24,14 @@ decode 17.8 KB, mic uplink 18.9 KB, chimes 21.6 KB, 48 kHz stereo recorder
 (`sdkconfig.defaults`; `sdkconfig` must say the same, it wins). Voice,
 then music, then two sessions over music and a recording over music: no
 failed allocation, no decode error, PSRAM free 460 KB while playing (was
-160-340 KB). **Still open:** a failed allocation is still not handled, so
-running out of PSRAM another way would crash the same way; a check before
-the first Opus call on a task would turn it into an error. Moving code
+160-340 KB). A failed allocation is now an error, not a crash: every
+`opus_encode` / `opus_decode` call first runs `Media::opusScratchReady()`
+(`media_player/OpusScratch.h`), which allocates the buffer itself and
+fails the frame when it can't (one `OpusScratch` error per task). Forced
+to fail on every task (2026-11-24): chimes fell back to the built-in
+tones, voice went on with the uplink in PCM, music played silent (one
+`SimpleBlock decode warning` per block, ~18 000 lines), and a recording
+saved an empty file; no crash. Moving code
 back to flash (no XIP) frees ~2.5 MB but boot-loops: tasks on PSRAM
 stacks read NVS (`esp_task_stack_is_sane_cache_disabled`), and the AFE
 falls behind ("ring full" at idle).

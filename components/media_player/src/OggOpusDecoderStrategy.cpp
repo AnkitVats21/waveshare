@@ -1,4 +1,5 @@
 #include "OggOpusDecoderStrategy.h"
+#include "media_player/OpusScratch.h"
 
 #include <algorithm>
 #include <cstring>
@@ -50,6 +51,7 @@ uint32_t OggOpusDecoderStrategy::getPositionMs() const {
 
 DecodeResult OggOpusDecoderStrategy::feed(const uint8_t* in, size_t len, int16_t* outPcm, size_t maxSamples,
                                           size_t& consumed, size_t& samples) {
+    if (!Media::opusScratchReady()) return DecodeResult::ERROR_DECODE_FAILED;
     micro_opus::OggOpusResult result =
         _decoder.decode(in, len, reinterpret_cast<uint8_t*>(outPcm), maxSamples * sizeof(int16_t), consumed, samples);
     if (result == micro_opus::OGG_OPUS_OUTPUT_BUFFER_TOO_SMALL) return DecodeResult::OUTPUT_BUFFER_FULL;
