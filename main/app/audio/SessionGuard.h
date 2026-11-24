@@ -12,8 +12,9 @@ namespace SessionLimits {
 // reference when the music plays on another device). Longer than one spoken
 // turn: gemini-3.8-live sends the input transcription only when the turn
 // ends (measured 2026-10-27: a 15.4 s question, its text at 16.3 s, nothing
-// before), so at 10 s a long question was cut off mid-sentence.
-constexpr int64_t SOUND_NO_WORDS_MS = 30000;
+// before), so at 10 s a long question was cut off mid-sentence; 30 s still
+// cut off long dictation, so it is 120 s (2026-11-24).
+constexpr int64_t SOUND_NO_WORDS_MS = 120000;
 // Speech frames more than this far apart are separate sounds, not one run.
 constexpr int64_t SPEECH_GAP_RESET_MS = 3000;
 // Safety net B: the silence timeout is held while a reply is owed (or a
